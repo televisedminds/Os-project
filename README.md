@@ -43,6 +43,27 @@ No database server, no build step, no API keys needed to try it: state is SQLite
 (`data/`, auto-created), the frontend is dependency-free vanilla JS, and demo mode runs
 on a built-in simulated market (see **Demo mode & honesty** below).
 
+## Live mode (real data)
+
+The same pipeline runs on real connectors — eBay Browse API (sell side), Reddit
+(demand), Google News RSS (context), live FX — over a watchlist you curate, with
+your own buy-side quotes for venues that have no API (Buyee/Shopee/Facebook).
+Observations persist in SQLite so baselines accumulate across days; sources that
+fail degrade gracefully and are reported on `/api/health` and the LIVE badge.
+
+```bash
+cp watchlist.example.json watchlist.json   # what to track
+cp .env.example .env                       # eBay/Reddit/Telegram keys
+set -a; source .env; set +a
+python run.py live-check                   # validates keys, adapters, watchlist, FX
+python run.py serve --live                 # observe every 30 min, publish what verifies
+python run.py brief --live --push          # briefing to your Telegram
+```
+
+**Full operator guide + DigitalOcean deployment (systemd units, daily Telegram
+briefing at 07:00 Bangkok): [docs/LIVE.md](docs/LIVE.md).** Demo and live keep
+separate databases (`data/live.db`) — the mode guard refuses to mix them.
+
 ---
 
 ## How a cycle works

@@ -43,14 +43,38 @@ PLANS = {
 }
 
 
+def _env(key: str, default: str):
+    """default_factory helper — env vars must be read at *instantiation* time
+    (a plain dataclass default freezes the value at import time, which breaks
+    CLI flags like --live that set os.environ before building Config)."""
+
+    return field(default_factory=lambda: os.environ.get(key, default))
+
+
 @dataclass
 class Config:
     """All tunables in one place. Environment variables override defaults."""
 
     db_path: Path = field(default_factory=lambda: Path(os.environ.get("OOS_DB", DATA_DIR / "opportunity_os.db")))
-    world_seed: int = int(os.environ.get("OOS_SEED", "1151"))
-    default_plan: str = os.environ.get("OOS_PLAN", "pro")
-    auto_cycle_seconds: int = int(os.environ.get("OOS_AUTO_CYCLE_SECONDS", "0"))
+    world_seed: int = field(default_factory=lambda: int(os.environ.get("OOS_SEED", "1151")))
+    default_plan: str = _env("OOS_PLAN", "pro")
+    auto_cycle_seconds: int = field(default_factory=lambda: int(os.environ.get("OOS_AUTO_CYCLE_SECONDS", "0")))
+
+    # "demo" runs the simulator; "live" runs real connectors over the watchlist.
+    mode: str = _env("OOS_MODE", "demo")
+    watchlist_path: Path = field(default_factory=lambda: Path(os.environ.get("OOS_WATCHLIST",
+                                                                             PROJECT_ROOT / "watchlist.json")))
+    http_timeout: float = field(default_factory=lambda: float(os.environ.get("OOS_HTTP_TIMEOUT", "20")))
+    user_agent: str = _env("OOS_USER_AGENT", "OpportunityOS/0.2 (market research bot)")
+
+    # Live connector credentials (all optional — missing ones degrade gracefully).
+    ebay_client_id: str = _env("EBAY_CLIENT_ID", "")
+    ebay_client_secret: str = _env("EBAY_CLIENT_SECRET", "")
+    ebay_env: str = _env("EBAY_ENV", "production")                    # or "sandbox"
+    reddit_client_id: str = _env("REDDIT_CLIENT_ID", "")
+    reddit_client_secret: str = _env("REDDIT_CLIENT_SECRET", "")
+    telegram_bot_token: str = _env("TELEGRAM_BOT_TOKEN", "")
+    telegram_chat_id: str = _env("TELEGRAM_CHAT_ID", "")
 
     # Home base: the operator is in Thailand. Every opportunity is assessed
     # for buy/sell feasibility from Thailand.
@@ -65,7 +89,7 @@ class Config:
     cross_venue_spread_pct: float = 0.25  # raw spread that triggers investigation
 
     # Operator profile used to size positions.
-    capital_cap_usd: float = float(os.environ.get("OOS_CAPITAL_CAP", "2000"))
+    capital_cap_usd: float = field(default_factory=lambda: float(os.environ.get("OOS_CAPITAL_CAP", "2000")))
 
     # One research cycle advances the simulated market by one day.
     warmup_ticks: int = 12

@@ -1,0 +1,24 @@
+# Opportunity OS — live platform (dashboard + API + research cycles)
+# Binds to 127.0.0.1 on purpose: the dashboard has no auth. Reach it over an
+# SSH tunnel (ssh -L 8000:localhost:8000 you@droplet) or put Caddy/nginx with
+# basic auth in front. See docs/LIVE.md.
+
+[Unit]
+Description=Opportunity OS (live mode)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=oos
+Group=oos
+WorkingDirectory=/opt/opportunity-os
+EnvironmentFile=/opt/opportunity-os/.env
+ExecStart=/opt/opportunity-os/.venv/bin/python run.py serve --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/opt/opportunity-os/data
+
+[Install]
+WantedBy=multi-user.target

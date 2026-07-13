@@ -1,0 +1,283 @@
+"""Live layer: watchlist, adapters (mocked HTTP), and the full pipeline
+running over LiveMarket with stub connectors — no network in tests."""
+
+import json
+
+import httpx
+import pytest
+
+from opportunity_os import economics
+from opportunity_os.config import Config
+from opportunity_os.db import Store
+from opportunity_os.market import watchlist as wl
+from opportunity_os.market.adapters import EbayAdapter, FxAdapter, NewsAdapter, RedditAdapter
+from opportunity_os.market.live import LiveMarket
+from opportunity_os.notify import briefing_text
+from opportunity_os.pipeline import Orchestrator, briefing
+
+# ------------------------------------------------------------------ fixtures
+
+
+def write_watchlist(tmp_path, products=None, niches=None):
+    p = tmp_path / "watchlist.json"
+    p.write_text(json.dumps({"products": products or [], "niches": niches or []}))
+    return p
+
+
+PRODUCT = {
+    "id": "gba", "name": "GBA SP AGS-101", "category": "gaming", "weight_kg": 0.4,
+    "queries": {"ebay_us": "gba sp ags-101"},
+    "manual_listings": {"shopee_th": {"price_usd": 45.0, "stock": 9, "sellers": 3, "sold_7d": 2,
+                                      "note": "test quote"}},
+    "bootstrap_sold_7d": {"ebay_us": 8},
+    "news_query": "gameboy prices",
+}
+NICHE = {
+    "id": "th_tax", "name": "Thai freelancer tax guide", "kind": "info", "geo": "TH",
+    "price_point_usd": 15, "reddit_query": "thailand tax",
+    "base_volume": 8000, "solution_count": 2, "providers": 2, "demand_posts": 120,
+}
+
+
+@pytest.fixture
+def live_cfg(tmp_path):
+    path = write_watchlist(tmp_path, [PRODUCT], [NICHE])
+    return Config(db_path=tmp_path / "live.db", mode="live", watchlist_path=path)
+
+
+class FakeEbay:
+    """Scripted eBay: stable price, one listing disappears per tick."""
+
+    name = "fake eBay"
+    last_error = ""
+
+    def __init__(self):
+        self.calls = 0
+
+    def configured(self):
+        return True
+
+    def product_snapshot(self, query):
+        self.calls += 1
+        ids = [f"item{i}" for i in range(self.calls, self.calls + 30)]   # one id rotates out per call
+        return {"price": 129.0, "min_price": 110.0, "stock": 30, "sellers": 12, "item_ids": ids}
+
+    def check(self):
+        return True, "ok"
+
+
+class FakeReddit:
+    name = "fake Reddit"
+    last_error = ""
+
+    def __init__(self, series):
+        self.series = list(series)
+        self.i = 0
+
+    def mentions_24h(self, query):
+        v = self.series[min(self.i, len(self.series) - 1)]
+        self.i += 1
+        return v
+
+    def check(self):
+        return True, "ok"
+
+
+class FakeNews:
+    name = "fake News"
+    last_error = ""
+
+    def headlines(self, query, n=4):
+        return ["Retro handheld demand climbs as collectors chase AGS-101 units"]
+
+    def check(self):
+        return True, "ok"
+
+
+class FakeFx:
+    name = "fake FX"
+    last_error = ""
+
+    def rates(self):
+        return {"THB": 33.5, "JPY": 160.0}
+
+    def check(self):
+        return True, "ok"
+
+
+def stub_adapters(reddit_series=(5, 5, 5, 5, 6, 18, 24, 30, 34, 36)):
+    return {"ebay_us": FakeEbay(), "reddit": FakeReddit(reddit_series),
+            "news": FakeNews(), "fx": FakeFx()}
+
+
+# ----------------------------------------------------------------- watchlist
+
+
+def test_watchlist_validation(tmp_path):
+    bad = write_watchlist(tmp_path, [{"id": "x", "name": "X", "category": "toys", "weight_kg": 1,
+                                      "queries": {"nope_venue": "q"}}])
+    with pytest.raises(ValueError, match="unknown venue"):
+        wl.load(bad)
+    with pytest.raises(FileNotFoundError):
+        wl.load(tmp_path / "missing.json")
+    ok = write_watchlist(tmp_path / "sub" if False else tmp_path, [PRODUCT], [NICHE])
+    w = wl.load(ok)
+    assert w.product("gba").venues() == ["ebay_us", "shopee_th"]
+
+
+def test_manual_listing_requires_price(tmp_path):
+    bad = write_watchlist(tmp_path, [{"id": "x", "name": "X", "category": "toys", "weight_kg": 1,
+                                      "manual_listings": {"shopee_th": {"stock": 3}}}])
+    with pytest.raises(ValueError, match="price_thb or price_usd"):
+        wl.load(bad)
+
+
+# ------------------------------------------------------------------ adapters
+
+
+def _client(handler):
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_fx_adapter_primary_and_fallback():
+    cfg = Config(mode="live")
+
+    def ok_handler(req):
+        assert "open.er-api.com" in str(req.url)
+        return httpx.Response(200, json={"result": "success", "rates": {"THB": 33.1, "JPY": 159.0}})
+
+    fx = FxAdapter(cfg, _client(ok_handler))
+    assert fx.rates() == {"THB": 33.1, "JPY": 159.0}
+
+    def fallback_handler(req):
+        if "er-api" in str(req.url):
+            return httpx.Response(500)
+        return httpx.Response(200, json={"rates": {"THB": 34.0, "JPY": 161.0}})
+
+    fx2 = FxAdapter(cfg, _client(fallback_handler))
+    assert fx2.rates()["THB"] == 34.0
+
+
+def test_set_fx_updates_economics():
+    old = economics.USD_THB
+    try:
+        economics.set_fx(usd_thb=30.0, usd_jpy=150.0)
+        assert economics.usd_to_thb(10) == 300.0
+        assert economics.convert(150, "JPY", "USD") == pytest.approx(1.0)
+    finally:
+        economics.set_fx(usd_thb=old, usd_jpy=147.9)
+
+
+def test_ebay_adapter_oauth_search_and_token_cache():
+    cfg = Config(mode="live", ebay_client_id="id", ebay_client_secret="sec")
+    calls = {"token": 0, "search": 0}
+
+    def handler(req):
+        if "identity/v1/oauth2/token" in str(req.url):
+            calls["token"] += 1
+            assert req.headers["Authorization"].startswith("Basic ")
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 7200})
+        calls["search"] += 1
+        assert req.headers["Authorization"] == "Bearer tok"
+        assert req.headers["X-EBAY-C-MARKETPLACE-ID"] == "EBAY_US"
+        return httpx.Response(200, json={
+            "total": 143,
+            "itemSummaries": [
+                {"itemId": "a", "price": {"value": "120.00", "currency": "USD"},
+                 "seller": {"username": "s1"}},
+                {"itemId": "b", "price": {"value": "129.00", "currency": "USD"},
+                 "seller": {"username": "s2"}},
+                {"itemId": "c", "price": {"value": "300.00", "currency": "USD"},
+                 "seller": {"username": "s1"}},
+            ]})
+
+    ad = EbayAdapter(cfg, _client(handler))
+    snap = ad.product_snapshot("gba sp")
+    assert snap == {"price": 129.0, "min_price": 120.0, "stock": 143, "sellers": 2,
+                    "item_ids": ["a", "b", "c"]}
+    ad.product_snapshot("gba sp")
+    assert calls["token"] == 1 and calls["search"] == 2       # token reused
+
+    unconfigured = EbayAdapter(Config(mode="live"), _client(handler))
+    assert unconfigured.product_snapshot("x") is None
+    assert "EBAY_CLIENT_ID" in unconfigured.last_error
+
+
+def test_reddit_adapter_oauth_flow():
+    cfg = Config(mode="live", reddit_client_id="rid", reddit_client_secret="rsec")
+
+    def handler(req):
+        if "access_token" in str(req.url):
+            return httpx.Response(200, json={"access_token": "rtok", "expires_in": 3600})
+        assert "oauth.reddit.com" in str(req.url)
+        return httpx.Response(200, json={"data": {"children": [{}, {}, {}]}})
+
+    ad = RedditAdapter(cfg, _client(handler))
+    assert ad.mentions_24h("thailand tax") == 3
+
+
+def test_news_adapter_parses_rss():
+    rss = ('<?xml version="1.0"?><rss><channel>'
+           "<item><title>Headline one</title></item>"
+           "<item><title>Headline two</title></item></channel></rss>")
+    ad = NewsAdapter(Config(mode="live"),
+                     _client(lambda req: httpx.Response(200, text=rss)))
+    assert ad.headlines("q") == ["Headline one", "Headline two"]
+
+
+# ----------------------------------------------------- live market + pipeline
+
+
+def test_live_market_persists_and_estimates(live_cfg):
+    store = Store(live_cfg.db_path)
+    lm = LiveMarket(live_cfg, store, adapters=stub_adapters())
+    for _ in range(7):
+        lm.tick()
+
+    assert lm.venue_ids() == ["ebay_us", "shopee_th"]
+    ebay = lm.listing("gba", "ebay_us")
+    assert ebay["price"] == 129.0 and ebay["stock"] == 30
+    assert ebay["sold_7d"] >= 7                    # bootstrap + disappearance estimate
+    manual = lm.listing("gba", "shopee_th")
+    assert manual == {"price": 45.0, "stock": 9, "sellers": 3, "sold_7d": 2}
+    assert len(lm.product_history("gba", "ebay_us")) == 7
+    assert lm.mentions("th_tax", "reddit")         # recorded series
+    assert lm.event_log("gba")[0]["etype"] == "news"
+    assert economics.USD_THB == 33.5               # live FX installed
+    n = lm.niches()[0]
+    assert n["metrics"]["volume"] > 8000           # momentum > 1 after the ramp
+    store.close()
+
+
+def test_full_live_pipeline_publishes_verified_flip_and_niche(live_cfg):
+    store = Store(live_cfg.db_path)
+    lm = LiveMarket(live_cfg, store, adapters=stub_adapters())
+    orch = Orchestrator(live_cfg, store, world=lm)
+    last = None
+    for _ in range(8):
+        last = orch.run_cycle()
+
+    actives = store.active_opportunities()
+    by_entity = {o["entity_id"]: o for o in actives}
+    assert "gba" in by_entity, f"flip not published; last report: {last}"
+    flip = by_entity["gba"]
+    assert flip["route"]["buy_venue"] == "shopee_th"
+    assert flip["route"]["sell_venue"] == "ebay_us"
+    assert flip["economics"]["pessimistic"]["net_usd"] > 0
+    assert flip["playbook"]["steps"]
+
+    assert "th_tax" in by_entity, "info niche not published after demand ramp"
+    b = briefing(store, live_cfg)
+    assert "opportunities worth your attention" in b["headline"]
+    assert briefing_text(b).startswith("◆ OPPORTUNITY OS")
+    store.close()
+
+
+def test_mode_guard_blocks_cross_mode_db(live_cfg):
+    store = Store(live_cfg.db_path)
+    LiveMarket(live_cfg, store, adapters=stub_adapters())     # no guard yet — orchestrator guards
+    Orchestrator(live_cfg, store, world=LiveMarket(live_cfg, store, adapters=stub_adapters()))
+    demo_cfg = Config(db_path=live_cfg.db_path, mode="demo")
+    with pytest.raises(SystemExit, match="created in 'live' mode"):
+        Orchestrator(demo_cfg, store, world=object())
+    store.close()

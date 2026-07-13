@@ -56,8 +56,20 @@ function toast(msg, ms = 5000) {
 /* ------------------------------------------------------------- briefing */
 
 async function loadBriefing() {
-  const [b, s] = await Promise.all([api(`/api/briefing?plan=${state.plan}`), api("/api/stats")]);
-  $("#tick-label").textContent = `tick ${s.tick} · 1 cycle ≈ 1 market day`;
+  const [b, s, h] = await Promise.all([
+    api(`/api/briefing?plan=${state.plan}`), api("/api/stats"), api("/api/health")]);
+  const badge = document.querySelector(".badge-demo");
+  if (badge && h.mode === "live") {
+    badge.textContent = "LIVE FEED";
+    badge.classList.add("badge-live");
+    const degraded = (h.adapters || []).filter((a) => !a.ok);
+    badge.title = degraded.length
+      ? "Live connectors with issues: " + degraded.map((a) => `${a.id} (${a.note})`).join("; ")
+      : "All live connectors healthy.";
+  }
+  $("#tick-label").textContent = h.mode === "live"
+    ? `pass ${s.tick} · observing every cycle`
+    : `tick ${s.tick} · 1 cycle ≈ 1 market day`;
   $("#briefing-headline").textContent = b.headline;
   $("#briefing-notes").textContent = b.notes.join("  ");
   const conf = s.avg_confidence || 0;

@@ -72,9 +72,15 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
-        if seed_cycles and not store.recent_cycles(1):
-            for _ in range(seed_cycles):
-                orch.run_cycle()
+        if not store.recent_cycles(1):
+            if cfg.mode == "demo" and seed_cycles:
+                for _ in range(seed_cycles):
+                    orch.run_cycle()
+            elif cfg.mode == "live":
+                try:
+                    orch.run_cycle()          # first observation pass (baselines)
+                except Exception:
+                    pass                       # adapters degrade; don't block startup
         task = asyncio.create_task(_auto_loop()) if auto and auto > 0 else None
         yield
         if task:
@@ -95,10 +101,17 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
 
     @app.get("/api/health")
     def health():
-        return {"ok": True, "version": __version__, "tick": store.meta_get("tick", 0),
-                "demo_mode": True,
-                "note": "Demo mode runs on a deterministic simulated market; wire live "
-                        "connectors in opportunity_os/market/live.py for production."}
+        out = {"ok": True, "version": __version__, "mode": cfg.mode,
+               "tick": store.meta_get("tick", 0) if cfg.mode == "demo" else store.meta_get("live_tick", 0),
+               "demo_mode": cfg.mode == "demo"}
+        if cfg.mode == "demo":
+            out["note"] = ("Demo mode runs on a deterministic simulated market; run with --live "
+                           "and a watchlist for real data.")
+        else:
+            out["adapters"] = orch.world.status() if hasattr(orch.world, "status") else []
+            out["source_errors_last_cycle"] = getattr(orch.world, "errors", [])
+            out["fx"] = store.meta_get("live_fx")
+        return out
 
     @app.get("/api/briefing")
     def get_briefing(plan: str | None = None):

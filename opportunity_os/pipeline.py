@@ -27,19 +27,33 @@ from . import economics, thailand
 
 
 class Orchestrator:
-    def __init__(self, config: Config, store: Store, world: SimulatedMarket | None = None):
+    def __init__(self, config: Config, store: Store, world=None):
         self.cfg = config
         self.db = store
-        self.world = world or self._restore_world()
+        self._guard_mode()
+        self.world = world if world is not None else self._build_world()
         self.fleet = build_fleet(self.world)
         self.detector = AnomalyDetector(config)
         self.investigator = Investigator(config)
         self.learning = LearningEngine(store)
 
-    def _restore_world(self) -> SimulatedMarket:
-        """Deterministic replay: rebuild the world from its seed and re-run the
-        stored number of ticks, so restarts resume exactly where they left off."""
+    def _guard_mode(self) -> None:
+        """A database belongs to one mode; mixing sim and live history would
+        poison every baseline."""
 
+        stored = self.db.meta_get("mode")
+        if stored and stored != self.cfg.mode:
+            raise SystemExit(
+                f"This database ({self.cfg.db_path}) was created in '{stored}' mode but OOS_MODE is "
+                f"'{self.cfg.mode}'. Point OOS_DB at a different file (e.g. data/live.db) or delete it.")
+        self.db.meta_set("mode", self.cfg.mode)
+
+    def _build_world(self):
+        if self.cfg.mode == "live":
+            from .market.live import LiveMarket
+            return LiveMarket(self.cfg, self.db)
+        # demo: deterministic replay — rebuild from seed, re-run stored ticks,
+        # so restarts resume exactly where they left off.
         w = SimulatedMarket(seed=self.cfg.world_seed, warmup=self.cfg.warmup_ticks)
         stored_tick = self.db.meta_get("tick", self.cfg.warmup_ticks)
         w.fast_forward(max(0, stored_tick - self.cfg.warmup_ticks))
@@ -151,7 +165,13 @@ class Orchestrator:
 
     def _reverify(self, stored: dict, council: VerificationCouncil, scorer: ScoringEngine,
                   tick: int) -> tuple[bool, str]:
-        if tick - stored["tick_created"] > stored["window_days"] * 2 + 4:
+        # In demo mode one tick == one simulated day; in live mode ticks are
+        # observation passes, so expiry runs on wall-clock age instead.
+        if self.cfg.mode == "live":
+            age_days = (time.time() - stored.get("created_ts", time.time())) / 86400
+        else:
+            age_days = tick - stored["tick_created"]
+        if age_days > stored["window_days"] * 2 + 4:
             return False, "window elapsed — original edge has fully played out"
 
         if stored["type"] == OppType.PRODUCT_ARBITRAGE.value:

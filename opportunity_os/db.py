@@ -32,6 +32,17 @@ CREATE TABLE IF NOT EXISTS cycles (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, tick INTEGER, duration_ms REAL, report TEXT);
 CREATE INDEX IF NOT EXISTS idx_signals_tick ON signals(tick);
 CREATE INDEX IF NOT EXISTS idx_opp_status ON opportunities(status);
+CREATE TABLE IF NOT EXISTS live_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, entity_id TEXT, venue TEXT, tick INTEGER, ts REAL,
+    price REAL, stock INTEGER, sellers INTEGER, sold_7d INTEGER, extra TEXT);
+CREATE TABLE IF NOT EXISTS live_mentions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, entity_id TEXT, source TEXT, tick INTEGER, ts REAL, count INTEGER);
+CREATE TABLE IF NOT EXISTS live_niches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, niche_id TEXT, tick INTEGER, ts REAL, metrics TEXT);
+CREATE TABLE IF NOT EXISTS live_headlines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, entity_id TEXT, tick INTEGER, ts REAL, text TEXT, etype TEXT);
+CREATE INDEX IF NOT EXISTS idx_live_snap ON live_snapshots(entity_id, venue, tick);
+CREATE INDEX IF NOT EXISTS idx_live_mention ON live_mentions(entity_id, source, tick);
 """
 
 
@@ -215,6 +226,70 @@ class Store:
                 "avg_confidence": one("SELECT COALESCE(AVG(confidence),0) FROM opportunities WHERE status='active'"),
                 "profit_pool_usd": one("SELECT COALESCE(SUM(net_usd),0) FROM opportunities WHERE status='active'"),
             }
+
+    # ---------------------------------------------------- live observations
+
+    def add_live_snapshot(self, entity_id: str, venue: str, tick: int, snap: dict,
+                          extra: dict | None = None) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO live_snapshots(entity_id,venue,tick,ts,price,stock,sellers,sold_7d,extra) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (entity_id, venue, tick, time.time(), snap["price"], snap["stock"],
+                 snap["sellers"], snap["sold_7d"], json.dumps(extra or {}, default=str)))
+
+    def live_snapshot_series(self, entity_id: str, venue: str, limit: int = 60) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT ts, tick, price, stock, sellers, sold_7d, extra FROM live_snapshots "
+                "WHERE entity_id=? AND venue=? ORDER BY id DESC LIMIT ?",
+                (entity_id, venue, limit)).fetchall()
+        out = [dict(r, extra=json.loads(r["extra"])) for r in rows]
+        return list(reversed(out))
+
+    def add_live_mention(self, entity_id: str, source: str, tick: int, count: int) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("INSERT INTO live_mentions(entity_id,source,tick,ts,count) VALUES(?,?,?,?,?)",
+                               (entity_id, source, tick, time.time(), count))
+
+    def live_mention_series(self, entity_id: str, source: str, limit: int = 60) -> list[int]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT count FROM live_mentions WHERE entity_id=? AND source=? ORDER BY id DESC LIMIT ?",
+                (entity_id, source, limit)).fetchall()
+        return [r["count"] for r in reversed(rows)]
+
+    def add_live_niche(self, niche_id: str, tick: int, metrics: dict) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("INSERT INTO live_niches(niche_id,tick,ts,metrics) VALUES(?,?,?,?)",
+                               (niche_id, tick, time.time(), json.dumps(metrics, default=str)))
+
+    def live_niche_series(self, niche_id: str, limit: int = 60) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT metrics FROM live_niches WHERE niche_id=? ORDER BY id DESC LIMIT ?",
+                (niche_id, limit)).fetchall()
+        return [json.loads(r["metrics"]) for r in reversed(rows)]
+
+    def add_live_headlines(self, items: list[dict], tick: int) -> None:
+        with self._lock, self._conn:
+            self._conn.executemany(
+                "INSERT INTO live_headlines(entity_id,tick,ts,text,etype) VALUES(?,?,?,?,?)",
+                [(h["entity_id"], tick, time.time(), h["text"], h.get("etype", "news")) for h in items])
+
+    def live_headlines_since(self, since_tick: int) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT entity_id, tick, text, etype FROM live_headlines WHERE tick>? ORDER BY id",
+                (since_tick,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def live_headlines_for(self, entity_id: str, limit: int = 10) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT entity_id, tick, text, etype FROM live_headlines WHERE entity_id=? "
+                "ORDER BY id DESC LIMIT ?", (entity_id, limit)).fetchall()
+        return [dict(r) for r in reversed(rows)]
 
     def close(self) -> None:
         with self._lock:

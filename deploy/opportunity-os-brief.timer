@@ -1,0 +1,13 @@
+# Fire the briefing at 07:00 Asia/Bangkok every day.
+# Droplets usually run on UTC; 00:00 UTC == 07:00 in Bangkok (UTC+7).
+# If your droplet's timezone is Asia/Bangkok, change to 07:00:00.
+
+[Unit]
+Description=Daily Opportunity OS briefing (07:00 Bangkok)
+
+[Timer]
+OnCalendar=*-*-* 00:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

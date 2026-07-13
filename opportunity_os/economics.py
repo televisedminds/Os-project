@@ -94,9 +94,21 @@ PACKAGING_USD = 0.90
 US_DEST_DUTY_BY_ORIGIN = {"TH": 0.19, "JP": 0.15}
 US_DEST_DUTY_DEFAULT = 0.10
 
-# Demo FX (production: live FX feed). USD pivot.
+# FX (USD pivot). Demo mode uses these reference values; live mode overwrites
+# them every cycle from a real FX feed via set_fx().
 FX_TO_USD = {"USD": 1.0, "THB": 1 / 36.4, "JPY": 1 / 147.9}
 USD_THB = 36.4
+
+
+def set_fx(usd_thb: float, usd_jpy: float | None = None) -> None:
+    """Install live FX rates (called by the live data source each cycle)."""
+
+    global USD_THB
+    if usd_thb and usd_thb > 0:
+        USD_THB = round(usd_thb, 4)
+        FX_TO_USD["THB"] = 1 / USD_THB
+    if usd_jpy and usd_jpy > 0:
+        FX_TO_USD["JPY"] = 1 / usd_jpy
 
 
 def convert(amount: float, frm: str, to: str) -> float:

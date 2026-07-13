@@ -1,0 +1,13 @@
+# One-shot: push the morning briefing to Telegram (fired by the .timer).
+
+[Unit]
+Description=Opportunity OS morning briefing push
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=oos
+Group=oos
+WorkingDirectory=/opt/opportunity-os
+EnvironmentFile=/opt/opportunity-os/.env
+ExecStart=/opt/opportunity-os/.venv/bin/python run.py brief --push

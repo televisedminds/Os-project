@@ -1,38 +1,62 @@
 #!/usr/bin/env python3
 """Opportunity OS entry point.
 
-    python run.py serve            # dashboard + API on :8000, auto-cycles every 180s
-    python run.py cycle -n 3       # run three research cycles and print the reports
-    python run.py brief            # print the morning briefing to the terminal
-    python run.py reset            # wipe state, re-seed the demo world
+Demo mode (default — simulated market, no keys needed):
+    python run.py serve                dashboard + API on :8000, cycle every 180s
+    python run.py cycle -n 3           run three research cycles now
+    python run.py brief                print the morning briefing
+    python run.py reset                wipe state, re-seed the demo world
+
+Live mode (real connectors over your watchlist; add --live or OOS_MODE=live):
+    python run.py live-check           validate keys, adapters, watchlist, FX
+    python run.py serve --live         observe every 30 min, publish what verifies
+    python run.py cycle --live         one observation/research pass now
+    python run.py brief --live --push  send the briefing to your Telegram
+
+Live mode keeps its own database (data/live.db) so sim and real history never mix.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
+import os
 
-from opportunity_os.config import Config
-from opportunity_os.db import Store
-from opportunity_os.pipeline import Orchestrator, briefing
+from opportunity_os.config import DATA_DIR, Config
+
+
+def _cfg(args) -> Config:
+    if getattr(args, "live", False):
+        os.environ["OOS_MODE"] = "live"
+        os.environ.setdefault("OOS_DB", str(DATA_DIR / "live.db"))
+    cfg = Config()
+    if cfg.mode == "live" and "OOS_DB" not in os.environ:
+        cfg.db_path = DATA_DIR / "live.db"
+    return cfg
+
+
+def _store(cfg):
+    from opportunity_os.db import Store
+    return Store(cfg.db_path)
 
 
 def cmd_serve(args) -> None:
     import uvicorn
     from opportunity_os.api import create_app
-    auto = args.auto_cycle if args.auto_cycle is not None else 180
-    app = create_app(Config(), auto_cycle_seconds=auto)
-    print(f"Opportunity OS → http://{args.host}:{args.port}   "
-          f"(auto research cycle every {auto}s{'' if auto else ' — disabled'})")
+    cfg = _cfg(args)
+    auto = args.auto_cycle if args.auto_cycle is not None else (1800 if cfg.mode == "live" else 180)
+    app = create_app(cfg, auto_cycle_seconds=auto)
+    print(f"Opportunity OS [{cfg.mode.upper()}] → http://{args.host}:{args.port}   "
+          f"(research cycle every {auto}s)")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 
 def cmd_cycle(args) -> None:
-    cfg = Config()
-    orch = Orchestrator(cfg, Store(cfg.db_path))
-    for i in range(args.n):
+    from opportunity_os.pipeline import Orchestrator
+    cfg = _cfg(args)
+    orch = Orchestrator(cfg, _store(cfg))
+    for _ in range(args.n):
         r = orch.run_cycle()
-        print(f"cycle tick={r['tick']}  signals={r['signals']}  anomalies={r['anomalies']}  "
+        print(f"[{cfg.mode}] cycle tick={r['tick']}  signals={r['signals']}  anomalies={r['anomalies']}  "
               f"candidates={r['candidates']}  published={len(r['published'])}  "
               f"rejected={len(r['rejected'])}  invalidated={len(r['invalidated'])}")
         for p in r["published"]:
@@ -41,35 +65,76 @@ def cmd_cycle(args) -> None:
             print(f"   - rejected: {rj['title']} — {rj['reason'][:110]}")
         for iv in r["invalidated"]:
             print(f"   x invalidated: {iv['title']} — {iv['reason'][:110]}")
+        if cfg.mode == "live" and getattr(orch.world, "errors", None):
+            for e in orch.world.errors:
+                print(f"   ! source degraded: {e}")
 
 
 def cmd_brief(args) -> None:
-    cfg = Config()
-    b = briefing(Store(cfg.db_path), cfg, args.plan)
-    print(f"\n  OPPORTUNITY OS — {b['generated_at'][:16]} ({b['timezone']})\n")
-    print(f"  {b['headline']}")
-    for n in b["notes"]:
-        print(f"  {n}")
-    print()
-    for i, t in enumerate(b["top"], 1):
-        print(f"  {i:>2}. [{t['score']:>4.1f}] {t['title']}")
-        print(f"      {t['subtitle']}")
-        print(f"      est. ${t['net_usd']:,.2f} · confidence {t['confidence']:.0%} · "
-              f"window ~{t['window_days']:.0f}d\n")
-    if b["locked"]:
-        print(f"  … plus {b['locked']} more on the Pro plan.")
+    from opportunity_os.notify import briefing_text, send_telegram
+    from opportunity_os.pipeline import briefing
+    cfg = _cfg(args)
+    b = briefing(_store(cfg), cfg, args.plan)
+    text = briefing_text(b, max_items=10)
+    print("\n" + text + "\n")
+    if args.push:
+        ok, note = send_telegram(cfg, briefing_text(b))
+        print(f"telegram push: {note}")
 
 
 def cmd_reset(args) -> None:
-    cfg = Config()
+    from opportunity_os.pipeline import Orchestrator
+    cfg = _cfg(args)
     if cfg.db_path.exists():
+        if cfg.mode == "live" and not args.yes:
+            print(f"Refusing to wipe LIVE observation history at {cfg.db_path} without --yes "
+                  f"(days of baselines live there).")
+            return
         cfg.db_path.unlink()
         print(f"removed {cfg.db_path}")
-    orch = Orchestrator(cfg, Store(cfg.db_path))
-    for _ in range(args.warm):
-        r = orch.run_cycle()
-    print(f"re-seeded demo world → tick {r['tick']}, "
+    orch = Orchestrator(cfg, _store(cfg))
+    warm = 0 if cfg.mode == "live" else args.warm
+    for _ in range(warm):
+        orch.run_cycle()
+    print(f"re-initialised [{cfg.mode}] → tick {orch.db.meta_get('tick', 0) or orch.world.tick_no}, "
           f"{len(orch.db.active_opportunities())} active opportunities")
+
+
+def cmd_live_check(args) -> None:
+    args.live = True
+    cfg = _cfg(args)
+    from opportunity_os.market import watchlist as wl
+    from opportunity_os.market.live import LiveMarket
+
+    print(f"\n◆ OPPORTUNITY OS live-check   (db: {cfg.db_path})\n")
+    try:
+        watch = wl.load(cfg.watchlist_path)
+        obs_venues = sorted({v for p in watch.products for v in p.queries})
+        man_venues = sorted({v for p in watch.products for v in p.manual_listings})
+        print(f"  watchlist  ✓ {cfg.watchlist_path}")
+        print(f"             {len(watch.products)} products (observed: {', '.join(obs_venues) or '—'};"
+              f" manual quotes: {', '.join(man_venues) or '—'}), {len(watch.niches)} niches")
+    except Exception as e:  # noqa: BLE001
+        print(f"  watchlist  ✗ {e}")
+        raise SystemExit(1)
+
+    lm = LiveMarket(cfg, _store(cfg))
+    all_ok = True
+    for st in lm.healthcheck():
+        mark = "✓" if st["ok"] else "✗"
+        all_ok &= st["ok"] or st["id"] in ("reddit",)      # reddit is optional-but-recommended
+        print(f"  {st['id']:<8} {mark} {st['name']}: {st['note']}")
+
+    from opportunity_os.notify import send_telegram
+    if cfg.telegram_bot_token:
+        ok, note = send_telegram(cfg, "◆ Opportunity OS: live-check ping — notifications working.")
+        print(f"  telegram {'✓' if ok else '✗'} {note}")
+    else:
+        print("  telegram − not configured (optional: TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID)")
+
+    print("\n  Next: python run.py cycle --live   (first pass records baselines;"
+          "\n        verified opportunities appear once history accumulates — usually 1–3 days)\n")
+    raise SystemExit(0 if all_ok else 1)
 
 
 def main() -> None:
@@ -77,24 +142,36 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
+    def live_flag(p):
+        p.add_argument("--live", action="store_true", help="run against real connectors (OOS_MODE=live)")
+
     s = sub.add_parser("serve", help="run the dashboard + API")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8000)
     s.add_argument("--auto-cycle", type=int, default=None,
-                   help="seconds between automatic research cycles (0 = off, default 180)")
+                   help="seconds between research cycles (default: 180 demo / 1800 live; 0 = off)")
+    live_flag(s)
     s.set_defaults(fn=cmd_serve)
 
     c = sub.add_parser("cycle", help="run research cycles now")
     c.add_argument("-n", type=int, default=1)
+    live_flag(c)
     c.set_defaults(fn=cmd_cycle)
 
-    b = sub.add_parser("brief", help="print the morning briefing")
+    b = sub.add_parser("brief", help="print (and optionally push) the briefing")
     b.add_argument("--plan", default=None)
+    b.add_argument("--push", action="store_true", help="also send to Telegram")
+    live_flag(b)
     b.set_defaults(fn=cmd_brief)
 
-    r = sub.add_parser("reset", help="wipe state and re-seed the demo world")
-    r.add_argument("--warm", type=int, default=2, help="cycles to run after reset")
+    r = sub.add_parser("reset", help="wipe state and re-initialise")
+    r.add_argument("--warm", type=int, default=2, help="demo cycles to run after reset")
+    r.add_argument("--yes", action="store_true", help="confirm wiping live observation history")
+    live_flag(r)
     r.set_defaults(fn=cmd_reset)
+
+    lc = sub.add_parser("live-check", help="validate live keys, adapters, watchlist and FX")
+    lc.set_defaults(fn=cmd_live_check)
 
     args = ap.parse_args()
     args.fn(args)
