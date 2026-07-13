@@ -1,0 +1,274 @@
+"""The orchestrator: one research cycle, end to end.
+
+    tick the market → scanners observe → anomalies detected → investigations
+    → verification council → economics gates → publish → and, crucially,
+    RE-VERIFY every already-published opportunity against live data.
+
+Re-verification is the answer to the hardest problem in this product:
+opportunities decay. A restock, a competitor pile-in, or a price convergence
+kills a published opportunity — the platform notices on the next cycle and
+marks it INVALIDATED with the reason, instead of leaving stale advice up.
+"""
+
+from __future__ import annotations
+
+import time
+from dataclasses import asdict
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from .agents import (AnomalyDetector, Investigator, LearningEngine, ScoringEngine,
+                     VerificationCouncil, build_automation, build_fleet, build_playbook)
+from .config import Config
+from .db import Store
+from .market import SimulatedMarket
+from .models import Opportunity, OppStatus, OppType, opportunity_id
+from . import economics, thailand
+
+
+class Orchestrator:
+    def __init__(self, config: Config, store: Store, world: SimulatedMarket | None = None):
+        self.cfg = config
+        self.db = store
+        self.world = world or self._restore_world()
+        self.fleet = build_fleet(self.world)
+        self.detector = AnomalyDetector(config)
+        self.investigator = Investigator(config)
+        self.learning = LearningEngine(store)
+
+    def _restore_world(self) -> SimulatedMarket:
+        """Deterministic replay: rebuild the world from its seed and re-run the
+        stored number of ticks, so restarts resume exactly where they left off."""
+
+        w = SimulatedMarket(seed=self.cfg.world_seed, warmup=self.cfg.warmup_ticks)
+        stored_tick = self.db.meta_get("tick", self.cfg.warmup_ticks)
+        w.fast_forward(max(0, stored_tick - self.cfg.warmup_ticks))
+        return w
+
+    # ------------------------------------------------------------------ cycle
+
+    def run_cycle(self) -> dict:
+        t0 = time.time()
+        self.world.tick()
+        tick = self.world.tick_no
+
+        n_signals = 0
+        for agent in self.fleet:
+            sigs = agent.scan(self.world)
+            self.db.add_signals(sigs, tick)
+            self.db.agent_run(agent, tick, len(sigs))
+            n_signals += len(sigs)
+
+        anomalies = self.detector.detect(self.world)
+        self.db.add_anomalies(anomalies)
+        candidates = self.investigator.build_candidates(self.world, anomalies)
+
+        council = VerificationCouncil(self.cfg, self.learning.verifier_reliability)
+        scorer = ScoringEngine(self.learning.weights, self.cfg.capital_cap_usd)
+
+        published, rejected, updated_ids = [], [], set()
+        for cand in candidates:
+            opp, reason = self._assess(cand, council, scorer, tick)
+            if opp:
+                self.db.upsert_opportunity(opp.to_dict())
+                updated_ids.add(opp.id)
+                published.append({"id": opp.id, "title": opp.title, "score": opp.score.overall,
+                                  "confidence": opp.confidence})
+            else:
+                rejected.append({"title": cand["title"], "type": cand["opp_type"].value, "reason": reason})
+
+        invalidated, reverified = [], 0
+        for stored in self.db.active_opportunities():
+            if stored["id"] in updated_ids:
+                continue
+            ok, reason = self._reverify(stored, council, scorer, tick)
+            if ok:
+                reverified += 1
+            else:
+                stored["status"] = OppStatus.INVALIDATED.value
+                stored["invalidation_reason"] = reason
+                stored["tick_updated"] = tick
+                self.db.upsert_opportunity(stored)
+                invalidated.append({"id": stored["id"], "title": stored["title"], "reason": reason})
+
+        report = {
+            "tick": tick,
+            "signals": n_signals,
+            "agents": len(self.fleet),
+            "anomalies": len(anomalies),
+            "candidates": len(candidates),
+            "published": published,
+            "rejected": rejected,
+            "reverified": reverified,
+            "invalidated": invalidated,
+        }
+        self.db.add_cycle(tick, round((time.time() - t0) * 1000, 1), report)
+        self.db.meta_set("tick", tick)
+        return report
+
+    # ----------------------------------------------------------------- assess
+
+    def _gates(self, verification, confidence: float, econ) -> str | None:
+        failed = [c for c in verification.checks if c.critical and not c.passed]
+        if failed:
+            return "; ".join(f"{c.name} failed — {c.evidence}" for c in failed)
+        if confidence < self.cfg.min_consensus_confidence:
+            return (f"consensus confidence {confidence:.2f} below the "
+                    f"{self.cfg.min_consensus_confidence:.2f} publication bar")
+        if econ.kind == "flip" and econ.base.margin_pct < self.cfg.min_margin_pct:
+            return f"base margin {econ.base.margin_pct:.0f}% below the {self.cfg.min_margin_pct:.0f}% floor"
+        if self.cfg.require_pessimistic_profit and econ.pessimistic.net_usd <= 0:
+            return f"pessimistic scenario loses ${-econ.pessimistic.net_usd:.2f}"
+        return None
+
+    def _assess(self, cand: dict, council: VerificationCouncil, scorer: ScoringEngine,
+                tick: int) -> tuple[Opportunity | None, str]:
+        verification = (council.verify_flip(self.world, cand) if cand["kind"] == "flip"
+                        else council.verify_venture(self.world, cand))
+        confidence = round(min(0.99, verification.consensus * self.learning.calibration), 3)
+        reason = self._gates(verification, confidence, cand["economics"])
+        if reason:
+            return None, reason
+
+        automation = build_automation(cand)
+        playbook = build_playbook(cand)
+        score = scorer.score(cand, automation.coverage_pct)
+        opp = Opportunity(
+            id=opportunity_id(cand["opp_type"].value, cand["entity_id"],
+                              cand["buy_venue"], cand["sell_venue"]),
+            type=cand["opp_type"], status=OppStatus.ACTIVE,
+            category=cand["category"], title=cand["title"], subtitle=cand["subtitle"],
+            entity_id=cand["entity_id"], route=cand["route"],
+            tick_created=tick, tick_updated=tick,
+            window_days=cand["window_days"], confidence=confidence,
+            economics=cand["economics"], verification=verification, score=score,
+            feasibility=cand["feasibility"], why_chain=cand["why"],
+            playbook=playbook, automation=automation, sources=cand["sources"],
+        )
+        return opp, ""
+
+    # --------------------------------------------------------------- reverify
+
+    def _reverify(self, stored: dict, council: VerificationCouncil, scorer: ScoringEngine,
+                  tick: int) -> tuple[bool, str]:
+        if tick - stored["tick_created"] > stored["window_days"] * 2 + 4:
+            return False, "window elapsed — original edge has fully played out"
+
+        if stored["type"] == OppType.PRODUCT_ARBITRAGE.value:
+            cand = self._fresh_flip(stored)
+        else:
+            cand = self._fresh_venture(stored)
+        if cand is None:
+            return False, "source inventory exhausted or listing no longer observable"
+
+        verification = (council.verify_flip(self.world, cand) if cand["kind"] == "flip"
+                        else council.verify_venture(self.world, cand))
+        confidence = round(min(0.99, verification.consensus * self.learning.calibration), 3)
+        reason = self._gates(verification, confidence, cand["economics"])
+        if reason:
+            return False, reason
+
+        automation = build_automation(cand)
+        score = scorer.score(cand, automation.coverage_pct)
+        stored["economics"] = asdict(cand["economics"])
+        stored["verification"] = asdict(verification)
+        stored["score"] = asdict(score)
+        stored["confidence"] = confidence
+        stored["window_days"] = cand["window_days"]
+        stored["subtitle"] = cand["subtitle"]
+        stored["tick_updated"] = tick
+        stored["status"] = OppStatus.ACTIVE.value
+        self.db.upsert_opportunity(stored)
+        return True, ""
+
+    def _fresh_flip(self, stored: dict) -> dict | None:
+        pid = stored["entity_id"]
+        bv, sv = stored["route"]["buy_venue"], stored["route"]["sell_venue"]
+        buy, sell = self.world.listing(pid, bv), self.world.listing(pid, sv)
+        if not buy or not sell or buy["stock"] == 0:
+            return None
+        product = self.world.product_public(pid)
+        qty = max(1, min(stored["economics"]["qty"], buy["stock"]))
+        econ = economics.compute_flip(product, bv, sv, buy["price"], sell["price"], qty=qty)
+        velocity = max(sell["sold_7d"] / 7.0, 0.1)
+        return {
+            "kind": "flip", "opp_type": OppType.PRODUCT_ARBITRAGE, "entity_id": pid,
+            "title": stored["title"],
+            "subtitle": f"Buy {economics.VENUES[bv]['name']} ${buy['price']:.2f} → "
+                        f"sell {economics.VENUES[sv]['name']} ${sell['price']:.2f}",
+            "category": stored["category"], "item": product,
+            "buy_venue": bv, "sell_venue": sv,
+            "buy_usd": buy["price"], "sell_usd": sell["price"],
+            "qty": qty, "buy_stock": buy["stock"], "velocity": velocity,
+            "sellers": sell["sellers"],
+            "window_days": round(min(14.0, max(2.0, (sell["stock"] + qty) / max(0.5, velocity))), 1),
+            "economics": econ,
+            "feasibility": thailand.feasibility(OppType.PRODUCT_ARBITRAGE.value, stored["category"], bv, sv),
+            "route": stored["route"],
+        }
+
+    def _fresh_venture(self, stored: dict) -> dict | None:
+        nid = stored["entity_id"]
+        niche = next((n for n in self.world.niches() if n["id"] == nid), None)
+        if not niche:
+            return None
+        econ = economics.compute_venture(niche)
+        m = niche["metrics"]
+        supply_label = "credible solutions" if niche["kind"] in ("digital", "info") else "active providers"
+        supply_n = m["solution_count"] if niche["kind"] in ("digital", "info") else m["providers"]
+        return {
+            "kind": "venture", "opp_type": OppType(stored["type"]), "entity_id": nid,
+            "title": stored["title"],
+            "subtitle": f"{m['volume']:,.0f} demand events/mo, {m['growth_pct']:.0f}%/mo growth, "
+                        f"{supply_n:.0f} {supply_label}",
+            "category": stored["category"], "niche": niche,
+            "buy_venue": None, "sell_venue": None,
+            "qty": 1, "velocity": m["volume"] / 30.0, "sellers": int(supply_n),
+            "window_days": stored["window_days"],
+            "economics": econ,
+            "feasibility": thailand.feasibility(stored["type"], stored["category"], None, None),
+            "route": stored["route"],
+        }
+
+
+# --------------------------------------------------------------------- brief
+
+def briefing(store: Store, cfg: Config, plan_name: str | None = None) -> dict:
+    plan = cfg.plan(plan_name)
+    actives = store.list_opportunities(status="active", limit=200)
+    tick = store.meta_get("tick", 0)
+    new_today = [o for o in actives if o["tick_created"] == tick]
+    cycles = store.recent_cycles(1)
+    last = cycles[0]["report"] if cycles else {}
+    now = datetime.now(ZoneInfo(cfg.home_timezone))
+    hour = now.hour
+    greeting = "Good morning" if hour < 12 else ("Good afternoon" if hour < 18 else "Good evening")
+
+    limit = plan["max_opportunities"] or len(actives)
+    top = actives[:limit]
+    lines = [f"{greeting}. I found {len(actives)} opportunities worth your attention today"
+             + (f" — {len(new_today)} new since the last cycle." if new_today else ".")]
+    if last.get("invalidated"):
+        lines.append(f"{len(last['invalidated'])} previously published "
+                     f"opportunit{'y was' if len(last['invalidated']) == 1 else 'ies were'} "
+                     f"invalidated as market conditions changed.")
+    if last.get("rejected"):
+        lines.append(f"{len(last['rejected'])} candidates were investigated and rejected before "
+                     f"reaching you — they didn't survive fee/tax/verification checks.")
+
+    return {
+        "generated_at": now.isoformat(),
+        "timezone": cfg.home_timezone,
+        "tick": tick,
+        "plan": plan["label"],
+        "headline": lines[0],
+        "notes": lines[1:],
+        "counts": {"active": len(actives), "new_today": len(new_today),
+                   "invalidated_last_cycle": len(last.get("invalidated", [])),
+                   "rejected_last_cycle": len(last.get("rejected", []))},
+        "top": [{"id": o["id"], "title": o["title"], "subtitle": o["subtitle"],
+                 "score": o["score"]["overall"], "confidence": o["confidence"],
+                 "net_usd": o["economics"]["total_net_usd"],
+                 "window_days": o["window_days"], "type": o["type"]} for o in top],
+        "locked": max(0, len(actives) - limit) if plan["max_opportunities"] else 0,
+    }
