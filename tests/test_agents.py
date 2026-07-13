@@ -13,8 +13,9 @@ def _tick_past_events(world, n=2):
 def test_fleet_covers_venues_and_sources(world):
     fleet = build_fleet(world)
     ids = {a.id for a in fleet}
-    assert len(fleet) == 13
-    assert "scan_ebay_us" in ids and "scan_reddit" in ids and "scan_news" in ids
+    assert len(fleet) == len(world.venue_ids()) + 5     # venues + 3 social + trends + news
+    assert {"scan_ebay_us", "scan_shopee_th", "scan_tiktok_shop_th", "scan_aliexpress",
+            "scan_reddit", "scan_news"} <= ids
 
 
 def test_scanners_emit_signals(world):

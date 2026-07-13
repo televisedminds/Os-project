@@ -8,7 +8,7 @@ from opportunity_os.pipeline import Orchestrator, briefing
 
 def test_cycle_publishes_verified_opportunities(orch):
     r1, r2 = orch.run_cycle(), orch.run_cycle()
-    assert r2["signals"] > 100 and r2["agents"] == 13
+    assert r2["signals"] > 100 and r2["agents"] == len(orch.fleet)
     actives = orch.db.active_opportunities()
     assert len(actives) >= 6
     for o in actives:

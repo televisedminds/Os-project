@@ -21,6 +21,10 @@ and post-2025 US de-minimis duty risk priced into the pessimistic case).
 
 ---
 
+**New here? Read [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)** — plain-language
+setup, what works with zero API keys (Thai e-commerce arbitrage does), and how to get
+the free keys when you want them.
+
 ## Quickstart
 
 ```bash

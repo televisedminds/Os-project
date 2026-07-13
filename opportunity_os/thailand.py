@@ -77,6 +77,14 @@ VENUE_ACCESS: dict[str, dict] = {
                           "buy_note": "Meetup (BTS/MRT) or COD via Kerry/Flash.", "sell_note": "Zero fees; PromptPay."},
     "kaidee_th":         {"buy": True, "sell": True, "proxy": False,
                           "buy_note": "Classifieds; inspect before paying.", "sell_note": "Free listings."},
+    "tiktok_shop_th":    {"buy": True, "sell": True, "proxy": False,
+                          "buy_note": "Buy in-app; COD or card.",
+                          "sell_note": "Seller signup needs Thai ID card + Thai bank account; approval "
+                                       "typically 1–3 days. Live/video content strongly boosts reach."},
+    "aliexpress":        {"buy": True, "sell": False, "proxy": False,
+                          "buy_note": "Register with email; pays with Thai card/TrueMoney; ships to TH in "
+                                      "10–20 days (Standard). Order samples before committing to a lot.",
+                          "sell_note": "Selling is for CN-registered businesses — buy-side only from TH."},
 }
 
 

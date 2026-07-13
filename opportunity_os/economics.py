@@ -32,6 +32,8 @@ VENUES: dict[str, dict] = {
     "lazada_th":         {"name": "Lazada TH",          "country": "TH", "currency": "THB", "buy": True, "sell": True},
     "facebook_mp_th":    {"name": "Facebook Marketplace TH", "country": "TH", "currency": "THB", "buy": True, "sell": True},
     "kaidee_th":         {"name": "Kaidee TH",          "country": "TH", "currency": "THB", "buy": True, "sell": True},
+    "tiktok_shop_th":    {"name": "TikTok Shop TH",     "country": "TH", "currency": "THB", "buy": True, "sell": True},
+    "aliexpress":        {"name": "AliExpress",         "country": "CN", "currency": "USD", "buy": True, "sell": False},
 }
 
 # Sell-side fee model per venue (fractions of sale price unless noted).
@@ -52,6 +54,10 @@ SELL_FEES: dict[str, dict] = {
                        "note": "Classifieds; no sale commission."},
     "mercari_jp":     {"pct": 0.10, "fixed": 0.0, "payment_pct": 0.0, "payout_fx_pct": 0.02, "note": "JP residents only."},
     "yahoo_auctions_jp": {"pct": 0.10, "fixed": 0.0, "payment_pct": 0.0, "payout_fx_pct": 0.02, "note": "JP residents only."},
+    "tiktok_shop_th": {"pct": 0.08, "fixed": 0.0, "payment_pct": 0.03, "payout_fx_pct": 0.0,
+                       "note": "Commission + transaction fee (TH); COD handled by platform."},
+    "aliexpress":     {"pct": 0.0, "fixed": 0.0, "payment_pct": 0.0, "payout_fx_pct": 0.0,
+                       "note": "Buy-side only from Thailand."},
 }
 
 # Buy-side extras per venue (per unit, USD).
@@ -67,6 +73,9 @@ BUY_COSTS: dict[str, dict] = {
     "lazada_th":         {"origin_ship": 1.20, "note": "TH domestic courier."},
     "facebook_mp_th":    {"origin_ship": 0.0, "note": "Local pickup (BTS meetup) or COD."},
     "kaidee_th":         {"origin_ship": 1.50, "note": "TH domestic shipping."},
+    "tiktok_shop_th":    {"origin_ship": 1.20, "note": "TH domestic courier."},
+    "aliexpress":        {"origin_ship": 0.0, "note": "Subsidised/free CN shipping is common; "
+                                                      "allow 10–20 days lead time to Thailand."},
 }
 
 # International/domestic shipping rate card: (base USD, USD per kg).
@@ -79,6 +88,8 @@ SHIP_RATES: dict[tuple[str, str], tuple[float, float]] = {
     ("US", "US"): (4.5, 1.2),
     ("TH", "TH"): (1.3, 0.5),
     ("JP", "JP"): (5.0, 1.0),
+    ("CN", "TH"): (3.5, 4.5),     # AliExpress standard / consolidated freight class
+    ("CN", "US"): (6.0, 7.5),
 }
 
 # Direct-forward (proxy warehouse ships internationally on your behalf):
@@ -91,7 +102,7 @@ PACKAGING_USD = 0.90
 # exemption for commercial shipments in Aug 2025, so cross-border sales into
 # the US now carry buyer-side duties — we price them into the pessimistic
 # scenario as a demand/price concession. Approximate ad-valorem by origin.
-US_DEST_DUTY_BY_ORIGIN = {"TH": 0.19, "JP": 0.15}
+US_DEST_DUTY_BY_ORIGIN = {"TH": 0.19, "JP": 0.15, "CN": 0.30}
 US_DEST_DUTY_DEFAULT = 0.10
 
 # FX (USD pivot). Demo mode uses these reference values; live mode overwrites
@@ -194,6 +205,17 @@ def _flip_scenario(name: str, *, item: dict, buy_venue: str, sell_venue: str,
                 lines.append(CostLine("Thai import duty", duty, notes["duty"]))
             lines.append(CostLine("Thai import VAT 7%", vat, notes["vat"]))
             landed += duty + vat
+
+    # Last-mile delivery to the buyer. Cross-border final legs (e.g. TH → US)
+    # already ARE the delivery; but domestic flips (Facebook → Shopee) and
+    # import-then-sell-locally routes (AliExpress → CN → TH → Thai buyer) still
+    # need the local courier hop.
+    sell_country = VENUES[sell_venue]["country"]
+    if path[-1] == sell_country and (len(path) == 1 or sell_country == "TH"):
+        lines.append(CostLine("Domestic delivery to buyer",
+                              round(ship_cost(sell_country, sell_country, weight) * ship_mult, 2),
+                              "Kerry/Flash/J&T class" if sell_country == "TH" else ""))
+        landed += lines[-1].amount_usd
 
     if "TH" in path[1:] or path == ["TH"] or path[0] == "TH":
         lines.append(CostLine("Packaging & handling", PACKAGING_USD))

@@ -165,6 +165,18 @@ class SimulatedMarket:
         add(Product("pg_unicorn", "PG 1/60 Unicorn Gundam kit (sealed)", "toys", 3.50,
                     {"yahoo_auctions_jp": _p(155.00, 25, 14, 4), "ebay_us": _p(260.00, 10, 7, 3)},
                     {"reddit": 5, "tiktok": 2, "x": 2}))
+        add(Product("phone_gimbal", "Foldable phone gimbal stabiliser (creator kit)", "electronics", 0.60,
+                    {"aliexpress": _p(23.00, 500, 40, 30), "shopee_th": _p(52.00, 60, 18, 20),
+                     "tiktok_shop_th": _p(58.00, 45, 12, 16)},
+                    {"reddit": 3, "tiktok": 9, "x": 2}))
+        add(Product("mech_kb_kit", "75% hot-swap mechanical keyboard kit", "electronics", 1.10,
+                    {"aliexpress": _p(38.00, 300, 25, 12), "shopee_th": _p(75.00, 35, 10, 8),
+                     "tiktok_shop_th": _p(79.00, 20, 6, 5)},
+                    {"reddit": 8, "tiktok": 5, "x": 3}))
+        add(Product("used_iphone13", "iPhone 13 128GB (used, Thai set, good battery)", "electronics", 0.40,
+                    {"facebook_mp_th": _p(310.00, 6, 5, 2), "kaidee_th": _p(318.00, 4, 4, 1),
+                     "shopee_th": _p(395.00, 14, 20, 6)},
+                    {"reddit": 2, "tiktok": 3, "x": 1}))
 
         def addn(n: Niche):
             N[n.id] = n
@@ -227,6 +239,11 @@ class SimulatedMarket:
                         "Thai EV registrations keep surging; condo juristic offices are tendering wallbox installs "
                         "and certified installers are scarce.",
                         "Thai EV boom outruns certified charger installers"),
+            MarketEvent(b + 4, "viral_spike", "mech_kb_kit", None,
+                        {"demand_mult": 2.2, "buzz_mult": 5.0, "ticks": 7},
+                        "A Thai tech TikToker's build video blew up; hot-swap kits selling through on "
+                        "Shopee TH and TikTok Shop while AliExpress supply stays cheap and deep.",
+                        "Custom keyboard fever hits Thai TikTok"),
             MarketEvent(b + 6, "competitor_entry", "seiko_6139", "ebay_us",
                         {"sellers_delta": 9, "price_drop": 0.12, "stock_add": 25},
                         "A Japanese dealer liquidated a Pogue collection onto eBay US; ask prices sliding.",

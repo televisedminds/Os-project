@@ -77,6 +77,35 @@ def test_breakeven_covers_costs():
     assert econ.breakeven_revenue_usd * (1 - fee_frac) == pytest.approx(econ.base.total_cost_usd, rel=0.05)
 
 
+def test_cn_import_to_thailand_carries_full_bottom_line():
+    gimbal = {"id": "g", "name": "Gimbal", "category": "electronics", "weight_kg": 0.6}
+    econ = economics.compute_flip(gimbal, "aliexpress", "shopee_th", 23.0, 52.0, qty=10)
+    labels = [l.label for l in econ.base.lines]
+    assert any("Shipping CN → TH" in l for l in labels)
+    assert any("Thai import VAT" in l for l in labels)
+    assert any("Thai import duty" in l for l in labels)
+    assert any("Domestic delivery to buyer" in l for l in labels)
+    assert any("Shopee TH fees" in l for l in labels)
+    assert econ.base.net_usd > 0 and econ.pessimistic.net_usd < econ.base.net_usd
+
+
+def test_domestic_thai_flip_has_last_mile_but_no_import():
+    iph = {"id": "i", "name": "iPhone", "category": "electronics", "weight_kg": 0.4}
+    econ = economics.compute_flip(iph, "facebook_mp_th", "shopee_th", 310.0, 395.0, qty=1)
+    labels = [l.label for l in econ.base.lines]
+    assert any("Domestic delivery to buyer" in l for l in labels)
+    assert not any("Thai import" in l for l in labels)
+    assert not any("Shipping" in l for l in labels)          # no cross-border legs
+
+
+def test_tiktok_shop_and_aliexpress_access_from_th():
+    f = thailand.feasibility("product_arbitrage", "electronics", "aliexpress", "tiktok_shop_th")
+    assert f.can_buy and f.can_sell and not f.requires_proxy
+    assert any("Thai ID" in n for n in f.sell_notes)
+    blocked = thailand.feasibility("product_arbitrage", "electronics", "shopee_th", "aliexpress")
+    assert not blocked.can_sell
+
+
 def test_venture_economics_positive_model():
     niche = {"id": "n", "name": "Tool", "kind": "digital", "geo": "global",
              "price_point_usd": 9.0, "metrics": {"volume": 5000, "growth_pct": 20,

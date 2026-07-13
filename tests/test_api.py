@@ -75,7 +75,7 @@ def test_briefing_agents_thailand(client):
     b = client.get("/api/briefing").json()
     assert "opportunities worth your attention" in b["headline"]
     a = client.get("/api/agents").json()
-    assert a["count"] == 13 and all("reliability" in x for x in a["agents"])
+    assert a["count"] >= 13 and all("reliability" in x for x in a["agents"])
     t = client.get("/api/thailand").json()
     assert t["venue_access"]["mercari_jp"]["sell"] is False
     assert client.get("/api/opportunities/nope").status_code == 404

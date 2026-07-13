@@ -2,8 +2,11 @@
   "_readme": [
     "Copy this file to watchlist.json and make it yours — it is re-read every cycle.",
     "products: 'queries' are OBSERVED live per venue (eBay US supported today).",
-    "'manual_listings' are YOUR sourcing quotes (Buyee/Shopee/Facebook prices you found);",
-    "update them when you re-check — the pipeline prices routes/fees/duty on top of them.",
+    "'manual_listings' are YOUR sourcing quotes (AliExpress/Shopee/Facebook/TikTok prices",
+    "you found); update them when you re-check — the pipeline prices routes, platform",
+    "fees, Thai import VAT+duty, shipping and last-mile delivery on top of them.",
+    "Tip for Thai platforms: Shopee/Lazada/TikTok show a public 'sold' number on every",
+    "listing (ขายแล้ว …) — copy it into sold_7d (divide monthly figures by 4).",
     "'bootstrap_sold_7d' seeds sell-through until enough real snapshots accumulate.",
     "niches: reddit_query drives the live demand signal; you maintain the supply-side",
     "counts (solution_count/providers) as you scout competitors."
@@ -48,6 +51,31 @@
       },
       "bootstrap_sold_7d": { "ebay_us": 8 },
       "reddit_query": "gameboy advance sp ags 101"
+    },
+    {
+      "id": "phone_gimbal_cn",
+      "name": "Foldable phone gimbal (creator kit) — CN import",
+      "category": "electronics",
+      "weight_kg": 0.6,
+      "manual_listings": {
+        "aliexpress":     { "price_usd": 23.0, "stock": 500, "sellers": 40, "sold_7d": 30,
+                            "note": "AliExpress: use the 'sold' counter; order 1 sample first" },
+        "shopee_th":      { "price_thb": 1790, "stock": 60, "sellers": 18, "sold_7d": 20,
+                            "note": "Shopee TH sell side — from the ขายแล้ว counter" },
+        "tiktok_shop_th": { "price_thb": 1990, "stock": 45, "sellers": 12, "sold_7d": 16,
+                            "note": "TikTok Shop TH — video demos sell these" }
+      }
+    },
+    {
+      "id": "used_iphone13_th",
+      "name": "iPhone 13 128GB (used, Thai set) — domestic flip",
+      "category": "electronics",
+      "weight_kg": 0.4,
+      "manual_listings": {
+        "facebook_mp_th": { "price_thb": 11300, "stock": 6, "sellers": 5, "sold_7d": 2,
+                            "note": "FB groups; meet at BTS, check battery health ≥ 85%" },
+        "shopee_th":      { "price_thb": 14400, "stock": 14, "sellers": 20, "sold_7d": 6 }
+      }
     }
   ],
   "niches": [
