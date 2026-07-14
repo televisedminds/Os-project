@@ -579,10 +579,32 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
     # ------------------------------------------------------------- dashboard
 
     if WEB_DIR.exists():
-        app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
+        # No-cache headers on /static so browsers always re-check the file, and
+        # a mtime stamp on the asset URLs so a changed file always looks "new".
+        # Together these mean an update shows up on the next reload — no more
+        # stale dashboards after `git pull`.
+        class NoCacheStatic(StaticFiles):
+            def is_not_modified(self, *a, **k) -> bool:  # force revalidation
+                return False
+
+            async def get_response(self, path, scope):
+                resp = await super().get_response(path, scope)
+                resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+                return resp
+
+        app.mount("/static", NoCacheStatic(directory=str(WEB_DIR)), name="static")
+
+        from fastapi.responses import HTMLResponse
 
         @app.get("/", include_in_schema=False)
         def index():
-            return FileResponse(WEB_DIR / "index.html")
+            html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+            for asset in ("app.js", "style.css"):
+                try:
+                    v = int((WEB_DIR / asset).stat().st_mtime)
+                except OSError:
+                    v = 0
+                html = html.replace(f"/static/{asset}", f"/static/{asset}?v={v}")
+            return HTMLResponse(html, headers={"Cache-Control": "no-cache, must-revalidate"})
 
     return app
