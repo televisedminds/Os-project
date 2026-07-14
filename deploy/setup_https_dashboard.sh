@@ -12,14 +12,18 @@
 set -euo pipefail
 APP_DIR="${APP_DIR:-/opt/opportunity-os}"
 
-echo "▸ installing Caddy (official repo)"
-apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl gnupg > /dev/null
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
-  | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
-  > /etc/apt/sources.list.d/caddy-stable.list
-apt-get update -qq
-apt-get install -y -qq caddy > /dev/null
+if command -v caddy >/dev/null 2>&1; then
+  echo "▸ Caddy already installed — skipping (re-run this script anytime to change the login)"
+else
+  echo "▸ installing Caddy (official repo)"
+  apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl gnupg > /dev/null
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+    | gpg --batch --yes --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+    > /etc/apt/sources.list.d/caddy-stable.list
+  apt-get update -qq
+  apt-get install -y -qq caddy > /dev/null
+fi
 
 read -rp "Choose a username for the dashboard login: " OOS_USER
 read -rsp "Choose a password for the dashboard login: " OOS_PASS
