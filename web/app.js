@@ -366,6 +366,16 @@ function actionCard(o) {
 
   const linkBtn = (url, label) => url
     ? `<a class="ac-link" href="${esc(url)}" target="_blank" rel="noopener">${esc(label)} ↗</a>` : "";
+  // Prefer the exact listing when we have one, and still offer the full search.
+  const sideLinks = (side, exactLabel, searchLabel) => {
+    if (!side || !side.url) return "";
+    if (side.exact) {
+      const seeAll = (side.search_url && side.search_url !== side.url)
+        ? linkBtn(side.search_url, searchLabel) : "";
+      return linkBtn(side.url, "🎯 " + exactLabel) + seeAll;
+    }
+    return linkBtn(side.url, searchLabel);
+  };
   const moneyTimeline = (tl) => !tl ? "" : `
     <div class="mt-strip">${tl.map((ev) => `
       <span class="mt-ev"><b>Day ${ev.day}</b> ${esc(ev.label)}${ev.amount_usd == null ? "" :
@@ -389,7 +399,7 @@ function actionCard(o) {
           <div class="ac-v">${esc(a.buy.venue)}</div>
           <div class="ac-p">${fmtTHB(a.buy.price_thb)} <span class="ac-sub">(${fmtUSD(a.buy.price_usd)})</span>/unit</div>
           <div class="ac-note">Never pay above ${fmtUSD(a.buy.max_price_usd)}. ${esc(a.buy.how)}</div>
-          ${linkBtn(a.buy.url, "Open live listings")}
+          ${sideLinks(a.buy, "Open the exact listing", "Open live listings")}
         </div>
         <div class="ac-arrow">→</div>
         <div class="ac-box">
@@ -397,7 +407,7 @@ function actionCard(o) {
           <div class="ac-v">${esc(a.sell.venue)}${a.sell.registered ? ' <span class="pos">✓</span>' : ""}</div>
           <div class="ac-p">${fmtTHB(a.sell.price_thb)} <span class="ac-sub">(${fmtUSD(a.sell.price_usd)})</span>/unit</div>
           <div class="ac-note">${esc(a.sell.how)}</div>
-          ${linkBtn(a.sell.url, "See competing listings")}
+          ${sideLinks(a.sell, "Open the exact listing", "See competing listings")}
           ${!a.sell.registered ? linkBtn(a.sell.signup_url, "Create seller account") : ""}
         </div>
       </div>

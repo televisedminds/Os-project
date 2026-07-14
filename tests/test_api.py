@@ -53,6 +53,38 @@ def test_detail_carries_full_evidence(client):
     assert d["history"] is None or len(d["history"]["points"]) > 2
 
 
+def test_item_url_builds_exact_links():
+    from opportunity_os import links
+    # eBay Browse returns "v1|<legacy id>|0"; link resolves to the numeric middle.
+    assert links.item_url("ebay_us", "v1|123456789012|0") == "https://www.ebay.com/itm/123456789012"
+    assert links.item_url("ebay_us", "123456789012") == "https://www.ebay.com/itm/123456789012"
+    assert links.item_url("aliexpress", "1005006357290000") == \
+        "https://www.aliexpress.com/item/1005006357290000.html"
+    assert links.item_url("facebook_mp_th", "x") is None    # no template for this venue
+    assert links.item_url("ebay_us", None) is None
+
+
+def test_action_card_prefers_exact_over_search():
+    from opportunity_os.api import _action_card
+    o = {
+        "type": "product_arbitrage",
+        "route": {"buy_venue": "aliexpress", "sell_venue": "shopee_th"},
+        "window_days": 7,
+        "title": "Foldable phone gimbal",
+        "economics": {"base": {"lines": [{"amount_usd": 23.0}], "revenue_usd": 53.0,
+                               "total_cost_usd": 30.0, "net_usd": 23.0, "margin_pct": 43.0},
+                      "pessimistic": {"net_usd": 10.0}, "qty": 10, "capital_usd": 300.0,
+                      "total_net_usd": 230.0, "fx": {"USD_THB": 34.0}},
+        "playbook": {"steps": [], "listing": {"price_usd": 53.0}},
+    }
+    resolved = {"aliexpress": ("https://www.aliexpress.com/item/1.html", "https://search/ali"),
+                "shopee_th": ("https://search/shopee", "https://search/shopee")}
+    card = _action_card(o, {}, lambda v: resolved[v])
+    assert card["buy"]["url"] == "https://www.aliexpress.com/item/1.html"
+    assert card["buy"]["exact"] is True and card["buy"]["search_url"] == "https://search/ali"
+    assert card["sell"]["exact"] is False    # url == search_url → not exact
+
+
 def test_detail_action_card_says_where_to_buy_and_sell(client):
     r = client.get("/api/opportunities").json()
     flips = [o for o in r["opportunities"] if o["type"] == "product_arbitrage"]

@@ -159,12 +159,23 @@ class ProgressIn(BaseModel):
     done: bool = True
 
 
-def _action_card(o: dict, operator: dict | None = None) -> dict | None:
+def _action_card(o: dict, operator: dict | None = None, resolve=None) -> dict | None:
     """A do-this-deal summary: where to buy, where to sell, at which prices,
-    with clickable links — everything needed to act, in one block."""
+    with clickable links — everything needed to act, in one block.
+
+    `resolve(venue) -> (exact_url, search_url)` maps a venue to the most
+    specific link we can offer (a manual watchlist URL or a live listing id,
+    falling back to the venue's search). Defaults to search-only."""
 
     operator = operator or {}
     registered = set(operator.get("registered_venues", []))
+
+    def _links(venue: str) -> tuple[str | None, str | None]:
+        if resolve:
+            return resolve(venue)
+        s = links.search_url(venue, o["title"])
+        return s, s
+
     try:
         e = o["economics"]
         fx = e.get("fx", {}).get("USD_THB", 36.4)
@@ -177,17 +188,21 @@ def _action_card(o: dict, operator: dict | None = None) -> dict | None:
             buy_usd = e["base"]["lines"][0]["amount_usd"]
             listing = pb.get("listing") or {}
             sell_usd = float(listing.get("price_usd") or e["base"]["revenue_usd"])
+            buy_url, buy_search = _links(bv)
+            sell_url, sell_search = _links(sv)
             return {
                 "type": "flip",
                 "buy": {"venue": economics.VENUES[bv]["name"],
                         "price_usd": round(buy_usd, 2), "price_thb": thb(buy_usd),
                         "max_price_usd": round(buy_usd * 1.08, 2),
                         "qty": e["qty"],
-                        "url": links.search_url(bv, o["title"]),
+                        "url": buy_url, "search_url": buy_search,
+                        "exact": bool(buy_url and buy_url != buy_search),
                         "how": thailand.VENUE_ACCESS.get(bv, {}).get("buy_note", "")},
                 "sell": {"venue": economics.VENUES[sv]["name"],
                          "price_usd": round(sell_usd, 2), "price_thb": thb(sell_usd),
-                         "url": links.search_url(sv, o["title"]),
+                         "url": sell_url, "search_url": sell_search,
+                         "exact": bool(sell_url and sell_url != sell_search),
                          "signup_url": links.signup_url(sv),
                          "registered": sv in registered,
                          "how": ("✓ You're already registered here."
@@ -355,7 +370,30 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
             o["automation"] = None
             o["locked"] = {"playbooks": "Execution playbooks and automation plans are a Pro feature.",
                            "upgrade": PLANS["pro"]["blurb"]}
-        o["action"] = _action_card(o, orch.operator)
+        def resolve_link(venue: str) -> tuple[str | None, str | None]:
+            """Most specific link we can build for this venue, plus the search fallback."""
+
+            search = links.search_url(venue, o["title"])
+            # 1) a URL the operator pinned on a manual watchlist quote (their exact source)
+            watch = getattr(orch.world, "watch", None)
+            if watch is not None:
+                wp = watch.product(o["entity_id"])
+                if wp:
+                    manual = wp.manual_listings.get(venue) or {}
+                    if manual.get("url"):
+                        return manual["url"], search
+            # 2) an exact live listing id captured by the adapter (e.g. eBay Browse)
+            try:
+                rows = store.live_snapshot_series(o["entity_id"], venue, 1)
+                ids = rows[-1]["extra"].get("item_ids") if rows else None
+                exact = links.item_url(venue, ids[0]) if ids else None
+                if exact:
+                    return exact, search
+            except Exception:
+                pass
+            return search, search
+
+        o["action"] = _action_card(o, orch.operator, resolve_link)
         o["discovery"] = _discovery(o, orch.world)
         done = store.get_progress(opp_id)
         n_steps = len((o.get("playbook") or {}).get("steps", []) or [])
