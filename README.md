@@ -40,7 +40,7 @@ CLI, for the cron-driven lifestyle:
 python run.py cycle -n 3       # run three research cycles right now
 python run.py brief            # print the morning briefing to the terminal
 python run.py reset            # wipe state and re-seed the demo world
-python -m pytest tests/ -q     # 35 tests
+python -m pytest tests/ -q     # 67 tests
 ```
 
 No database server, no build step, no API keys needed to try it: state is SQLite
@@ -54,6 +54,14 @@ The same pipeline runs on real connectors — eBay Browse API (sell side), Reddi
 your own buy-side quotes for venues that have no API (Buyee/Shopee/Facebook).
 Observations persist in SQLite so baselines accumulate across days; sources that
 fail degrade gracefully and are reported on `/api/health` and the LIVE badge.
+
+**Discovery engine.** Live mode is no longer limited to the watchlist you type:
+a discovery layer sweeps the open internet each cycle (Google Trends — keyless;
+Reddit commerce subreddits; an eBay category sweep) and auto-promotes the best
+candidates into the observed set, where the normal verify → price → gate → learn
+pipeline takes over. The eBay + Reddit keys are what make it productive; without
+them only the keyless, hard-filtered Google Trends source runs. See
+`GET /api/discovery` and the discovery panel in `run.py live-check`.
 
 ```bash
 cp watchlist.example.json watchlist.json   # what to track
@@ -183,6 +191,7 @@ re-verify → learn) is already built and tested. The demo UI carries a permanen
 | `POST /api/opportunities/{id}/outcome` | close the learning loop |
 | `POST /api/cycle` | run a research cycle now |
 | `GET /api/agents` · `GET /api/signals` · `GET /api/anomalies` | the fleet's raw work |
+| `GET /api/discovery` | what the discovery engine auto-found and is watching (live) |
 | `GET /api/learning` | weights, calibration, reliabilities, adjustments |
 | `GET /api/stats` · `GET /api/thailand` · `GET /api/plans` · `GET /api/health` | meta |
 
@@ -195,7 +204,8 @@ opportunity_os/
   economics.py       venues, fee tables, shipping rate card, routes, cost waterfalls
   thailand.py        platform access from TH, import VAT/duty, customs, payment rails
   market/world.py    deterministic causal market simulator (demo mode)
-  market/live.py     production extension point (real adapters go here)
+  market/live.py     live data source (watchlist + discovery, real adapters)
+  discovery.py       discovery engine — auto-finds new products/niches to watch
   agents/scanners.py 13 scanner agents (venues, social, trends, news)
   agents/anomaly.py  z-scores, stock crashes, spreads, gaps, imbalances
   agents/investigator.py   the why-chain + candidate builder

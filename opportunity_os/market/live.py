@@ -40,13 +40,36 @@ class LiveMarket:
     """Real-data implementation of the `DataSource` protocol."""
 
     def __init__(self, config: Config, store: Store,
-                 adapters: dict[str, BaseAdapter] | None = None):
+                 adapters: dict[str, BaseAdapter] | None = None,
+                 discovery=None):
         self.cfg = config
         self.db = store
         self.adapters = adapters if adapters is not None else build_adapters(config)
         self.watch = wl.load(config.watchlist_path)
         self.tick_no = int(store.meta_get("live_tick", 0))
         self.errors: list[str] = []
+        self.discovery = discovery
+        if self.discovery is None and getattr(config, "discovery_enabled", False):
+            from ..discovery import DiscoveryEngine
+            self.discovery = DiscoveryEngine(config, store)
+        self.discovery_report: dict = {}
+
+    # ---- observed set = curated watchlist + live discovery winners ----------
+
+    def _all_products(self) -> list[wl.WatchProduct]:
+        base = list(self.watch.products)
+        if self.discovery:
+            base += self.discovery.extra_products({p.id for p in base})
+        return base
+
+    def _all_niches(self) -> list[wl.WatchNiche]:
+        base = list(self.watch.niches)
+        if self.discovery:
+            base += self.discovery.extra_niches({n.id for n in base})
+        return base
+
+    def _product(self, pid: str) -> wl.WatchProduct | None:
+        return next((p for p in self._all_products() if p.id == pid), None)
 
     # ------------------------------------------------------------------ tick
 
@@ -57,6 +80,13 @@ class LiveMarket:
         self.tick_no += 1
         t = self.tick_no
         self.errors = []
+
+        # Discovery sweeps are heavier (many outbound calls) so they run every
+        # Nth cycle. New candidates join the observed set immediately below.
+        if self.discovery and (t % max(1, self.cfg.discover_every_n_ticks) == 1):
+            self.discovery_report = self.discovery.run()
+            for e in self.discovery_report.get("errors", []):
+                self._err(f"discovery/{e}")
 
         fx = self.adapters.get("fx")
         if fx and hasattr(fx, "rates"):
@@ -72,7 +102,7 @@ class LiveMarket:
         news = self.adapters.get("news")
         headlines: list[dict] = []
 
-        for p in self.watch.products:
+        for p in self._all_products():
             fetched: set[str] = set()
             for venue, query in sorted(p.queries.items()):
                 ad = self.adapters.get(venue)
@@ -116,7 +146,7 @@ class LiveMarket:
             if news and p.news_query:
                 headlines += self._fresh_headlines(news, p.id, p.news_query)
 
-        for n in self.watch.niches:
+        for n in self._all_niches():
             count = None
             if reddit and n.reddit_query:
                 count = reddit.mentions_24h(n.reddit_query)
@@ -178,16 +208,16 @@ class LiveMarket:
     # ------------------------------------------------------- DataSource impl
 
     def product_ids(self) -> list[str]:
-        return sorted(p.id for p in self.watch.products)
+        return sorted(p.id for p in self._all_products())
 
     def venue_ids(self) -> list[str]:
         vids: set[str] = set()
-        for p in self.watch.products:
+        for p in self._all_products():
             vids.update(p.venues())
         return sorted(vids)
 
     def product_public(self, product_id: str) -> dict:
-        p = self.watch.product(product_id)
+        p = self._product(product_id)
         if not p:
             return {"id": product_id, "name": product_id, "category": "collectibles",
                     "weight_kg": 0.5, "venues": []}
@@ -222,7 +252,7 @@ class LiveMarket:
 
     def niches(self) -> list[dict]:
         out = []
-        for n in sorted(self.watch.niches, key=lambda x: x.id):
+        for n in sorted(self._all_niches(), key=lambda x: x.id):
             hist = self.db.live_niche_series(n.id, 1)
             metrics = hist[-1] if hist else self._niche_metrics(n, None)
             out.append({"id": n.id, "name": n.name, "kind": n.kind, "geo": n.geo,

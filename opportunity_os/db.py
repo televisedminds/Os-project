@@ -46,6 +46,10 @@ CREATE INDEX IF NOT EXISTS idx_live_mention ON live_mentions(entity_id, source, 
 CREATE TABLE IF NOT EXISTS mission_progress (
     opportunity_id TEXT, step_order INTEGER, done INTEGER, ts REAL,
     PRIMARY KEY (opportunity_id, step_order));
+CREATE TABLE IF NOT EXISTS discovered (
+    id TEXT PRIMARY KEY, kind TEXT, name TEXT, source TEXT, score REAL,
+    status TEXT, first_ts REAL, last_ts REAL, payload TEXT);
+CREATE INDEX IF NOT EXISTS idx_discovered_status ON discovered(status, score);
 """
 
 
@@ -309,6 +313,69 @@ class Store:
                 "SELECT entity_id, tick, text, etype FROM live_headlines WHERE entity_id=? "
                 "ORDER BY id DESC LIMIT ?", (entity_id, limit)).fetchall()
         return [dict(r) for r in reversed(rows)]
+
+    # -------------------------------------------------------- discovery store
+
+    def upsert_discovered(self, cand: dict) -> bool:
+        """Persist a discovered candidate. Returns True if it is newly promoted
+        (first time seen), False if it was already known (score refreshed)."""
+
+        now = time.time()
+        with self._lock, self._conn:
+            existing = self._conn.execute("SELECT id FROM discovered WHERE id=?",
+                                          (cand["id"],)).fetchone()
+            self._conn.execute(
+                "INSERT INTO discovered(id,kind,name,source,score,status,first_ts,last_ts,payload) "
+                "VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+                "score=MAX(discovered.score,excluded.score), last_ts=excluded.last_ts, "
+                "name=excluded.name, source=excluded.source, payload=excluded.payload, "
+                "status='active'",
+                (cand["id"], cand["kind"], cand["name"], cand["source"], float(cand["score"]),
+                 "active", now, now, json.dumps(cand, default=str)))
+        return existing is None
+
+    def list_discovered(self, active_only: bool = False, limit: int = 100) -> list[dict]:
+        sql = "SELECT payload, status, first_ts, last_ts, score FROM discovered"
+        if active_only:
+            sql += " WHERE status='active'"
+        sql += " ORDER BY score DESC, last_ts DESC LIMIT ?"
+        with self._lock:
+            rows = self._conn.execute(sql, (limit,)).fetchall()
+        out = []
+        for r in rows:
+            p = json.loads(r["payload"])
+            p.update(status=r["status"], first_ts=r["first_ts"], last_ts=r["last_ts"],
+                     score=r["score"])
+            out.append(p)
+        return out
+
+    def expire_discovered(self, ttl_days: float, max_active: int) -> int:
+        """Retire stale (past TTL) and overflow (beyond the active cap, lowest
+        score first) discoveries. Returns how many were retired."""
+
+        cutoff = time.time() - ttl_days * 86400
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE discovered SET status='expired' WHERE status='active' AND last_ts < ?",
+                (cutoff,))
+            retired = cur.rowcount or 0
+            keep = [r["id"] for r in self._conn.execute(
+                "SELECT id FROM discovered WHERE status='active' ORDER BY score DESC, last_ts DESC "
+                "LIMIT ?", (max_active,)).fetchall()]
+            if keep:
+                placeholders = ",".join("?" * len(keep))
+                cur = self._conn.execute(
+                    f"UPDATE discovered SET status='expired' WHERE status='active' "
+                    f"AND id NOT IN ({placeholders})", keep)
+                retired += cur.rowcount or 0
+        return retired
+
+    def discovered_counts(self) -> dict:
+        with self._lock:
+            active = self._conn.execute(
+                "SELECT COUNT(*) FROM discovered WHERE status='active'").fetchone()[0]
+            total = self._conn.execute("SELECT COUNT(*) FROM discovered").fetchone()[0]
+        return {"active": active, "total": total}
 
     def close(self) -> None:
         with self._lock:

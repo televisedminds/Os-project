@@ -321,6 +321,13 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
             out["adapters"] = orch.world.status() if hasattr(orch.world, "status") else []
             out["source_errors_last_cycle"] = getattr(orch.world, "errors", [])
             out["fx"] = store.meta_get("live_fx")
+            disc = getattr(orch.world, "discovery", None)
+            if disc is not None:
+                out["discovery"] = {"enabled": True, "sources": disc.status(),
+                                    "counts": store.discovered_counts(),
+                                    "last_run": getattr(orch.world, "discovery_report", {})}
+            else:
+                out["discovery"] = {"enabled": False}
         return out
 
     @app.get("/api/briefing")
@@ -575,6 +582,19 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
     @app.get("/api/anomalies")
     def anomalies(limit: int = Query(default=30, le=200)):
         return {"anomalies": store.recent_anomalies(limit)}
+
+    @app.get("/api/discovery")
+    def discovery(limit: int = Query(default=60, le=200), active_only: bool = True):
+        """What the discovery engine has auto-found and is watching."""
+
+        disc = getattr(orch.world, "discovery", None)
+        return {
+            "enabled": disc is not None,
+            "counts": store.discovered_counts(),
+            "sources": disc.status() if disc is not None else [],
+            "last_run": getattr(orch.world, "discovery_report", {}),
+            "found": store.list_discovered(active_only=active_only, limit=limit),
+        }
 
     @app.get("/api/learning")
     def learning():

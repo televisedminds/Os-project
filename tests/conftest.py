@@ -1,9 +1,24 @@
 import pytest
 
+from opportunity_os import economics
 from opportunity_os.config import Config
 from opportunity_os.db import Store
 from opportunity_os.market import SimulatedMarket
 from opportunity_os.pipeline import Orchestrator
+
+
+@pytest.fixture(autouse=True)
+def _isolate_fx():
+    """FX lives in process-global module state (set live every cycle). Snapshot
+    and restore it around each test so a live cycle in one test can't leak a
+    non-default rate into another (e.g. the economics THB assertions)."""
+
+    saved_usd_thb = economics.USD_THB
+    saved_map = dict(economics.FX_TO_USD)
+    yield
+    economics.USD_THB = saved_usd_thb
+    economics.FX_TO_USD.clear()
+    economics.FX_TO_USD.update(saved_map)
 
 
 @pytest.fixture

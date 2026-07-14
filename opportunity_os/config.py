@@ -79,6 +79,16 @@ class Config:
     telegram_bot_token: str = _env("TELEGRAM_BOT_TOKEN", "")
     telegram_chat_id: str = _env("TELEGRAM_CHAT_ID", "")
 
+    # Discovery engine (live mode): auto-find new products/niches to watch so
+    # the fleet isn't limited to the hand-typed watchlist. Off in demo.
+    discovery_enabled: bool = field(
+        default_factory=lambda: os.environ.get("OOS_DISCOVERY", "1") not in ("0", "false", "no"))
+    discover_every_n_ticks: int = field(default_factory=lambda: int(os.environ.get("OOS_DISCOVER_EVERY", "6")))
+    discovery_scan_cap: int = field(default_factory=lambda: int(os.environ.get("OOS_DISCOVERY_SCAN_CAP", "60")))
+    discovery_max_active: int = field(default_factory=lambda: int(os.environ.get("OOS_DISCOVERY_MAX", "40")))
+    discovery_ttl_days: float = field(default_factory=lambda: float(os.environ.get("OOS_DISCOVERY_TTL_DAYS", "10")))
+    discovery_trends_geo: str = _env("OOS_DISCOVERY_GEO", "US")
+
     # Home base: the operator is in Thailand. Every opportunity is assessed
     # for buy/sell feasibility from Thailand.
     home_country: str = "TH"

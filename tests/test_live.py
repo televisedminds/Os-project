@@ -42,7 +42,8 @@ NICHE = {
 @pytest.fixture
 def live_cfg(tmp_path):
     path = write_watchlist(tmp_path, [PRODUCT], [NICHE])
-    return Config(db_path=tmp_path / "live.db", mode="live", watchlist_path=path)
+    return Config(db_path=tmp_path / "live.db", mode="live", watchlist_path=path,
+                  discovery_enabled=False)   # discovery is exercised in test_discovery.py
 
 
 class FakeEbay:

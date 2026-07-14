@@ -134,6 +134,7 @@ class Orchestrator:
             "rejected": rejected,
             "reverified": reverified,
             "invalidated": invalidated,
+            "discovered": getattr(self.world, "discovery_report", {}) or {},
         }
         self.db.add_cycle(tick, round((time.time() - t0) * 1000, 1), report)
         self.db.meta_set("tick", tick)
