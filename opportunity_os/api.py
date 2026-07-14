@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
+from datetime import date as _date
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -117,6 +119,16 @@ def _discovery(o: dict, world) -> dict | None:
                 rows.append({"label": f"Source supply — {economics.VENUES[bv]['name']}",
                              "value": f"{bl['stock']} units @ ${bl['price']:.2f}",
                              "delta": "still deep" if bl["stock"] >= 20 else "limited"})
+            # Detection provenance: when WE first flagged it, and what the
+            # market has done since — the provable head start.
+            age_ticks = world.tick_no - o.get("tick_created", world.tick_no)
+            if 0 < age_ticks < len(sh) and o.get("created_ts"):
+                p0 = sh[-(age_ticks + 1)]["price"]
+                hours = (time.time() - o["created_ts"]) / 3600
+                age_label = f"{hours:.0f}h ago" if hours < 48 else f"{hours / 24:.0f} days ago"
+                rows.insert(0, {"label": "⚡ First flagged by the fleet",
+                                "value": f"{age_label} @ ${p0:.2f}",
+                                "delta": _pct_delta(sh[-1]["price"], p0)})
         else:
             nh = world.niche_history(eid)
             if len(nh) >= 5:
@@ -209,7 +221,7 @@ def _action_card(o: dict, operator: dict | None = None) -> dict | None:
         return None
 
 
-def _row(o: dict) -> dict:
+def _row(o: dict, affinity: int = 0) -> dict:
     """Feed-row projection of a stored opportunity."""
 
     route = o.get("route", {})
@@ -233,6 +245,11 @@ def _row(o: dict) -> dict:
         "updated_ts": o.get("updated_ts"),
         "sources": o.get("sources", []),
         "invalidation_reason": o.get("invalidation_reason", ""),
+        "personal": ({"boost": affinity,
+                      "note": (f"Prioritized — you've profited in {o['category'].replace('_', ' ')} before"
+                               if affinity > 0 else
+                               f"Downranked — past losses in {o['category'].replace('_', ' ')}")}
+                     if affinity else None),
     }
 
 
@@ -301,7 +318,10 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
                            plan: str | None = None,
                            limit: int = Query(default=100, le=500)):
         p = plan_of(plan)
-        rows = [_row(o) for o in store.list_opportunities(status, category, min_score, q, limit)]
+        rows = [_row(o, orch.learning.category_affinity(o["category"]))
+                for o in store.list_opportunities(status, category, min_score, q, limit)]
+        rows.sort(key=lambda r: (r["status"] != "active",
+                                 -(r["score"] + 2 * ((r.get("personal") or {}).get("boost", 0)))))
         locked = 0
         if p["max_opportunities"] is not None:
             keep = [r for r in rows if r["status"] == "active"][:p["max_opportunities"]]
@@ -398,6 +418,107 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         items.sort(key=lambda x: x["ts"], reverse=True)
         return {"items": items[:limit]}
 
+    @app.get("/api/goal")
+    def goal():
+        """The compounding view: wallet → goal, with today's best mission."""
+
+        op = orch.operator or {}
+        actives = store.active_opportunities()
+        realized = sum((r["realized_profit_usd"] or 0) for r in store.recent_outcomes(200)
+                       if r["result"] == "success")
+        realized -= sum(abs(r["realized_profit_usd"] or 0) for r in store.recent_outcomes(200)
+                        if r["result"] == "failure")
+        capital_start = op.get("capital_usd") or op.get("budget_usd") or cfg.capital_cap_usd
+        wallet = round(capital_start + realized, 2)
+        deployed = round(sum(o["economics"]["capital_usd"] for o in actives
+                             if 1 in store.get_progress(o["id"])), 2)
+        goal_usd = op.get("goal_usd")
+
+        mission, best_roi = None, 0.0
+        for o in actives:
+            cap = o["economics"]["capital_usd"]
+            if 0 < cap <= wallet:
+                roi = o["economics"]["total_net_usd"] / cap
+                if roi > best_roi:
+                    best_roi = roi
+                    mission = {"id": o["id"], "title": o["title"],
+                               "expected_usd": o["economics"]["total_net_usd"],
+                               "capital_usd": cap, "roi_pct": round(roi * 100),
+                               "window_days": o["window_days"]}
+        # Conservative projection: assume you execute ~1/3 of what's verified.
+        projected_monthly = round(sum(o["economics"]["total_net_usd"] / max(2.0, o["window_days"]) * 30
+                                      for o in actives) / 3, 2)
+        out = {
+            "enabled": bool(goal_usd or op.get("capital_usd")),
+            "wallet_usd": wallet, "capital_start_usd": capital_start,
+            "realized_usd": round(realized, 2), "deployed_usd": deployed,
+            "cash_usd": round(wallet - deployed, 2),
+            "goal_usd": goal_usd,
+            "progress_pct": round(100 * wallet / goal_usd, 1) if goal_usd else None,
+            "projected_monthly_usd": projected_monthly,
+            "eta_months": (round(max(0.0, goal_usd - wallet) / projected_monthly, 1)
+                           if goal_usd and projected_monthly > 0 else None),
+            "mission": mission,
+            "recommendation": (f"Act: '{mission['title']}' is the best use of your cash today "
+                               f"({mission['roi_pct']}% ROI)." if mission else
+                               "Hold cash — nothing verified clears the bar for your wallet today. "
+                               "That is the system protecting you, not failing you."),
+            "note": "Projection assumes you execute about a third of verified opportunities; "
+                    "recorded outcomes replace assumptions over time.",
+        }
+        return out
+
+    @app.get("/api/funnel")
+    def funnel(hours: float = Query(default=24, le=168)):
+        """The research funnel: how much work produced today's shortlist."""
+
+        cutoff = time.time() - hours * 3600
+        agg = {"observations": 0, "anomalies": 0, "investigations": 0,
+               "verified": 0, "rejected": 0, "killed": 0, "cycles": 0}
+        for c in store.recent_cycles(50):
+            if c["ts"] < cutoff:
+                continue
+            rep = c["report"]
+            agg["cycles"] += 1
+            agg["observations"] += rep.get("signals", 0)
+            agg["anomalies"] += rep.get("anomalies", 0)
+            agg["investigations"] += rep.get("candidates", 0)
+            agg["verified"] += len(rep.get("published", []))
+            agg["rejected"] += len(rep.get("rejected", []))
+            agg["killed"] += len(rep.get("invalidated", []))
+        agg["recommended_now"] = store.stats()["opportunities_active"]
+        agg["hours"] = hours
+        return agg
+
+    @app.get("/api/radar")
+    def radar():
+        """Known future catalysts (you feed them; the AI computes prep windows)."""
+
+        try:
+            from .market import watchlist as wl
+            items = wl.load(cfg.watchlist_path).radar if cfg.watchlist_path.exists() else []
+        except Exception:
+            items = []
+        out = []
+        today = _date.today()
+        for c in items:
+            try:
+                d = _date.fromisoformat(c.date)
+            except ValueError:
+                continue
+            days = (d - today).days
+            if days < -7:
+                continue
+            out.append({"date": c.date, "label": c.label, "note": c.note,
+                        "related": c.related, "days_until": days,
+                        "prep_days": c.prep_days,
+                        "prep_opens_in_days": max(0, days - c.prep_days),
+                        "status": ("prep window OPEN — act now" if 0 <= days <= c.prep_days
+                                   else "passed" if days < 0
+                                   else f"prep opens in {days - c.prep_days} days")})
+        out.sort(key=lambda x: x["days_until"])
+        return {"items": out}
+
     @app.post("/api/cycle")
     def run_cycle():
         return orch.run_cycle()
@@ -438,6 +559,11 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
                              "signals": c["report"].get("signals", 0)} for c in cycles]
         s["categories"] = sorted({o["category"] for o in store.list_opportunities(limit=500)})
         s["last_report"] = cycles[0]["report"] if cycles else None
+        actives = store.active_opportunities()
+        s["capital_needed_usd"] = round(sum(o["economics"]["capital_usd"] for o in actives), 2)
+        rois = [(o["economics"]["total_net_usd"] / o["economics"]["capital_usd"] * 100)
+                for o in actives if o["economics"]["capital_usd"] > 0]
+        s["best_roi_pct"] = round(max(rois), 0) if rois else 0
         return s
 
     @app.get("/api/thailand")

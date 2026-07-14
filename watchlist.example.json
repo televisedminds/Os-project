@@ -12,13 +12,22 @@
     "counts (solution_count/providers) as you scout competitors."
   ],
   "operator": {
-    "_help": "Who is executing. budget_usd caps position sizing; avoid_types hides whole categories (product_arbitrage, digital_product, info_product, local_service, b2b_service); registered_venues marks platforms you already sell on so playbooks skip signup.",
+    "_help": "Who is executing. capital_usd = your wallet today; goal_usd = the number everything works toward; budget_usd caps per-deal position sizing; avoid_types hides whole categories (product_arbitrage, digital_product, info_product, local_service, b2b_service); registered_venues marks platforms you already sell on so playbooks skip signup.",
+    "capital_usd": 500,
+    "goal_usd": 10000,
     "budget_usd": null,
     "avoid_types": [],
     "prefer_categories": [],
     "registered_venues": [],
     "has": ["PromptPay"]
   },
+  "radar": [
+    { "date": "2026-10-16", "label": "Pokémon 'Mega Evolution' set — global release",
+      "note": "Sealed JP product historically appreciates into set launches.",
+      "related": "moonbreon_umbreon_vmax", "prep_days": 30 },
+    { "date": "2026-08-10", "label": "Back-to-school peak (TH) — electronics demand",
+      "note": "Gimbals/keyboards sell-through rises; stock up 3 weeks ahead.", "prep_days": 21 }
+  ],
   "products": [
     {
       "id": "moonbreon_umbreon_vmax",

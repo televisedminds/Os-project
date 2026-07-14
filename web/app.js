@@ -70,8 +70,9 @@ function toast(msg, ms = 5000) {
 /* ------------------------------------------------------------- briefing */
 
 async function loadBriefing() {
-  const [b, s, h] = await Promise.all([
-    api(`/api/briefing?plan=${state.plan}`), api("/api/stats"), api("/api/health")]);
+  const [b, s, h, g, fu] = await Promise.all([
+    api(`/api/briefing?plan=${state.plan}`), api("/api/stats"), api("/api/health"),
+    api("/api/goal"), api("/api/funnel")]);
   const badge = document.querySelector(".badge-demo");
   if (badge && h.mode === "live") {
     badge.textContent = "LIVE FEED";
@@ -84,19 +85,59 @@ async function loadBriefing() {
   $("#tick-label").textContent = h.mode === "live"
     ? `pass ${s.tick} · observing every cycle`
     : `tick ${s.tick} · 1 cycle ≈ 1 market day`;
+  $("#hero-money").textContent = fmtUSD(s.profit_pool_usd, 0);
   $("#briefing-headline").textContent = b.headline;
   $("#briefing-notes").textContent = b.notes.join("  ");
+
+  const mc = $("#mission-chip");
+  if (g.mission) {
+    mc.innerHTML = `<button class="mission-cta" data-id="${esc(g.mission.id)}">🎯 Today's mission:
+      <b>${esc(g.mission.title)}</b> — expected <b class="pos">+${fmtUSD(g.mission.expected_usd)}</b>
+      on ${fmtUSD(g.mission.capital_usd)} (${g.mission.roi_pct}% ROI) →</button>`;
+    mc.querySelector(".mission-cta").addEventListener("click", () =>
+      selectOpportunity(g.mission.id).catch(() => {}));
+  } else {
+    mc.innerHTML = `<div class="mission-cta mission-hold">🛡 ${esc(g.recommendation)}</div>`;
+  }
+
+  const gp = $("#goal-panel");
+  if (g.enabled && g.goal_usd) {
+    gp.hidden = false;
+    const pctDone = Math.min(100, g.progress_pct || 0);
+    gp.innerHTML = `
+      <div class="tile-label">YOUR GOAL</div>
+      <div class="goal-nums"><b>${fmtUSD(g.wallet_usd, 0)}</b><span class="of">/ ${fmtUSD(g.goal_usd, 0)}</span></div>
+      <div class="meter"><div class="meter-track"><div class="meter-fill" style="width:${pctDone}%"></div></div>
+        <span class="meter-num">${pctDone.toFixed(0)}%</span></div>
+      <div class="tile-sub">cash ${fmtUSD(g.cash_usd, 0)} · deployed ${fmtUSD(g.deployed_usd, 0)} ·
+        realized ${fmtUSD(g.realized_usd, 0)}</div>
+      ${g.eta_months ? `<div class="tile-sub">≈ ${g.eta_months} months at the current verified pace</div>` : ""}`;
+  } else {
+    gp.hidden = false;
+    gp.innerHTML = `<div class="tile-label">YOUR GOAL</div>
+      <div class="tile-sub" style="margin-top:6px">Set <code>"capital_usd"</code> and <code>"goal_usd"</code>
+      in the operator section of watchlist.json and the whole product starts working toward your number.</div>`;
+  }
+
+  $("#funnel-strip").innerHTML = `
+    <span class="fn-label">RESEARCH FUNNEL · last 24h</span>
+    <span class="fn-step"><b>${fu.observations.toLocaleString()}</b> observations</span><span class="fn-a">→</span>
+    <span class="fn-step"><b>${fu.anomalies.toLocaleString()}</b> anomalies</span><span class="fn-a">→</span>
+    <span class="fn-step"><b>${fu.investigations.toLocaleString()}</b> investigated</span><span class="fn-a">→</span>
+    <span class="fn-step"><b>${fu.rejected.toLocaleString()}</b> rejected</span><span class="fn-a">→</span>
+    <span class="fn-step"><b>${fu.verified.toLocaleString()}</b> verified</span><span class="fn-a">→</span>
+    <span class="fn-step fn-final"><b>${fu.recommended_now}</b> live for you now</span>`;
+
   const conf = s.avg_confidence || 0;
   const lastInv = b.counts.invalidated_last_cycle;
   $("#stat-tiles").innerHTML = `
     ${tile("Verified active", s.opportunities_active, "published & re-verified each cycle")}
-    ${tile("New today", b.counts.new_today, `tick ${s.tick}`)}
     ${tile("Avg confidence", pct(conf), "reliability-weighted consensus")}
-    ${tile("Est. profit pool", fmtUSD(s.profit_pool_usd, 0), "sum of active base-case nets")}
+    ${tile("Capital needed", fmtUSD(s.capital_needed_usd, 0), "to take every active deal")}
+    ${tile("Best ROI", (s.best_roi_pct || 0) + "%", "highest verified return live now")}
+    ${tile("Closing soon", b.counts.closing_soon ?? 0, "window ≤ 3 days — act first")}
     ${tile("Invalidated", `${lastInv}<span style="font-size:13px;color:var(--muted)"> last cycle</span>`,
            `${s.invalidated} all-time — conditions changed`)}
-    ${tile("Closing soon", b.counts.closing_soon ?? 0, "window ≤ 3 days — act first")}
-    ${tile("Signals stored", s.signals_total.toLocaleString(), `${s.anomalies_total.toLocaleString()} anomalies flagged`)}
   `;
 }
 const tile = (label, value, sub) =>
@@ -137,6 +178,8 @@ async function loadFeed() {
           <span class="chip"><span class="dot" style="background:${dot}"></span>${esc(TYPE_LABEL[o.type] || o.type)}</span>
           <span class="chip">${esc(o.category.replace(/_/g, " "))}</span>
           <span class="chip">${esc(o.route)}</span>
+          ${o.personal ? `<span class="chip personal-chip ${o.personal.boost > 0 ? "" : "personal-down"}"
+            title="${esc(o.personal.note)}">${o.personal.boost > 0 ? "★ for you" : "▼ downranked"}</span>` : ""}
         </div>
       </td>
       <td class="t-right"><span class="${o.net_usd >= 0 ? "pos" : "neg"}">${fmtUSD(o.net_usd)}</span>
@@ -607,6 +650,19 @@ async function loadOps() {
           <div class="pipe-item ${a.result === "success" ? "pub" : "rej"}">${esc(a.note)}</div>`).join("")
           : '<div class="wf-note">none yet — the loop closes when you record outcomes</div>'}</div>
     </div>`;
+  } else if (state.opsTab === "radar") {
+    const r = await api("/api/radar");
+    body.innerHTML = !r.items.length
+      ? `<p class="wf-note">No catalysts on the radar. Add known future events to the
+         <code>radar</code> section of watchlist.json — set releases, movie premieres, rule changes —
+         and the AI computes when your prep window opens (buy lead time + sell-in).</p>`
+      : `<div class="pipe-cols">${r.items.map((c) => `
+          <div class="pipe-item ${c.status.includes("OPEN") ? "pub" : ""}">
+            <b style="color:var(--ink)">${esc(c.label)}</b>
+            <div class="r">${esc(c.date)} · in ${c.days_until} days · ${esc(c.status)}</div>
+            ${c.note ? `<div class="r">${esc(c.note)}</div>` : ""}
+            ${c.related ? `<div class="r">related: ${esc(c.related)}</div>` : ""}
+          </div>`).join("")}</div>`;
   } else if (state.opsTab === "thailand") {
     const t = await api("/api/thailand");
     body.innerHTML = `<div class="th-grid">

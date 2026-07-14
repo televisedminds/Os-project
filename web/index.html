@@ -29,11 +29,20 @@
 </header>
 
 <main>
-  <!-- Morning briefing -->
+  <!-- Morning briefing: money first -->
   <section class="briefing" id="briefing">
-    <div class="briefing-head" id="briefing-headline">Waking the agents…</div>
-    <div class="briefing-notes" id="briefing-notes"></div>
+    <div class="briefing-hero">
+      <div class="hero-left">
+        <div class="hero-money-label">TODAY'S EXPECTED PROFIT — verified, base case</div>
+        <div class="hero-money" id="hero-money">—</div>
+        <div class="briefing-head" id="briefing-headline">Waking the agents…</div>
+        <div class="briefing-notes" id="briefing-notes"></div>
+        <div id="mission-chip"></div>
+      </div>
+      <div class="goal-panel" id="goal-panel" hidden></div>
+    </div>
     <div class="tiles" id="stat-tiles"></div>
+    <div class="funnel-strip" id="funnel-strip"></div>
   </section>
 
   <!-- Feed + detail -->
@@ -90,6 +99,7 @@
       <button class="ops-tab" data-tab="agents">Agent fleet</button>
       <button class="ops-tab" data-tab="pipeline">Last cycle</button>
       <button class="ops-tab" data-tab="learning">Learning</button>
+      <button class="ops-tab" data-tab="radar">Radar</button>
       <button class="ops-tab" data-tab="thailand">Thailand lens</button>
     </nav>
     <div class="ops-body" id="ops-body"></div>

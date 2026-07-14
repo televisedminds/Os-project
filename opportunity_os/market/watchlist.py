@@ -62,6 +62,8 @@ class Operator:
     """Who is executing — so the AI never recommends the impossible."""
 
     budget_usd: float | None = None
+    capital_usd: float | None = None            # wallet: what you have to deploy today
+    goal_usd: float | None = None               # the number the whole product works toward
     avoid_types: list[str] = field(default_factory=list)        # e.g. ["local_service"]
     prefer_categories: list[str] = field(default_factory=list)
     registered_venues: list[str] = field(default_factory=list)  # platforms you already sell on
@@ -69,10 +71,24 @@ class Operator:
 
 
 @dataclass
+class Catalyst:
+    """A known future event that should move demand (movie premiere, set
+    release, visa rule change). You feed the radar; the AI computes the
+    prep window. Honest forecasting — no invented predictions."""
+
+    date: str                                    # YYYY-MM-DD
+    label: str
+    note: str = ""
+    related: str | None = None                   # optional product/niche id
+    prep_days: int = 30                          # how far ahead to act
+
+
+@dataclass
 class Watchlist:
     products: list[WatchProduct]
     niches: list[WatchNiche]
     operator: Operator = field(default_factory=Operator)
+    radar: list[Catalyst] = field(default_factory=list)
     path: Path | None = None
 
     def product(self, pid: str) -> WatchProduct | None:
@@ -137,12 +153,17 @@ def load(path: Path) -> Watchlist:
     op_raw = raw.get("operator", {}) or {}
     operator = Operator(
         budget_usd=float(op_raw["budget_usd"]) if op_raw.get("budget_usd") else None,
+        capital_usd=float(op_raw["capital_usd"]) if op_raw.get("capital_usd") else None,
+        goal_usd=float(op_raw["goal_usd"]) if op_raw.get("goal_usd") else None,
         avoid_types=list(op_raw.get("avoid_types", [])),
         prefer_categories=list(op_raw.get("prefer_categories", [])),
         registered_venues=list(op_raw.get("registered_venues", [])),
         has=list(op_raw.get("has", [])),
     )
-    w = Watchlist(products=products, niches=niches, operator=operator, path=path)
+    radar = [Catalyst(date=c["date"], label=c["label"], note=c.get("note", ""),
+                      related=c.get("related"), prep_days=int(c.get("prep_days", 30)))
+             for c in raw.get("radar", [])]
+    w = Watchlist(products=products, niches=niches, operator=operator, radar=radar, path=path)
     problems = validate(w)
     if problems:
         raise ValueError("watchlist has problems:\n  - " + "\n  - ".join(problems))

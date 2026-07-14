@@ -126,6 +126,43 @@ def test_activity_feed_shows_fleet_working(client):
     assert items == sorted(items, key=lambda i: i["ts"], reverse=True)
 
 
+def test_goal_engine_wallet_mission_and_recommendation(client):
+    g = client.get("/api/goal").json()
+    assert g["wallet_usd"] > 0 and g["cash_usd"] <= g["wallet_usd"]
+    assert isinstance(g["recommendation"], str) and g["recommendation"]
+    if g["mission"]:
+        assert g["mission"]["capital_usd"] <= g["wallet_usd"]
+        assert g["mission"]["roi_pct"] > 0
+    # recording a success moves realized wealth
+    oid = client.get("/api/opportunities").json()["opportunities"][0]["id"]
+    client.post(f"/api/opportunities/{oid}/outcome",
+                json={"result": "success", "realized_profit_usd": 50.0})
+    g2 = client.get("/api/goal").json()
+    assert g2["realized_usd"] == 50.0
+    assert g2["wallet_usd"] == g["wallet_usd"] + 50.0
+
+
+def test_funnel_narrows_and_radar_parses(client):
+    f = client.get("/api/funnel").json()
+    assert f["observations"] >= f["anomalies"] >= f["investigations"] >= f["verified"]
+    assert f["recommended_now"] >= 0
+    r = client.get("/api/radar").json()
+    assert isinstance(r["items"], list)
+    for item in r["items"]:
+        assert item["days_until"] >= -7 and "status" in item
+
+
+def test_category_affinity_prioritizes_feed(client):
+    rows = client.get("/api/opportunities").json()["opportunities"]
+    target = next(o for o in rows if o["status"] == "active")
+    client.post(f"/api/opportunities/{target['id']}/outcome",
+                json={"result": "success", "realized_profit_usd": 10.0})
+    rows2 = client.get("/api/opportunities").json()["opportunities"]
+    boosted = [o for o in rows2 if o.get("personal") and o["personal"]["boost"] > 0]
+    assert any(o["category"] == target["category"] for o in boosted)
+    assert all("before" in o["personal"]["note"] for o in boosted)
+
+
 def test_briefing_agents_thailand(client):
     b = client.get("/api/briefing").json()
     assert "opportunities worth your attention" in b["headline"]

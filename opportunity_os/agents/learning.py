@@ -35,8 +35,10 @@ class LearningEngine:
             "verifier_reliability": {},
             "calibration": 1.0,
             "outcomes": {"success": 0, "failure": 0},
+            "category_affinity": {},
             "adjustments": [],
         }
+        self.state.setdefault("category_affinity", {})
 
     # -------------------------------------------------------------- accessors
 
@@ -55,6 +57,11 @@ class LearningEngine:
     def source_reliability(self, source: str) -> float:
         return self.state["source_reliability"].get(source, 0.8)
 
+    def category_affinity(self, category: str) -> int:
+        """-3..+3: your realized track record in this category."""
+
+        return int(self.state.get("category_affinity", {}).get(category, 0))
+
     # ---------------------------------------------------------------- updates
 
     def record_outcome(self, opportunity: dict, result: str, realized_profit_usd: float | None,
@@ -64,6 +71,10 @@ class LearningEngine:
         verifiers = [c["verifier"] for c in opportunity.get("verification", {}).get("checks", [])]
         note: str
 
+        cat = opportunity.get("category")
+        if cat:
+            aff = st.setdefault("category_affinity", {})
+            aff[cat] = max(-3, min(3, aff.get(cat, 0) + (1 if result == "success" else -1)))
         if result == "success":
             st["outcomes"]["success"] += 1
             st["calibration"] = min(1.10, st["calibration"] + 0.02)

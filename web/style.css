@@ -81,8 +81,38 @@ select:focus, input:focus { border-color: var(--accent); }
 
 /* -------------------------------------------------------------- briefing */
 .briefing { padding: 22px 2px 14px; }
-.briefing-head { color: var(--ink); font-size: 21px; font-weight: 600; max-width: 900px; }
+.briefing-hero { display: flex; gap: 18px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.hero-left { flex: 1; min-width: 300px; }
+.hero-money-label { font-size: 10.5px; letter-spacing: 1.4px; color: var(--muted); }
+.hero-money { color: var(--ink); font-size: 46px; font-weight: 650; line-height: 1.1; margin: 2px 0 6px; }
+.briefing-head { color: var(--ink); font-size: 17px; font-weight: 600; max-width: 900px; }
 .briefing-notes { color: var(--muted); margin-top: 6px; max-width: 900px; }
+.mission-cta {
+  margin-top: 12px; display: inline-block; text-align: left; cursor: pointer;
+  background: var(--accent-track); border: 1px solid var(--accent); border-radius: 8px;
+  color: var(--ink-2); padding: 8px 14px; font-size: 13px;
+}
+.mission-cta b { color: var(--ink); }
+.mission-cta:hover { background: color-mix(in srgb, var(--accent) 28%, var(--accent-track)); }
+.mission-cta.mission-hold { cursor: default; border-color: var(--grid); background: var(--surface); }
+.goal-panel {
+  min-width: 260px; max-width: 330px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 14px;
+}
+.goal-nums { color: var(--ink); font-size: 24px; font-weight: 650; margin: 4px 0 8px; }
+.goal-nums .of { color: var(--muted); font-size: 14px; font-weight: 400; margin-left: 6px; }
+.goal-panel code { background: var(--surface-2); padding: 0 4px; border-radius: 4px; }
+.funnel-strip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 12px;
+  padding: 8px 12px; background: var(--surface); border: 1px solid var(--grid); border-radius: 8px;
+  font-size: 12px; color: var(--muted);
+}
+.fn-label { font-size: 10px; letter-spacing: 1.2px; margin-right: 4px; }
+.fn-step b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.fn-a { color: var(--baseline); }
+.fn-final b { color: var(--good); }
+.personal-chip { border-color: color-mix(in srgb, var(--accent) 55%, transparent); color: var(--accent); }
+.personal-chip.personal-down { border-color: var(--grid); color: var(--muted); }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 16px; }
 .tile {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
