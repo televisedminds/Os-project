@@ -73,6 +73,9 @@ class Config:
     ebay_env: str = _env("EBAY_ENV", "production")                    # or "sandbox"
     reddit_client_id: str = _env("REDDIT_CLIENT_ID", "")
     reddit_client_secret: str = _env("REDDIT_CLIENT_SECRET", "")
+    scrapingdog_api_key: str = _env("SCRAPINGDOG_API_KEY", "")
+    # Scraped venues cost paid credits — fetch them only every Nth cycle.
+    scrape_every_n_ticks: int = field(default_factory=lambda: int(os.environ.get("OOS_SCRAPE_EVERY", "4")))
     telegram_bot_token: str = _env("TELEGRAM_BOT_TOKEN", "")
     telegram_chat_id: str = _env("TELEGRAM_CHAT_ID", "")
 

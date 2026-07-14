@@ -256,11 +256,86 @@ class FxAdapter(BaseAdapter):
         return (True, f"OK — USD/THB {r['THB']:.2f}, USD/JPY {r['JPY']:.1f}") if r else (False, self.last_error)
 
 
+# -------------------------------------------------------------- ScrapingDog
+
+class ScrapingDogShopeeAdapter(BaseAdapter):
+    """Shopee TH search snapshots fetched through scrapingdog.com.
+
+    EXPERIMENTAL, eyes open: ScrapingDog is a paid proxy-scraping API (free
+    trial credits, then a subscription). It fetches pages/JSON that have no
+    official API — but scraping can break whenever the site changes, can be
+    blocked, and may conflict with the platform's terms of service. Each fetch
+    costs credits, so scraped venues run only every Nth cycle
+    (OOS_SCRAPE_EVERY, default 4 → every ~2 hours at the default cadence).
+    Manual watchlist quotes remain the always-works fallback.
+    """
+
+    id = "shopee_th"
+    name = "Shopee TH (via ScrapingDog)"
+
+    SHOPEE_SEARCH = ("https://shopee.co.th/api/v4/search/search_items"
+                     "?by=sales&keyword={q}&limit=30&newest=0&order=desc&page_type=search")
+
+    def __init__(self, cfg, client: httpx.Client | None = None):
+        super().__init__(cfg, client)
+        self.every_n_ticks = max(1, cfg.scrape_every_n_ticks)
+
+    def configured(self) -> bool:
+        return bool(self.cfg.scrapingdog_api_key)
+
+    def product_snapshot(self, query: str) -> dict | None:
+        if not self.configured():
+            return self._fail("SCRAPINGDOG_API_KEY not set (optional — manual quotes still work)")
+        try:
+            target = self.SHOPEE_SEARCH.format(q=httpx.QueryParams({"q": query})["q"])
+            r = self.client.get("https://api.scrapingdog.com/scrape",
+                                params={"api_key": self.cfg.scrapingdog_api_key,
+                                        "url": target, "dynamic": "false"})
+            r.raise_for_status()
+            data = r.json()
+            items = [it.get("item_basic", it) for it in (data.get("items") or [])]
+            rows = []
+            for it in items:
+                price_thb = float(it.get("price", 0)) / 100000.0     # Shopee stores price ×1e5
+                if price_thb <= 0:
+                    continue
+                rows.append({"price_thb": price_thb,
+                             "sold_month": int(it.get("sold", 0)),
+                             "stock": int(it.get("stock", 0)),
+                             "shop": it.get("shopid"),
+                             "itemid": str(it.get("itemid", ""))})
+            if not rows:
+                return self._fail(f"no parseable Shopee results for '{query}' "
+                                  f"(site layout may have changed — update the parser)")
+            from .. import economics
+            prices_usd = sorted(r_["price_thb"] / economics.USD_THB for r_ in rows)
+            median = prices_usd[len(prices_usd) // 2]
+            self.last_error = ""
+            return {
+                "price": round(median, 2),
+                "min_price": round(prices_usd[0], 2),
+                "stock": sum(r_["stock"] for r_ in rows),
+                "sellers": len({r_["shop"] for r_ in rows}),
+                "sold_7d_hint": round(sum(r_["sold_month"] for r_ in rows) / 4),
+                "item_ids": [r_["itemid"] for r_ in rows],
+            }
+        except Exception as e:  # noqa: BLE001
+            return self._fail(f"ScrapingDog/Shopee fetch failed: {e}")
+
+    def check(self) -> tuple[bool, str]:
+        if not self.configured():
+            return False, ("optional — set SCRAPINGDOG_API_KEY (scrapingdog.com, free trial credits) "
+                           "to auto-watch Shopee TH; manual quotes work without it")
+        return True, (f"key set; scraped every {self.every_n_ticks} cycles to save credits "
+                      f"(EXPERIMENTAL — parser can break when Shopee changes)")
+
+
 def build_adapters(cfg, client: httpx.Client | None = None) -> dict[str, BaseAdapter]:
     """The default live adapter set, keyed by venue/source id."""
 
     return {
         "ebay_us": EbayAdapter(cfg, client),
+        "shopee_th": ScrapingDogShopeeAdapter(cfg, client),
         "reddit": RedditAdapter(cfg, client),
         "news": NewsAdapter(cfg, client),
         "fx": FxAdapter(cfg, client),

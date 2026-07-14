@@ -192,6 +192,10 @@ function renderDetail(o) {
       ${kpi("Window", `${o.window_days.toFixed(0)} days`, `updated tick ${o.tick_updated}`)}
     </div>
 
+    ${actionCard(o)}
+
+    <div class="d-section"><h3>Step-by-step instructions</h3>${playbook(o)}</div>
+
     <div class="d-section"><h3>Why the AI believes this — the investigation chain</h3>
       <div class="why">${o.why_chain.map((s) => `
         <div class="why-step"><div class="why-q">${esc(s.question)}</div>
@@ -249,8 +253,6 @@ function renderDetail(o) {
       <div class="wf-note">Payments: ${esc((o.feasibility.payment_rails || []).join(" · "))}</div>
     </div>
 
-    <div class="d-section"><h3>Execution playbook</h3>${playbook(o)}</div>
-
     ${o.automation ? `
     <div class="d-section"><h3>Automation plan — ${Math.round(o.automation.coverage_pct)}% machine-runnable</h3>
       <div class="meter" style="max-width:280px;margin-bottom:10px">
@@ -284,6 +286,61 @@ function renderDetail(o) {
 
 const kpi = (l, v, s) => `<div class="kpi"><div class="kpi-l">${esc(l)}</div>
   <div class="kpi-v">${v}</div><div class="kpi-s">${s}</div></div>`;
+
+/* The do-this-deal card: where to buy, where to sell, at which prices,
+   what to invest and what you keep. */
+function actionCard(o) {
+  const a = o.action;
+  if (!a) return "";
+  const stepsHtml = a.first_steps && a.first_steps.length
+    ? `<div class="ac-steps">Start with: ${a.first_steps.map((s, i) =>
+        `<span class="ac-step">${i + 1}. ${esc(s)}</span>`).join(" ")}</div>`
+    : `<div class="ac-steps">🔒 Full instructions are on the Pro plan — switch the plan picker.</div>`;
+
+  if (a.type === "flip") {
+    return `
+    <div class="action-card">
+      <div class="ac-title">✅ How to execute this deal</div>
+      <div class="ac-flow">
+        <div class="ac-box">
+          <div class="ac-l">BUY ${esc(String(a.buy.qty))}× on</div>
+          <div class="ac-v">${esc(a.buy.venue)}</div>
+          <div class="ac-p">${fmtTHB(a.buy.price_thb)} <span class="ac-sub">(${fmtUSD(a.buy.price_usd)})</span>/unit</div>
+          <div class="ac-note">Never pay above ${fmtUSD(a.buy.max_price_usd)}. ${esc(a.buy.how)}</div>
+        </div>
+        <div class="ac-arrow">→</div>
+        <div class="ac-box">
+          <div class="ac-l">SELL on</div>
+          <div class="ac-v">${esc(a.sell.venue)}</div>
+          <div class="ac-p">${fmtTHB(a.sell.price_thb)} <span class="ac-sub">(${fmtUSD(a.sell.price_usd)})</span>/unit</div>
+          <div class="ac-note">${esc(a.sell.how)}</div>
+        </div>
+      </div>
+      <div class="ac-money">
+        <span>You invest <b>${fmtTHB(a.invest_thb)}</b> (${fmtUSD(a.invest_usd)})</span>
+        <span>You keep ≈ <b class="pos">${fmtTHB(a.profit_thb)}</b> (${fmtUSD(a.profit_usd)}, ${a.margin_pct.toFixed(0)}% margin)</span>
+        <span>Worst case still ≈ ${fmtUSD(a.pessimistic_unit_usd)}/unit</span>
+        <span>~${Math.round(a.timeline_days)} days start → paid</span>
+      </div>
+      ${stepsHtml}
+    </div>`;
+  }
+  return `
+    <div class="action-card">
+      <div class="ac-title">✅ How to execute this opportunity</div>
+      <div class="ac-flow"><div class="ac-box" style="flex:1">
+        <div class="ac-l">BUILD / LAUNCH (${esc(a.geo)})</div>
+        <div class="ac-v" style="font-size:14px">${esc(a.what)}</div>
+      </div></div>
+      <div class="ac-money">
+        <span>Startup cost <b>${fmtTHB(a.invest_thb)}</b> (${fmtUSD(a.invest_usd)})</span>
+        <span>Expected ≈ <b class="pos">${fmtTHB(a.monthly_thb)}</b>/month (${fmtUSD(a.monthly_usd)})</span>
+        <span>Worst case ≈ ${fmtUSD(a.pessimistic_monthly_usd)}/mo</span>
+        <span>Pays itself back in ~${a.payback_months} months</span>
+      </div>
+      ${stepsHtml}
+    </div>`;
+}
 
 function waterfall(scn, per) {
   return `<table class="wf-table">

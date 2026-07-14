@@ -73,23 +73,33 @@ class LiveMarket:
         headlines: list[dict] = []
 
         for p in self.watch.products:
+            fetched: set[str] = set()
             for venue, query in sorted(p.queries.items()):
                 ad = self.adapters.get(venue)
                 if not ad or not hasattr(ad, "product_snapshot"):
                     self._err(f"{p.id}/{venue}: no adapter for this venue yet")
                     continue
+                every = getattr(ad, "every_n_ticks", 1)
+                if every > 1 and (t % every) != 1:
+                    continue                       # scraped venues: save paid credits
                 raw = ad.product_snapshot(query)
                 if raw is None:
                     self._err(f"{p.id}/{venue}: {ad.last_error}")
                     continue
-                sold = self._estimate_sold_7d(p, venue, raw)
+                # Prefer a real sold-counter (Shopee publishes one) over the
+                # disappearance-based estimate.
+                sold = (raw["sold_7d_hint"] if raw.get("sold_7d_hint") is not None
+                        else self._estimate_sold_7d(p, venue, raw))
                 self.db.add_live_snapshot(p.id, venue, t,
                                           {"price": raw["price"], "stock": raw["stock"],
                                            "sellers": raw["sellers"], "sold_7d": sold},
                                           extra={"item_ids": raw.get("item_ids", []),
                                                  "min_price": raw.get("min_price"),
                                                  "query": query})
+                fetched.add(venue)
             for venue, m in sorted(p.manual_listings.items()):
+                if venue in fetched:
+                    continue                       # live scrape beats the manual fallback
                 price_usd = m.get("price_usd") or round(m["price_thb"] / economics.USD_THB, 2)
                 self.db.add_live_snapshot(p.id, venue, t,
                                           {"price": round(float(price_usd), 2),

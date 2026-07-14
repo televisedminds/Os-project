@@ -31,6 +31,56 @@ class OutcomeIn(BaseModel):
     notes: str | None = None
 
 
+def _action_card(o: dict) -> dict | None:
+    """A do-this-deal summary: where to buy, where to sell, at which prices,
+    how much to invest and keep — everything needed to act, in one block."""
+
+    try:
+        e = o["economics"]
+        fx = e.get("fx", {}).get("USD_THB", 36.4)
+        thb = lambda x: round(float(x) * fx)  # noqa: E731
+        pb = o.get("playbook") or {}
+        steps = [s["title"] for s in pb.get("steps", [])]
+
+        if o["type"] == "product_arbitrage":
+            bv, sv = o["route"]["buy_venue"], o["route"]["sell_venue"]
+            buy_usd = e["base"]["lines"][0]["amount_usd"]
+            listing = pb.get("listing") or {}
+            sell_usd = float(listing.get("price_usd") or e["base"]["revenue_usd"])
+            return {
+                "type": "flip",
+                "buy": {"venue": economics.VENUES[bv]["name"],
+                        "price_usd": round(buy_usd, 2), "price_thb": thb(buy_usd),
+                        "max_price_usd": round(buy_usd * 1.08, 2),
+                        "qty": e["qty"],
+                        "how": thailand.VENUE_ACCESS.get(bv, {}).get("buy_note", "")},
+                "sell": {"venue": economics.VENUES[sv]["name"],
+                         "price_usd": round(sell_usd, 2), "price_thb": thb(sell_usd),
+                         "how": thailand.VENUE_ACCESS.get(sv, {}).get("sell_note", "")},
+                "invest_usd": e["capital_usd"], "invest_thb": thb(e["capital_usd"]),
+                "profit_usd": e["total_net_usd"], "profit_thb": thb(e["total_net_usd"]),
+                "profit_unit_usd": e["base"]["net_usd"],
+                "pessimistic_unit_usd": e["pessimistic"]["net_usd"],
+                "margin_pct": e["base"]["margin_pct"],
+                "timeline_days": pb.get("timeline_days") or o["window_days"],
+                "first_steps": steps[:4],
+            }
+        monthly = e["total_net_usd"]
+        return {
+            "type": "venture",
+            "what": o["subtitle"],
+            "invest_usd": e["capital_usd"], "invest_thb": thb(e["capital_usd"]),
+            "monthly_usd": monthly, "monthly_thb": thb(monthly),
+            "pessimistic_monthly_usd": e["pessimistic"]["net_usd"],
+            "payback_months": round(e["capital_usd"] / max(1.0, monthly), 1),
+            "geo": o.get("route", {}).get("geo", "global"),
+            "timeline_days": pb.get("timeline_days") or o["window_days"],
+            "first_steps": steps[:4],
+        }
+    except Exception:
+        return None
+
+
 def _row(o: dict) -> dict:
     """Feed-row projection of a stored opportunity."""
 
@@ -157,6 +207,7 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
             o["automation"] = None
             o["locked"] = {"playbooks": "Execution playbooks and automation plans are a Pro feature.",
                            "upgrade": PLANS["pro"]["blurb"]}
+        o["action"] = _action_card(o)
         return o
 
     @app.post("/api/opportunities/{opp_id}/outcome")

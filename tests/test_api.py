@@ -53,6 +53,24 @@ def test_detail_carries_full_evidence(client):
     assert d["history"] is None or len(d["history"]["points"]) > 2
 
 
+def test_detail_action_card_says_where_to_buy_and_sell(client):
+    r = client.get("/api/opportunities").json()
+    flips = [o for o in r["opportunities"] if o["type"] == "product_arbitrage"]
+    d = client.get(f"/api/opportunities/{flips[0]['id']}").json()
+    a = d["action"]
+    assert a["type"] == "flip"
+    assert a["buy"]["venue"] and a["buy"]["price_thb"] > 0 and a["buy"]["qty"] >= 1
+    assert a["buy"]["max_price_usd"] > a["buy"]["price_usd"]
+    assert a["sell"]["venue"] and a["sell"]["price_usd"] > a["buy"]["price_usd"]
+    assert a["invest_thb"] > 0 and a["profit_usd"] > 0
+    assert len(a["first_steps"]) >= 3
+
+    ventures = [o for o in r["opportunities"] if o["type"] != "product_arbitrage"]
+    if ventures:
+        dv = client.get(f"/api/opportunities/{ventures[0]['id']}").json()
+        assert dv["action"]["type"] == "venture" and dv["action"]["payback_months"] > 0
+
+
 def test_outcome_feeds_learning_and_marks_executed(client):
     r = client.get("/api/opportunities").json()
     oid = r["opportunities"][0]["id"]

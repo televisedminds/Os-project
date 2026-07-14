@@ -57,6 +57,7 @@
       "name": "Foldable phone gimbal (creator kit) — CN import",
       "category": "electronics",
       "weight_kg": 0.6,
+      "queries": { "shopee_th": "กันสั่นมือถือ gimbal พับได้" },
       "manual_listings": {
         "aliexpress":     { "price_usd": 23.0, "stock": 500, "sellers": 40, "sold_7d": 30,
                             "note": "AliExpress: use the 'sold' counter; order 1 sample first" },

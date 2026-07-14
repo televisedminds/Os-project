@@ -128,6 +128,32 @@ quotes about twice a week (it takes ~2 minutes).
 Then check everything: `set -a; source .env; set +a; python run.py live-check`
 — you want ✓ on every line.
 
+## Optional: ScrapingDog — automatic Shopee TH prices
+
+You asked: *"can a scraper like scrapingdog.com read the sites that have no
+API?"* Yes — that's exactly what it is: a paid service (free trial credits,
+then a subscription) that fetches web pages for you through rotating proxies,
+so sites don't block your server. We built it in for **Shopee TH**: put your
+key in `.env` as `SCRAPINGDOG_API_KEY=...` and add a Thai search to a product:
+
+```json
+"queries": { "shopee_th": "กันสั่นมือถือ gimbal พับได้" }
+```
+
+The robot then reads Shopee's real prices, sold-counts and stock by itself
+(every 4th cycle by default, to save your credits ≈ 12 checks/day/product).
+
+**Be honest with yourself about scraping before paying:**
+1. It can **break any time** the website changes — then that source degrades
+   until the parser is updated (your manual quotes keep working).
+2. It **costs money per request** after the trial.
+3. Scraping may conflict with a platform's terms of service. Risk is usually
+   blocks, not more — but it's your account and your call.
+4. The same trick can be extended to Lazada/TikTok Shop later — each site
+   needs its own small parser in `opportunity_os/market/adapters.py`.
+
+Manual quotes (typing the price you see) stay the free, always-works option.
+
 ## Part D — put it on your DigitalOcean server (so it runs 24/7)
 
 ```bash

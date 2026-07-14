@@ -216,6 +216,35 @@ def test_reddit_adapter_oauth_flow():
     assert ad.mentions_24h("thailand tax") == 3
 
 
+def test_scrapingdog_shopee_adapter_parses_and_degrades():
+    from opportunity_os.market.adapters import ScrapingDogShopeeAdapter
+
+    no_key = ScrapingDogShopeeAdapter(Config(mode="live"))
+    assert no_key.product_snapshot("gimbal") is None
+    assert "SCRAPINGDOG_API_KEY" in no_key.last_error
+
+    cfg = Config(mode="live", scrapingdog_api_key="sd_test")
+
+    def handler(req):
+        assert "api.scrapingdog.com" in str(req.url)
+        assert req.url.params["api_key"] == "sd_test"
+        assert "shopee.co.th" in req.url.params["url"]
+        return httpx.Response(200, json={"items": [
+            {"item_basic": {"price": 179000000, "sold": 40, "stock": 25, "shopid": 1, "itemid": 111}},
+            {"item_basic": {"price": 185000000, "sold": 12, "stock": 10, "shopid": 2, "itemid": 222}},
+            {"item_basic": {"price": 209000000, "sold": 4, "stock": 5, "shopid": 1, "itemid": 333}},
+        ]})
+
+    ad = ScrapingDogShopeeAdapter(cfg, _client(handler))
+    snap = ad.product_snapshot("กันสั่นมือถือ gimbal")
+    assert snap["sellers"] == 2 and snap["stock"] == 40
+    assert snap["sold_7d_hint"] == 14                        # (40+12+4)/4
+    assert snap["item_ids"] == ["111", "222", "333"]
+    # ฿1,850 median at the current USD_THB rate
+    assert snap["price"] == pytest.approx(1850 / economics.USD_THB, rel=0.01)
+    assert ad.every_n_ticks == 4                             # credit-saving cadence
+
+
 def test_news_adapter_parses_rss():
     rss = ('<?xml version="1.0"?><rss><channel>'
            "<item><title>Headline one</title></item>"

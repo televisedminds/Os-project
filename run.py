@@ -122,7 +122,7 @@ def cmd_live_check(args) -> None:
     all_ok = True
     for st in lm.healthcheck():
         mark = "✓" if st["ok"] else "✗"
-        all_ok &= st["ok"] or st["id"] in ("reddit",)      # reddit is optional-but-recommended
+        all_ok &= st["ok"] or st["id"] in ("reddit", "shopee_th")   # optional sources
         print(f"  {st['id']:<8} {mark} {st['name']}: {st['note']}")
 
     from opportunity_os.notify import send_telegram
