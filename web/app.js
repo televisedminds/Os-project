@@ -10,7 +10,21 @@ const state = {
   plan: "pro",
   selectedId: null,
   filters: { q: "", status: "active", category: "", min_score: 0 },
-  opsTab: "agents",
+  opsTab: "activity",
+};
+
+/* Human labels for the genome factors. */
+const FACTOR_LABELS = {
+  profit_margin: "Profit potential",
+  demand_trend: "Demand momentum",
+  competition: "Competitive gap",
+  difficulty: "Ease of execution",
+  capital_required: "Capital efficiency",
+  time_required: "Time to first sale",
+  risk: "Risk resilience",
+  automation: "Automation",
+  market_size: "Market size",
+  repeatability: "Repeatability",
 };
 
 /* Fixed identity colors: opportunity TYPE → categorical slot (never re-derived). */
@@ -81,6 +95,7 @@ async function loadBriefing() {
     ${tile("Est. profit pool", fmtUSD(s.profit_pool_usd, 0), "sum of active base-case nets")}
     ${tile("Invalidated", `${lastInv}<span style="font-size:13px;color:var(--muted)"> last cycle</span>`,
            `${s.invalidated} all-time — conditions changed`)}
+    ${tile("Closing soon", b.counts.closing_soon ?? 0, "window ≤ 3 days — act first")}
     ${tile("Signals stored", s.signals_total.toLocaleString(), `${s.anomalies_total.toLocaleString()} anomalies flagged`)}
   `;
 }
@@ -193,13 +208,17 @@ function renderDetail(o) {
     </div>
 
     ${actionCard(o)}
+    ${discoveryReport(o)}
 
-    <div class="d-section"><h3>Step-by-step instructions</h3>${playbook(o)}</div>
+    <div class="d-section"><h3>Step-by-step instructions</h3>${missionBar(o)}${playbook(o)}</div>
 
-    <div class="d-section"><h3>Why the AI believes this — the investigation chain</h3>
-      <div class="why">${o.why_chain.map((s) => `
-        <div class="why-step"><div class="why-q">${esc(s.question)}</div>
-        <div class="why-a">${esc(s.finding)}</div></div>`).join("")}
+    <div class="d-section"><h3>AI investigation timeline</h3>
+      <div class="why-meta">Ran automatically on pass ${o.tick_updated}${o.updated_ts ?
+        " · " + new Date(o.updated_ts * 1000).toLocaleString() : ""} — each step queried live data:</div>
+      <div class="why">${o.why_chain.map((s, i) => `
+        <div class="why-step"><div class="why-n">${i + 1}</div><div>
+        <div class="why-q">${esc(s.question)}</div>
+        <div class="why-a">${esc(s.finding)}</div></div></div>`).join("")}
       </div>
     </div>
 
@@ -217,15 +236,20 @@ function renderDetail(o) {
       <p class="wf-note" style="margin:8px 0 0">${esc(e.route_note)}${isFlip ? ` Breakeven sale: ${fmtUSD(e.breakeven_revenue_usd)}.` : ""}</p>
     </div>
 
-    <div class="d-section"><h3>Score breakdown (weights learned from outcomes)</h3>
+    <div class="d-section"><h3>Opportunity genome — ${Math.round(o.score.overall)}/100 (weights learned from outcomes)</h3>
       ${Object.entries(o.score.factors)
         .sort((a, b) => (o.score.weights[b[0]] ?? 0) - (o.score.weights[a[0]] ?? 0))
         .map(([k, v]) => `
         <div class="fbar-row" title="contributes ${o.score.contributions[k] ?? 0} pts at weight ${((o.score.weights[k] ?? 0) * 100).toFixed(0)}%">
-          <div class="fbar-label">${esc(k.replace(/_/g, " "))}</div>
+          <div class="fbar-label">${esc(FACTOR_LABELS[k] || k.replace(/_/g, " "))}</div>
           <div class="fbar-track"><div class="fbar-fill" style="width:${v}%"></div></div>
           <div class="fbar-num">${Math.round(v)}</div>
         </div>`).join("")}
+      <div class="fbar-row" title="derived from the current decay window (~${o.window_days.toFixed(0)} days)">
+        <div class="fbar-label">Market lifetime</div>
+        <div class="fbar-track"><div class="fbar-fill" style="width:${Math.min(100, o.window_days / 14 * 100)}%"></div></div>
+        <div class="fbar-num">${o.window_days.toFixed(0)}d</div>
+      </div>
     </div>
 
     <div class="d-section"><h3>Verification council — ${o.verification.checks.length} independent checks</h3>
@@ -297,6 +321,21 @@ function actionCard(o) {
         `<span class="ac-step">${i + 1}. ${esc(s)}</span>`).join(" ")}</div>`
     : `<div class="ac-steps">🔒 Full instructions are on the Pro plan — switch the plan picker.</div>`;
 
+  const linkBtn = (url, label) => url
+    ? `<a class="ac-link" href="${esc(url)}" target="_blank" rel="noopener">${esc(label)} ↗</a>` : "";
+  const moneyTimeline = (tl) => !tl ? "" : `
+    <div class="mt-strip">${tl.map((ev) => `
+      <span class="mt-ev"><b>Day ${ev.day}</b> ${esc(ev.label)}${ev.amount_usd == null ? "" :
+        ` <span class="${ev.amount_usd >= 0 ? "pos" : "neg"}">${fmtUSD(ev.amount_usd)}</span>`}</span>`)
+      .join('<span class="mt-arrow">→</span>')}</div>`;
+  const forecastRow = (f) => !f ? "" : `
+    <div class="ac-forecast" title="${esc(f.note)}">
+      If you wait, chance the edge survives:
+      ${Object.entries(f.probabilities).map(([d, p]) =>
+        `<span class="fc-chip ${p < 40 ? "fc-low" : ""}">${d}d ${p}%</span>`).join(" ")}
+      — <b>${esc(f.recommendation)}</b>
+    </div>`;
+
   if (a.type === "flip") {
     return `
     <div class="action-card">
@@ -307,13 +346,16 @@ function actionCard(o) {
           <div class="ac-v">${esc(a.buy.venue)}</div>
           <div class="ac-p">${fmtTHB(a.buy.price_thb)} <span class="ac-sub">(${fmtUSD(a.buy.price_usd)})</span>/unit</div>
           <div class="ac-note">Never pay above ${fmtUSD(a.buy.max_price_usd)}. ${esc(a.buy.how)}</div>
+          ${linkBtn(a.buy.url, "Open live listings")}
         </div>
         <div class="ac-arrow">→</div>
         <div class="ac-box">
           <div class="ac-l">SELL on</div>
-          <div class="ac-v">${esc(a.sell.venue)}</div>
+          <div class="ac-v">${esc(a.sell.venue)}${a.sell.registered ? ' <span class="pos">✓</span>' : ""}</div>
           <div class="ac-p">${fmtTHB(a.sell.price_thb)} <span class="ac-sub">(${fmtUSD(a.sell.price_usd)})</span>/unit</div>
           <div class="ac-note">${esc(a.sell.how)}</div>
+          ${linkBtn(a.sell.url, "See competing listings")}
+          ${!a.sell.registered ? linkBtn(a.sell.signup_url, "Create seller account") : ""}
         </div>
       </div>
       <div class="ac-money">
@@ -322,6 +364,8 @@ function actionCard(o) {
         <span>Worst case still ≈ ${fmtUSD(a.pessimistic_unit_usd)}/unit</span>
         <span>~${Math.round(a.timeline_days)} days start → paid</span>
       </div>
+      ${moneyTimeline(a.money_timeline)}
+      ${forecastRow(a.forecast)}
       ${stepsHtml}
     </div>`;
   }
@@ -338,8 +382,43 @@ function actionCard(o) {
         <span>Worst case ≈ ${fmtUSD(a.pessimistic_monthly_usd)}/mo</span>
         <span>Pays itself back in ~${a.payback_months} months</span>
       </div>
+      ${moneyTimeline(a.money_timeline)}
+      ${forecastRow(a.forecast)}
       ${stepsHtml}
     </div>`;
+}
+
+/* Discovery report: the deltas that made the fleet look twice. */
+function discoveryReport(o) {
+  const d = o.discovery;
+  if (!d || !d.rows || !d.rows.length) return "";
+  return `<div class="d-section"><h3>Discovery report — what the fleet saw</h3>
+    <div class="disc-grid">${d.rows.map((r) => {
+      const cls = !r.delta ? "" : r.delta.startsWith("+") ? "disc-up" : r.delta.startsWith("-") ? "disc-down" : "";
+      return `<div class="disc-row"><span class="disc-l">${esc(r.label)}</span>
+        <span class="disc-v">${esc(r.value)}</span>
+        <span class="disc-d ${cls}">${esc(r.delta || "")}</span></div>`;
+    }).join("")}</div></div>`;
+}
+
+/* Mission header: quest-style progress over the playbook. */
+function missionBar(o) {
+  if (!o.playbook || !o.playbook.steps.length) return "";
+  const p = o.progress || { done_steps: [], pct: 0 };
+  const diff = (o.score.factors.difficulty ?? 50);
+  const diffLabel = diff >= 68 ? "EASY" : diff >= 45 ? "MEDIUM" : "HARD";
+  const e = o.economics;
+  return `<div class="mission-bar" id="mission-bar">
+    <span class="m-id">MISSION ${esc(o.id.slice(-4).toUpperCase())}</span>
+    <span class="chip">difficulty ${diffLabel}</span>
+    <span class="chip">~${Math.round(o.playbook.timeline_days || o.window_days)} days</span>
+    <span class="chip">capital ${fmtUSD(e.capital_usd)}</span>
+    <span class="chip pos">potential +${fmtUSD(e.total_net_usd)}${e.kind === "venture" ? "/mo" : ""}</span>
+    <div class="meter" style="flex:1;min-width:120px">
+      <div class="meter-track"><div class="meter-fill" id="mission-fill" style="width:${p.pct}%"></div></div>
+      <span class="meter-num" id="mission-pct">${p.pct}%</span>
+    </div>
+  </div>`;
 }
 
 function waterfall(scn, per) {
@@ -360,9 +439,13 @@ function playbook(o) {
       ${esc(o.locked?.upgrade || "")}</div>`;
   }
   const pb = o.playbook;
+  const done = new Set((o.progress && o.progress.done_steps) || []);
   return `
     ${pb.steps.map((s) => `
-      <div class="pb-step"><div class="pb-n">${s.order}</div>
+      <div class="pb-step ${done.has(s.order) ? "pb-done" : ""}">
+        <input type="checkbox" class="pb-check" data-step="${s.order}" ${done.has(s.order) ? "checked" : ""}
+               title="mark this step done">
+        <div class="pb-n">${s.order}</div>
         <div><div class="pb-t">${esc(s.title)}</div><div class="pb-d">${esc(s.detail)}</div>
         <div class="pb-meta">${s.eta ? esc(s.eta) + " · " : ""}${s.automatable
           ? `<span class="tag-auto">⚙ automatable${s.tool ? " — " + esc(s.tool) : ""}</span>` : "👤 human step"}</div>
@@ -379,6 +462,22 @@ function playbook(o) {
 }
 
 function wireDetail(el, o) {
+  el.querySelectorAll(".pb-check").forEach((cb) =>
+    cb.addEventListener("change", async () => {
+      try {
+        const r = await api(`/api/opportunities/${o.id}/progress`,
+          { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ step: parseInt(cb.dataset.step, 10), done: cb.checked }) });
+        cb.closest(".pb-step").classList.toggle("pb-done", cb.checked);
+        const n = o.playbook.steps.length;
+        const pctDone = Math.round(100 * r.done_steps.length / n);
+        const fill = $("#mission-fill", el), num = $("#mission-pct", el);
+        if (fill) fill.style.width = pctDone + "%";
+        if (num) num.textContent = pctDone + "%";
+        if (pctDone === 100) toast("🏁 Mission complete — record the outcome below so the AI learns!");
+      } catch (err) { toast("Could not save progress: " + err.message); cb.checked = !cb.checked; }
+    }));
+
   el.querySelectorAll(".wf-toggle button").forEach((b) =>
     b.addEventListener("click", () => {
       el.querySelectorAll(".wf-toggle button").forEach((x) => x.classList.toggle("active", x === b));
@@ -449,7 +548,20 @@ function sparkline(wrap, hist) {
 
 async function loadOps() {
   const body = $("#ops-body");
-  if (state.opsTab === "agents") {
+  if (state.opsTab === "activity") {
+    const r = await api("/api/activity");
+    if (!r.items.length) {
+      body.innerHTML = '<p class="wf-note">No activity yet — run a research cycle.</p>';
+      return;
+    }
+    body.innerHTML = `<div class="act-feed">${r.items.map((it) => {
+      const t = new Date(it.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      return `<div class="act-row act-${esc(it.kind)}">
+        <span class="act-time">${t}</span>
+        <span class="act-actor">${esc(it.actor)}</span>
+        <span class="act-text">${esc(it.text)}</span></div>`;
+    }).join("")}</div>`;
+  } else if (state.opsTab === "agents") {
     const r = await api("/api/agents");
     body.innerHTML = `<div class="agents-grid">${r.agents.map((a) => `
       <div class="agent-card">
@@ -572,6 +684,7 @@ function init() {
   }).catch((e) => toast("Failed to load: " + e.message));
 
   setInterval(() => { loadBriefing().catch(() => {}); loadFeed().catch(() => {}); }, 60_000);
+  setInterval(() => { if (state.opsTab === "activity") loadOps().catch(() => {}); }, 12_000);
 }
 
 init();

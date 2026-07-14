@@ -43,6 +43,9 @@ CREATE TABLE IF NOT EXISTS live_headlines (
     id INTEGER PRIMARY KEY AUTOINCREMENT, entity_id TEXT, tick INTEGER, ts REAL, text TEXT, etype TEXT);
 CREATE INDEX IF NOT EXISTS idx_live_snap ON live_snapshots(entity_id, venue, tick);
 CREATE INDEX IF NOT EXISTS idx_live_mention ON live_mentions(entity_id, source, tick);
+CREATE TABLE IF NOT EXISTS mission_progress (
+    opportunity_id TEXT, step_order INTEGER, done INTEGER, ts REAL,
+    PRIMARY KEY (opportunity_id, step_order));
 """
 
 
@@ -226,6 +229,22 @@ class Store:
                 "avg_confidence": one("SELECT COALESCE(AVG(confidence),0) FROM opportunities WHERE status='active'"),
                 "profit_pool_usd": one("SELECT COALESCE(SUM(net_usd),0) FROM opportunities WHERE status='active'"),
             }
+
+    # ------------------------------------------------------ mission progress
+
+    def set_progress(self, opportunity_id: str, step_order: int, done: bool) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO mission_progress(opportunity_id,step_order,done,ts) VALUES(?,?,?,?) "
+                "ON CONFLICT(opportunity_id,step_order) DO UPDATE SET done=excluded.done, ts=excluded.ts",
+                (opportunity_id, step_order, int(done), time.time()))
+
+    def get_progress(self, opportunity_id: str) -> list[int]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT step_order FROM mission_progress WHERE opportunity_id=? AND done=1",
+                (opportunity_id,)).fetchall()
+        return sorted(r["step_order"] for r in rows)
 
     # ---------------------------------------------------- live observations
 

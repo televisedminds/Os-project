@@ -89,6 +89,43 @@ def test_cycle_endpoint_runs_pipeline(client):
     assert client.get("/api/stats").json()["last_report"]["tick"] == rep["tick"]
 
 
+def test_action_card_has_real_links_timeline_and_forecast(client):
+    r = client.get("/api/opportunities").json()
+    flips = [o for o in r["opportunities"] if o["type"] == "product_arbitrage"]
+    d = client.get(f"/api/opportunities/{flips[0]['id']}").json()
+    a = d["action"]
+    assert a["buy"]["url"] and a["buy"]["url"].startswith("https://")
+    assert a["sell"]["url"] and a["sell"]["url"].startswith("https://")
+    assert a["sell"]["signup_url"] is None or a["sell"]["signup_url"].startswith("https://")
+    tl = a["money_timeline"]
+    assert tl[0]["day"] == 0 and tl[0]["amount_usd"] < 0            # spend first
+    assert tl[-1]["amount_usd"] > 0                                 # end with money back
+    probs = a["forecast"]["probabilities"]
+    assert probs["1"] >= probs["3"] >= probs["7"] >= probs["14"]    # decay is monotonic
+    assert d["discovery"] is None or len(d["discovery"]["rows"]) >= 2
+
+
+def test_mission_progress_roundtrip(client):
+    r = client.get("/api/opportunities").json()
+    oid = r["opportunities"][0]["id"]
+    res = client.post(f"/api/opportunities/{oid}/progress", json={"step": 1, "done": True}).json()
+    assert res["done_steps"] == [1]
+    client.post(f"/api/opportunities/{oid}/progress", json={"step": 2, "done": True})
+    d = client.get(f"/api/opportunities/{oid}").json()
+    assert d["progress"]["done_steps"] == [1, 2] and d["progress"]["pct"] > 0
+    client.post(f"/api/opportunities/{oid}/progress", json={"step": 1, "done": False})
+    assert client.get(f"/api/opportunities/{oid}").json()["progress"]["done_steps"] == [2]
+    assert client.post("/api/opportunities/nope/progress", json={"step": 1}).status_code == 404
+
+
+def test_activity_feed_shows_fleet_working(client):
+    items = client.get("/api/activity").json()["items"]
+    kinds = {i["kind"] for i in items}
+    assert "scan" in kinds and ("publish" in kinds or "reject" in kinds)
+    assert all(i["ts"] and i["actor"] and i["text"] for i in items)
+    assert items == sorted(items, key=lambda i: i["ts"], reverse=True)
+
+
 def test_briefing_agents_thailand(client):
     b = client.get("/api/briefing").json()
     assert "opportunities worth your attention" in b["headline"]

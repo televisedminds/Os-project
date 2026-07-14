@@ -11,6 +11,14 @@
     "niches: reddit_query drives the live demand signal; you maintain the supply-side",
     "counts (solution_count/providers) as you scout competitors."
   ],
+  "operator": {
+    "_help": "Who is executing. budget_usd caps position sizing; avoid_types hides whole categories (product_arbitrage, digital_product, info_product, local_service, b2b_service); registered_venues marks platforms you already sell on so playbooks skip signup.",
+    "budget_usd": null,
+    "avoid_types": [],
+    "prefer_categories": [],
+    "registered_venues": [],
+    "has": ["PromptPay"]
+  },
   "products": [
     {
       "id": "moonbreon_umbreon_vmax",

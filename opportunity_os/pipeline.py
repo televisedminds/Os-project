@@ -32,10 +32,29 @@ class Orchestrator:
         self.db = store
         self._guard_mode()
         self.world = world if world is not None else self._build_world()
+        self.operator = self._load_operator()
+        if self.operator.get("budget_usd"):
+            self.cfg.capital_cap_usd = float(self.operator["budget_usd"])
         self.fleet = build_fleet(self.world)
         self.detector = AnomalyDetector(config)
         self.investigator = Investigator(config)
         self.learning = LearningEngine(store)
+
+    def _load_operator(self) -> dict:
+        """Operator profile from the watchlist (works in both modes)."""
+
+        watch = getattr(self.world, "watch", None)
+        if watch is not None:
+            from dataclasses import asdict as _asdict
+            return _asdict(watch.operator)
+        try:
+            from .market import watchlist as wl
+            if self.cfg.watchlist_path.exists():
+                from dataclasses import asdict as _asdict
+                return _asdict(wl.load(self.cfg.watchlist_path).operator)
+        except Exception:
+            pass
+        return {}
 
     def _guard_mode(self) -> None:
         """A database belongs to one mode; mixing sim and live history would
@@ -137,6 +156,9 @@ class Orchestrator:
 
     def _assess(self, cand: dict, council: VerificationCouncil, scorer: ScoringEngine,
                 tick: int) -> tuple[Opportunity | None, str]:
+        if cand["opp_type"].value in self.operator.get("avoid_types", []):
+            return None, (f"excluded by your operator profile — '{cand['opp_type'].value}' "
+                          f"is on your avoid list")
         verification = (council.verify_flip(self.world, cand) if cand["kind"] == "flip"
                         else council.verify_venture(self.world, cand))
         confidence = round(min(0.99, verification.consensus * self.learning.calibration), 3)
@@ -264,10 +286,14 @@ def briefing(store: Store, cfg: Config, plan_name: str | None = None) -> dict:
     hour = now.hour
     greeting = "Good morning" if hour < 12 else ("Good afternoon" if hour < 18 else "Good evening")
 
+    closing_soon = [o for o in actives if o["window_days"] <= 3]
+    expired = store.list_opportunities(status="expired", limit=200)
     limit = plan["max_opportunities"] or len(actives)
     top = actives[:limit]
     lines = [f"{greeting}. I found {len(actives)} opportunities worth your attention today"
              + (f" — {len(new_today)} new since the last cycle." if new_today else ".")]
+    if closing_soon:
+        lines.append(f"{len(closing_soon)} of them are closing within ~3 days — act on those first.")
     if last.get("invalidated"):
         lines.append(f"{len(last['invalidated'])} previously published "
                      f"opportunit{'y was' if len(last['invalidated']) == 1 else 'ies were'} "
@@ -284,6 +310,8 @@ def briefing(store: Store, cfg: Config, plan_name: str | None = None) -> dict:
         "headline": lines[0],
         "notes": lines[1:],
         "counts": {"active": len(actives), "new_today": len(new_today),
+                   "closing_soon": len(closing_soon), "expired_total": len(expired),
+                   "reverified_last_cycle": last.get("reverified", 0),
                    "invalidated_last_cycle": len(last.get("invalidated", [])),
                    "rejected_last_cycle": len(last.get("rejected", []))},
         "top": [{"id": o["id"], "title": o["title"], "subtitle": o["subtitle"],

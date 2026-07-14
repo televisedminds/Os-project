@@ -16,11 +16,122 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import __version__, economics, thailand
+from statistics import fmean
+
+from . import __version__, economics, links, thailand
 from .config import PLANS, WEB_DIR, Config
 from .db import Store
 from .models import OppStatus
 from .pipeline import Orchestrator, briefing
+
+# Rough door-to-door sourcing lead times by origin country (days).
+LEAD_DAYS = {"TH": 1, "JP": 6, "CN": 14, "US": 10}
+
+
+def _pct_delta(now: float, base: float) -> str | None:
+    if base <= 0:
+        return None
+    d = (now - base) / base * 100
+    if abs(d) < 1:
+        return "±0%"
+    return f"{'+' if d > 0 else ''}{d:.0f}%"
+
+
+def _forecast(window_days: float) -> dict:
+    """Survival estimate for the edge: modelled half-life = window/2."""
+
+    half = max(2.0, float(window_days)) / 2
+    probs = {d: round(100 * 0.5 ** (d / half)) for d in (1, 3, 7, 14)}
+    if window_days <= 4:
+        rec = "Start today — this window is already closing."
+    elif window_days <= 8:
+        rec = "Start within 1–2 days; waiting a week roughly halves your odds."
+    else:
+        rec = "Window is comfortable, but earlier entry captures the best prices."
+    return {"probabilities": probs, "recommendation": rec,
+            "note": "Model estimate from the current decay window — not a promise."}
+
+
+def _money_timeline(o: dict) -> list[dict]:
+    """Google-Maps-for-money: the expected cash journey, day by day."""
+
+    e = o["economics"]
+    if o["type"] == "product_arbitrage":
+        buy_c = o["route"].get("buy_country", "TH")
+        lead = LEAD_DAYS.get(buy_c, 7)
+        sell_days = max(2.0, min(float(o["window_days"]), 14.0))
+        frac = min(0.95, e["base"]["total_cost_usd"] / max(1.0, e["base"]["revenue_usd"]))
+        return [
+            {"day": 0, "label": "Buy inventory", "amount_usd": -round(e["capital_usd"], 2)},
+            {"day": lead, "label": "Inventory arrives — listings go live", "amount_usd": None},
+            {"day": lead + 1, "label": "First sale expected", "amount_usd": None},
+            {"day": round(lead + sell_days * frac), "label": "Break even", "amount_usd": 0},
+            {"day": round(lead + sell_days), "label": "Sold through — profit banked",
+             "amount_usd": round(e["total_net_usd"], 2)},
+            {"day": round(lead + sell_days) + 1, "label": "Reinvestable capital",
+             "amount_usd": round(e["capital_usd"] + e["total_net_usd"], 2)},
+        ]
+    payback = round(e["capital_usd"] / max(1.0, e["total_net_usd"]) * 30)
+    return [
+        {"day": 0, "label": "Startup cost", "amount_usd": -round(e["capital_usd"], 2)},
+        {"day": round(o.get("playbook", {}).get("timeline_days", 14) if o.get("playbook") else 14),
+         "label": "Launched", "amount_usd": None},
+        {"day": payback, "label": "Break even", "amount_usd": 0},
+        {"day": max(payback + 1, 30), "label": "Expected monthly net from here",
+         "amount_usd": round(e["total_net_usd"], 2)},
+    ]
+
+
+def _discovery(o: dict, world) -> dict | None:
+    """The detective report: what actually moved, with deltas."""
+
+    try:
+        rows = []
+        eid = o["entity_id"]
+        mentions = []
+        for src in world.social_sources():
+            h = world.mentions(eid, src)
+            if h:
+                mentions = [a + b for a, b in zip(mentions, h)] if mentions else list(h)
+        if len(mentions) >= 5:
+            base = fmean(mentions[-8:-1])
+            rows.append({"label": "Social mentions (24h)", "value": f"{mentions[-1]}/day",
+                         "delta": _pct_delta(mentions[-1], base)})
+
+        if o["type"] == "product_arbitrage":
+            bv, sv = o["route"]["buy_venue"], o["route"]["sell_venue"]
+            sh = world.product_history(eid, sv)
+            if len(sh) >= 5:
+                prices = [x["price"] for x in sh]
+                stocks = [x["stock"] for x in sh]
+                rows.append({"label": f"Sell price — {economics.VENUES[sv]['name']}",
+                             "value": f"${prices[-1]:.2f}",
+                             "delta": _pct_delta(prices[-1], fmean(prices[-8:-1]))})
+                rows.append({"label": f"Visible stock — {economics.VENUES[sv]['name']}",
+                             "value": f"{stocks[-1]} units",
+                             "delta": _pct_delta(stocks[-1], fmean(stocks[-8:-1]))})
+                rows.append({"label": "Active sellers", "value": f"{sh[-1]['sellers']}", "delta": None})
+                rows.append({"label": "Sell-through", "value": f"{sh[-1]['sold_7d'] / 7:.1f}/day", "delta": None})
+            bl = world.listing(eid, bv)
+            if bl:
+                rows.append({"label": f"Source supply — {economics.VENUES[bv]['name']}",
+                             "value": f"{bl['stock']} units @ ${bl['price']:.2f}",
+                             "delta": "still deep" if bl["stock"] >= 20 else "limited"})
+        else:
+            nh = world.niche_history(eid)
+            if len(nh) >= 5:
+                vols = [x["volume"] for x in nh]
+                rows.append({"label": "Demand volume", "value": f"{vols[-1]:,.0f}/mo",
+                             "delta": _pct_delta(vols[-1], fmean(vols[-8:-1]))})
+                m = nh[-1]
+                rows.append({"label": "Demand posts", "value": f"{m['demand_posts']:.0f}/mo", "delta": None})
+                supply = m.get("solution_count") if o["type"] in ("digital_product", "info_product") else m.get("providers")
+                rows.append({"label": "Competing supply", "value": f"{supply}", "delta": None})
+
+        rows.append({"label": "Profit window", "value": f"~{o['window_days']:.0f} days", "delta": None})
+        return {"rows": rows} if rows else None
+    except Exception:
+        return None
 
 
 class OutcomeIn(BaseModel):
@@ -31,10 +142,17 @@ class OutcomeIn(BaseModel):
     notes: str | None = None
 
 
-def _action_card(o: dict) -> dict | None:
-    """A do-this-deal summary: where to buy, where to sell, at which prices,
-    how much to invest and keep — everything needed to act, in one block."""
+class ProgressIn(BaseModel):
+    step: int
+    done: bool = True
 
+
+def _action_card(o: dict, operator: dict | None = None) -> dict | None:
+    """A do-this-deal summary: where to buy, where to sell, at which prices,
+    with clickable links — everything needed to act, in one block."""
+
+    operator = operator or {}
+    registered = set(operator.get("registered_venues", []))
     try:
         e = o["economics"]
         fx = e.get("fx", {}).get("USD_THB", 36.4)
@@ -53,10 +171,16 @@ def _action_card(o: dict) -> dict | None:
                         "price_usd": round(buy_usd, 2), "price_thb": thb(buy_usd),
                         "max_price_usd": round(buy_usd * 1.08, 2),
                         "qty": e["qty"],
+                        "url": links.search_url(bv, o["title"]),
                         "how": thailand.VENUE_ACCESS.get(bv, {}).get("buy_note", "")},
                 "sell": {"venue": economics.VENUES[sv]["name"],
                          "price_usd": round(sell_usd, 2), "price_thb": thb(sell_usd),
-                         "how": thailand.VENUE_ACCESS.get(sv, {}).get("sell_note", "")},
+                         "url": links.search_url(sv, o["title"]),
+                         "signup_url": links.signup_url(sv),
+                         "registered": sv in registered,
+                         "how": ("✓ You're already registered here."
+                                 if sv in registered else
+                                 thailand.VENUE_ACCESS.get(sv, {}).get("sell_note", ""))},
                 "invest_usd": e["capital_usd"], "invest_thb": thb(e["capital_usd"]),
                 "profit_usd": e["total_net_usd"], "profit_thb": thb(e["total_net_usd"]),
                 "profit_unit_usd": e["base"]["net_usd"],
@@ -64,6 +188,8 @@ def _action_card(o: dict) -> dict | None:
                 "margin_pct": e["base"]["margin_pct"],
                 "timeline_days": pb.get("timeline_days") or o["window_days"],
                 "first_steps": steps[:4],
+                "money_timeline": _money_timeline(o),
+                "forecast": _forecast(o["window_days"]),
             }
         monthly = e["total_net_usd"]
         return {
@@ -76,6 +202,8 @@ def _action_card(o: dict) -> dict | None:
             "geo": o.get("route", {}).get("geo", "global"),
             "timeline_days": pb.get("timeline_days") or o["window_days"],
             "first_steps": steps[:4],
+            "money_timeline": _money_timeline(o),
+            "forecast": _forecast(o["window_days"]),
         }
     except Exception:
         return None
@@ -207,7 +335,12 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
             o["automation"] = None
             o["locked"] = {"playbooks": "Execution playbooks and automation plans are a Pro feature.",
                            "upgrade": PLANS["pro"]["blurb"]}
-        o["action"] = _action_card(o)
+        o["action"] = _action_card(o, orch.operator)
+        o["discovery"] = _discovery(o, orch.world)
+        done = store.get_progress(opp_id)
+        n_steps = len((o.get("playbook") or {}).get("steps", []) or [])
+        o["progress"] = {"done_steps": done,
+                         "pct": round(100 * len(done) / n_steps) if n_steps else 0}
         return o
 
     @app.post("/api/opportunities/{opp_id}/outcome")
@@ -224,6 +357,46 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         o["status"] = OppStatus.EXECUTED.value
         store.upsert_opportunity(o)
         return {"recorded": True, "learning": update}
+
+    @app.post("/api/opportunities/{opp_id}/progress")
+    def set_progress(opp_id: str, body: ProgressIn):
+        if not store.get_opportunity(opp_id):
+            raise HTTPException(404, "unknown opportunity id")
+        store.set_progress(opp_id, body.step, body.done)
+        return {"done_steps": store.get_progress(opp_id)}
+
+    @app.get("/api/activity")
+    def activity(limit: int = Query(default=40, le=100)):
+        """The fleet's recent work as a human-readable live feed."""
+
+        items: list[dict] = []
+        latest_by_agent: dict[str, dict] = {}
+        for s in store.recent_signals(200):
+            if s["agent"] not in latest_by_agent:
+                latest_by_agent[s["agent"]] = {"ts": s["ts"], "tick": s["tick"], "n": 0}
+            if s["tick"] == latest_by_agent[s["agent"]]["tick"]:
+                latest_by_agent[s["agent"]]["n"] += 1
+        names = {a["agent"]: a["name"] for a in store.list_agents()}
+        for agent, v in latest_by_agent.items():
+            items.append({"ts": v["ts"], "kind": "scan", "actor": names.get(agent, agent),
+                          "text": f"scanned — {v['n']} signals captured (pass {v['tick']})"})
+        for a in store.recent_anomalies(12):
+            items.append({"ts": a["ts"], "kind": "anomaly", "actor": "Anomaly detector",
+                          "text": a["summary"]})
+        for c in store.recent_cycles(2):
+            rep = c["report"]
+            for p in rep.get("published", []):
+                items.append({"ts": c["ts"], "kind": "publish", "actor": "Verification council",
+                              "text": f"VERIFIED · {p['title']} — score {p['score']}, "
+                                      f"confidence {p['confidence']:.0%}"})
+            for r_ in rep.get("rejected", []):
+                items.append({"ts": c["ts"], "kind": "reject", "actor": "Verification council",
+                              "text": f"REJECTED · {r_['title']} — {r_['reason']}"})
+            for iv in rep.get("invalidated", []):
+                items.append({"ts": c["ts"], "kind": "invalidate", "actor": "Re-verification",
+                              "text": f"KILLED · {iv['title']} — {iv['reason']}"})
+        items.sort(key=lambda x: x["ts"], reverse=True)
+        return {"items": items[:limit]}
 
     @app.post("/api/cycle")
     def run_cycle():

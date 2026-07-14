@@ -58,9 +58,21 @@ class WatchNiche:
 
 
 @dataclass
+class Operator:
+    """Who is executing — so the AI never recommends the impossible."""
+
+    budget_usd: float | None = None
+    avoid_types: list[str] = field(default_factory=list)        # e.g. ["local_service"]
+    prefer_categories: list[str] = field(default_factory=list)
+    registered_venues: list[str] = field(default_factory=list)  # platforms you already sell on
+    has: list[str] = field(default_factory=list)                # e.g. ["payoneer", "buyee account"]
+
+
+@dataclass
 class Watchlist:
     products: list[WatchProduct]
     niches: list[WatchNiche]
+    operator: Operator = field(default_factory=Operator)
     path: Path | None = None
 
     def product(self, pid: str) -> WatchProduct | None:
@@ -122,7 +134,15 @@ def load(path: Path) -> Watchlist:
         providers=int(n.get("providers", 3)),
         demand_posts=float(n.get("demand_posts", 50)),
     ) for n in raw.get("niches", [])]
-    w = Watchlist(products=products, niches=niches, path=path)
+    op_raw = raw.get("operator", {}) or {}
+    operator = Operator(
+        budget_usd=float(op_raw["budget_usd"]) if op_raw.get("budget_usd") else None,
+        avoid_types=list(op_raw.get("avoid_types", [])),
+        prefer_categories=list(op_raw.get("prefer_categories", [])),
+        registered_venues=list(op_raw.get("registered_venues", [])),
+        has=list(op_raw.get("has", [])),
+    )
+    w = Watchlist(products=products, niches=niches, operator=operator, path=path)
     problems = validate(w)
     if problems:
         raise ValueError("watchlist has problems:\n  - " + "\n  - ".join(problems))
