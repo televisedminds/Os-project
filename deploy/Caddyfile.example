@@ -1,0 +1,19 @@
+# Phone-friendly dashboard access — no SSH tunnel needed.
+#
+# Opportunity OS itself binds to 127.0.0.1:8000 (no login screen of its own).
+# Caddy sits in front, adds a username/password prompt, and serves it on
+# plain HTTP so you can open it straight from your phone's browser.
+#
+# If you own a domain and pointed its A record at this droplet's IP, replace
+# ":80" below with your domain (e.g. "opportunities.example.com") — Caddy
+# will then fetch a free HTTPS certificate automatically and everything else
+# stays the same.
+
+:80 {
+	basic_auth {
+		# Replace both values: username, then the bcrypt hash printed by
+		# `caddy hash-password` (see deploy/setup_https_dashboard.sh).
+		youruser $2a$14$REPLACE_WITH_YOUR_OWN_HASH
+	}
+	reverse_proxy localhost:8000
+}

@@ -78,19 +78,27 @@ That installs:
   restarted on failure, surviving reboots;
 * **opportunity-os-brief.timer** — Telegram briefing daily at 07:00 Bangkok.
 
-Watch it work: `journalctl -u opportunity-os -f`
+Watch it work: `journalctl -u opportunity-os -f` (Ctrl+C stops watching the
+log, not the service).
 
-**Dashboard access (important):** the server binds to 127.0.0.1 because there
-is no login screen. From your machine:
+**Dashboard access:** the server binds to 127.0.0.1 because it has no login
+screen of its own. Two ways to reach it:
 
+*From a laptop (quick, nothing to install):*
 ```bash
 ssh -L 8000:localhost:8000 root@<droplet-ip>
 # then open http://localhost:8000  → header shows a green LIVE FEED badge
 ```
+Only works while that SSH session stays open — awkward from a phone.
 
-(If you want it on the open internet, put Caddy in front:
-`caddy reverse-proxy --from your.domain --to localhost:8000` + `basic_auth` —
-don't expose it bare.)
+*From your phone's browser (Termius users — no tunnel needed):*
+```bash
+bash deploy/setup_https_dashboard.sh
+```
+Installs Caddy, asks you to pick a username + password, and puts a login in
+front of the dashboard. Then open `http://<droplet-ip>/` in any browser and
+log in. Point a domain's A record at the droplet first (and enter it when
+asked) to get automatic HTTPS instead of plain HTTP.
 
 ## Step 3 — the daily operator loop
 

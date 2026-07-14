@@ -154,6 +154,21 @@ The robot then reads Shopee's real prices, sold-counts and stock by itself
 
 Manual quotes (typing the price you see) stay the free, always-works option.
 
+## Doing all of this from your phone (Termius or any SSH app)
+
+Termius (or any SSH app) connected to your droplet is the **same terminal** as
+a laptop — every command below is typed the same way. Two phone-specific tips:
+
+* **Keyboard:** commands are English letters/symbols only. If your keyboard is
+  set to Thai, tap the globe icon (bottom-left of the keyboard) to switch back.
+* **Ctrl key:** `nano` (the text editor used below) needs Ctrl+O to save and
+  Ctrl+X to exit. Termius shows a `ctrl` button in the toolbar above the
+  keyboard — tap `ctrl`, then tap the letter, instead of holding both at once.
+
+Nothing about setup changes — you're typing into the exact same droplet.
+Everything in Parts A–D below is the same command sequence whether you type
+it from Termius on your phone or a laptop's terminal.
+
 ## Part D — put it on your DigitalOcean server (so it runs 24/7)
 
 ```bash
