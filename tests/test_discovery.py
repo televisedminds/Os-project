@@ -9,7 +9,8 @@ from opportunity_os import discovery as disc
 from opportunity_os.config import Config
 from opportunity_os.db import Store
 from opportunity_os.discovery import (Candidate, DiscoveryEngine, EbayBrowseDiscovery,
-                                      GoogleTrendsDiscovery, RedditDiscovery)
+                                      GoogleTrendsDiscovery, HackerNewsDiscovery,
+                                      RedditDiscovery)
 from opportunity_os.market.live import LiveMarket
 from opportunity_os.pipeline import Orchestrator
 from tests.test_live import stub_adapters, write_watchlist
@@ -61,6 +62,47 @@ def test_google_trends_filters_noise():
     assert c.id.startswith("disc_p_") and "ebay_us" in c.queries
     ok, note = src.check()
     assert ok and "1" in note
+
+
+# ------------------------------------------------------------- Hacker News
+
+
+HN_HITS = {"hits": [
+    {"title": "Ask HN: Is there a tool for tracking freelance invoices across clients?",
+     "points": 45, "num_comments": 30},
+    {"title": "Ask HN: Should I take the Cambridge masters or the Amazon offer?",
+     "points": 120, "num_comments": 200},
+    {"title": "Tell HN: I wish there was an app for splitting condo utility bills",
+     "points": 18, "num_comments": 12},
+]}
+
+
+def test_hackernews_keeps_only_unmet_needs():
+    src = HackerNewsDiscovery(Config(mode="live"),
+                              _client(lambda req: httpx.Response(200, json=HN_HITS)))
+    cands = src.discover()
+    names = [c.name for c in cands]
+    assert len(cands) == 2                       # the careers post is dropped
+    assert all(c.kind == "niche" and c.id.startswith("disc_n_") for c in cands)
+    assert "Is there a tool for tracking freelance invoices across clients?" in names
+    invoice = next(c for c in cands if "invoice" in c.name)
+    assert invoice.niche_kind == "digital" and invoice.score > 0.5
+    assert "Hacker News" in invoice.reason
+    ok, note = src.check()
+    assert ok and "2 unmet-need" in note
+
+
+def test_hackernews_failure_degrades():
+    src = HackerNewsDiscovery(Config(mode="live"),
+                              _client(lambda req: httpx.Response(500)))
+    assert src.discover() == []
+    assert "HN fetch failed" in src.last_error
+
+
+def test_gap_relevance():
+    assert disc.gap_relevance("Is there a tool for invoice tracking?") > 0.5
+    assert disc.gap_relevance("Why is there no good alternative to X?") > 0.5
+    assert disc.gap_relevance("My favourite programming language in 2026") == 0.0
 
 
 # ------------------------------------------------------------------ Reddit

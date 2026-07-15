@@ -56,13 +56,16 @@ Observations persist in SQLite so baselines accumulate across days; sources that
 fail degrade gracefully and are reported on `/api/health` and the LIVE badge.
 
 **Discovery engine.** Live mode is no longer limited to the watchlist you type:
-a discovery layer sweeps the open internet each cycle (Google Trends — keyless;
-Reddit commerce subreddits; an eBay category sweep) and auto-promotes the best
+a discovery layer sweeps the open internet each cycle and auto-promotes the best
 candidates into the observed set, where the normal verify → price → gate → learn
-pipeline takes over. The eBay + Reddit keys are what make it productive; without
-them only the keyless, hard-filtered Google Trends source runs. See
-`GET /api/discovery`, the **Discovery** tab in the dashboard, and the discovery
-panel in `run.py live-check`.
+pipeline takes over. Sources: Google Trends (keyless), **Ask HN unmet-need posts**
+(keyless — people literally asking for tools that don't exist), Reddit commerce
+*and* business-gap subreddits (r/Flipping, r/SomebodyMakeThis, r/sweatystartup,
+r/SaaS, …), and an eBay category sweep. It hunts business opportunities — digital
+tools, info products, local services, B2B gaps — not just product flips. The
+eBay + Reddit keys make it most productive; without them the two keyless sources
+still run. See `GET /api/discovery`, the **Discovery** tab in the dashboard, and
+the discovery panel in `run.py live-check`.
 
 **AI brain (optional, recommended).** Set `ANTHROPIC_API_KEY` and Claude judges
 every discovery sweep in one batched call: drops non-commercial noise, corrects

@@ -67,6 +67,28 @@ NICHE_KIND_HINTS = [
     ("b2b", ("wholesale", "supplier", "b2b", "partnership", "installer", "contractor")),
 ]
 
+# Phrases that signal an UNMET NEED — someone asking the internet for a tool,
+# service, or product that doesn't exist or isn't good enough. These are the
+# rawest form of business opportunity the open web publishes.
+GAP_PATTERNS = (
+    "is there a", "is there any", "why is there no", "why isn't there",
+    "alternative to", "alternatives to", "looking for a", "struggling to find",
+    "can't find a", "cant find a", "recommend a", "recommendation for",
+    "what do you use for", "best tool for", "tool for", "app for", "service for",
+    "i wish there was", "i wish there were", "somebody should build",
+    "someone should make", "how do you manage", "how do you track",
+    "how do you automate", "how do you handle", "willing to pay",
+)
+
+
+def gap_relevance(text: str) -> float:
+    """0..1 — how much a post reads like an unmet-need signal."""
+
+    low = text.lower()
+    hits = sum(1 for p in GAP_PATTERNS if p in low)
+    return min(1.0, hits / 1.5)
+
+
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 _STOP = {"the", "a", "an", "of", "for", "and", "to", "in", "on", "with", "your", "you", "how", "is"}
 
@@ -229,6 +251,66 @@ class GoogleTrendsDiscovery(DiscoverySource):
         return True, f"keyless; {len(got)} commerce-relevant trend(s) this pass (geo={self.geo})"
 
 
+# -------------------------------------------------------------- Hacker News
+
+class HackerNewsDiscovery(DiscoverySource):
+    """Keyless: recent Ask HN posts via the Algolia API, filtered hard for
+    unmet-need language ("Is there a tool for…", "Why is there no…"). People
+    literally ask the internet for products that don't exist — the rawest
+    business-opportunity signal the open web publishes. Most Ask HN traffic
+    is careers/news and is dropped; survivors become niche candidates."""
+
+    id = "hackernews"
+    name = "Hacker News (Ask HN unmet needs)"
+    URL = "https://hn.algolia.com/api/v1/search_by_date"
+
+    def __init__(self, cfg, client=None):
+        super().__init__(cfg, client)
+        # Tuned against live data: genuine unmet-need posts are rare (~1-2 a
+        # week) and usually score single-digit points — cast a 2-week net with
+        # a low points bar and let the gap filter + AI brain do the judging.
+        self.days = 14
+        self.min_points = 3
+
+    def discover(self) -> list[Candidate]:
+        since = int(time.time() - self.days * 86400)
+        try:
+            r = self.client.get(self.URL, params={
+                "tags": "ask_hn",
+                "numericFilters": f"points>{self.min_points},created_at_i>{since}",
+                "hitsPerPage": "50"})
+            r.raise_for_status()
+            hits = r.json().get("hits", []) or []
+        except Exception as e:  # noqa: BLE001
+            return self._fail(f"HN fetch failed: {e}")
+        out: list[Candidate] = []
+        for h in hits:
+            title = re.sub(r"^(ask|tell) hn:\s*", "", (h.get("title") or "").strip(),
+                           flags=re.I).strip()
+            if len(title) < 8:
+                continue
+            rel = gap_relevance(title)
+            if rel < 0.5:                       # needs a real unmet-need phrase
+                continue
+            points = int(h.get("points", 0))
+            comments = int(h.get("num_comments", 0))
+            score = round(min(2.0, 0.3 + rel * 0.5 + points / 300 + comments / 200), 3)
+            out.append(Candidate(
+                kind="niche", id=slug(title, "disc_n"), name=title[:70],
+                source=self.id, score=score, niche_kind=infer_niche_kind(title),
+                reason=f"Unmet-need post on Hacker News ({points} points, "
+                       f"{comments} comments asking for this).",
+                reddit_query=clean_query(title), news_query=clean_query(title)))
+        return out
+
+    def check(self) -> tuple[bool, str]:
+        got = self.discover()
+        if self.last_error:
+            return False, self.last_error
+        return True, (f"keyless; {len(got)} unmet-need post(s) in the last "
+                      f"{self.days} days (strict gap filter)")
+
+
 # --------------------------------------------------------------------- Reddit
 
 class RedditDiscovery(DiscoverySource):
@@ -247,6 +329,12 @@ class RedditDiscovery(DiscoverySource):
         ("juststart", "niche", "info"),
         ("EntrepreneurRideAlong", "niche", "info"),
         ("ecommerce", "niche", "b2b"),
+        # Business-gap communities: people describing needs, not just deals.
+        ("SomebodyMakeThis", "niche", "digital"),
+        ("AppIdeas", "niche", "digital"),
+        ("sweatystartup", "niche", "local"),
+        ("smallbusiness", "niche", "b2b"),
+        ("SaaS", "niche", "digital"),
     ]
 
     def __init__(self, cfg, client=None, reddit_adapter=None):
@@ -513,6 +601,7 @@ def build_sources(cfg, store, client: httpx.Client | None = None) -> list[Discov
         pass
     return [
         GoogleTrendsDiscovery(cfg, client),
+        HackerNewsDiscovery(cfg, client),
         RedditDiscovery(cfg, client, reddit_adapter=reddit_ad),
         EbayBrowseDiscovery(cfg, client, ebay_adapter=ebay_ad),
     ]

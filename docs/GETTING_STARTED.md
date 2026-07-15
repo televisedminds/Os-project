@@ -29,7 +29,7 @@ demand in Bangkok), **info products** (guides Thai people are searching for),
 | News context ("why is this trending?") | ❌ no | fetched automatically |
 | Watching **eBay US** prices automatically (sell-to-America deals) | ✅ free key | eBay developer account (guide below) |
 | Demand signal from **Reddit** (for niches) | ✅ free key | Reddit app (guide below) |
-| **Discovery** — the fleet finds NEW things to watch by itself | partly | Google Trends is keyless; eBay + Reddit keys make it productive |
+| **Discovery** — the fleet finds NEW things to watch by itself (products AND business ideas: tools, info products, services) | partly | Google Trends + Hacker News are keyless; eBay + Reddit keys make it much more productive |
 | **AI brain** — Claude judges every discovered candidate | ✅ paid key (~$5 lasts months) | console.anthropic.com (guide below) |
 | Telegram morning message | ✅ free bot | @BotFather (guide below) |
 
