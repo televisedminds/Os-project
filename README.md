@@ -40,7 +40,7 @@ CLI, for the cron-driven lifestyle:
 python run.py cycle -n 3       # run three research cycles right now
 python run.py brief            # print the morning briefing to the terminal
 python run.py reset            # wipe state and re-seed the demo world
-python -m pytest tests/ -q     # 67 tests
+python -m pytest tests/ -q     # 76 tests
 ```
 
 No database server, no build step, no API keys needed to try it: state is SQLite
@@ -61,7 +61,16 @@ Reddit commerce subreddits; an eBay category sweep) and auto-promotes the best
 candidates into the observed set, where the normal verify → price → gate → learn
 pipeline takes over. The eBay + Reddit keys are what make it productive; without
 them only the keyless, hard-filtered Google Trends source runs. See
-`GET /api/discovery` and the discovery panel in `run.py live-check`.
+`GET /api/discovery`, the **Discovery** tab in the dashboard, and the discovery
+panel in `run.py live-check`.
+
+**AI brain (optional, recommended).** Set `ANTHROPIC_API_KEY` and Claude judges
+every discovery sweep in one batched call: drops non-commercial noise, corrects
+categories, rescores by real money-making potential for a Thailand-based
+operator, and attaches a one-line reason to each verdict. Without the key,
+keyword heuristics do the filtering. The AI never invents opportunities and
+nothing it keeps skips verification — it only decides what deserves the fleet's
+attention. (`opportunity_os/ai.py`; a few cents/day at the default cadence.)
 
 ```bash
 cp watchlist.example.json watchlist.json   # what to track
@@ -206,6 +215,7 @@ opportunity_os/
   market/world.py    deterministic causal market simulator (demo mode)
   market/live.py     live data source (watchlist + discovery, real adapters)
   discovery.py       discovery engine — auto-finds new products/niches to watch
+  ai.py              AI brain — Claude judges discovery candidates (optional)
   agents/scanners.py 13 scanner agents (venues, social, trends, news)
   agents/anomaly.py  z-scores, stock crashes, spreads, gaps, imbalances
   agents/investigator.py   the why-chain + candidate builder
@@ -223,13 +233,19 @@ run.py               serve · cycle · brief · reset
 
 ## Roadmap to production
 
-1. **Live connectors** (`market/live.py`) — start with eBay Browse + sold-history,
-   Mercari/Yahoo JP via proxy-service accounts, pytrends; one venue pair is enough to
-   go live for product arbitrage.
-2. **Real fee/tariff sync** — marketplace fee schedules, Thai Customs tariff codes,
-   carrier rate APIs, live FX.
-3. **Execution integrations** — proxy-service auto-bid, listing APIs, label printing
+1. ~~**Live connectors**~~ — ✅ shipped: eBay Browse (sell side), Reddit, Google
+   News RSS, live FX, ScrapingDog/Shopee TH, manual buy-side quotes
+   (`market/adapters.py`, `market/live.py`).
+2. ~~**Discovery + AI judgment**~~ — ✅ shipped: Google Trends / Reddit / eBay
+   discovery sweeps with an optional Claude classification layer
+   (`discovery.py`, `ai.py`).
+3. ~~**Notifications**~~ — ✅ shipped: Telegram briefing push + daily systemd timer.
+4. **Buy-side automation** — Buyee/ZenMarket quote fetching for JP auctions and an
+   AliExpress price watcher, so cross-border flips price themselves end to end
+   (today the buy side is your manual quotes).
+5. **Real fee/tariff sync** — marketplace fee schedules, Thai Customs tariff codes,
+   carrier rate APIs (fees/duties are curated reference values today).
+6. **Execution integrations** — proxy-service auto-bid, listing APIs, label printing
    (the automation plans already mark what to wire).
-4. **Accounts & billing** on top of the plan gates that already exist.
-5. **Notifications** — LINE/Telegram push of the morning briefing (the briefing
-   endpoint is already the payload).
+7. **Accounts & billing** on top of the plan gates that already exist (today the
+   plan switch is client-side — fine for a personal tool, not for paying users).

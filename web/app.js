@@ -614,6 +614,41 @@ async function loadOps() {
         <span class="act-actor">${esc(it.actor)}</span>
         <span class="act-text">${esc(it.text)}</span></div>`;
     }).join("")}</div>`;
+  } else if (state.opsTab === "discovery") {
+    const d = await api("/api/discovery");
+    if (!d.enabled) {
+      body.innerHTML = `<p class="wf-note">The discovery engine runs in <b>live mode</b>: it sweeps
+        Google Trends, Reddit commerce communities and eBay categories on a schedule, auto-promotes
+        the best finds into the watched fleet, and (with an Anthropic key) has Claude judge every
+        candidate. Demo mode uses a fixed simulated catalog, so there is nothing to discover here —
+        run <code>python run.py serve --live</code> to turn it on.</p>`;
+      return;
+    }
+    const srcRows = (d.sources || []).map((s) => `
+      <div class="access-row"><span>${esc(s.name)}</span>
+        <span class="yn ${s.ok ? "y" : "n"}">${s.ok ? "on" : "off"}</span></div>
+      ${s.ok ? "" : `<div class="wf-note" style="margin:2px 0 8px">${esc(s.note)}</div>`}`).join("");
+    const items = (d.found || []).map((c) => `
+      <div class="pipe-item ${c.status === "active" ? "pub" : ""}">
+        <b style="color:var(--ink)">${esc(c.name)}</b>
+        <span class="r"> ${esc(c.kind)} · score ${Number(c.score).toFixed(2)} · via ${esc(c.source)}</span>
+        <div class="r">${esc(c.reason || "")}</div>
+        ${c.kind === "product"
+          ? '<div class="r">➜ watching its sell side; add your buy quote (Buyee/Shopee/AliExpress price) in watchlist.json to price the flip</div>'
+          : ""}
+      </div>`).join("");
+    const lr = d.last_run || {};
+    body.innerHTML = `<div class="learn-cols">
+      <div><h4>Discovery sources</h4>${srcRows}
+        <div class="kv" style="margin-top:10px"><span>auto-found, being watched</span><b>${d.counts.active}</b></div>
+        <div class="kv"><span>found all-time</span><b>${d.counts.total}</b></div>
+        ${lr.found != null ? `<div class="kv"><span>last sweep</span><b>${lr.found} found · ${lr.promoted} promoted</b></div>` : ""}
+        ${lr.ai ? `<div class="kv"><span>AI brain</span><b>${esc(lr.ai)}</b></div>` : ""}
+      </div>
+      <div style="grid-column: span 2"><h4>What the fleet found on its own</h4>
+        ${items || '<div class="wf-note">Nothing yet — sweeps run every few cycles; candidates appear here, then must verify like everything else before reaching your feed.</div>'}
+      </div>
+    </div>`;
   } else if (state.opsTab === "agents") {
     const r = await api("/api/agents");
     body.innerHTML = `<div class="agents-grid">${r.agents.map((a) => `

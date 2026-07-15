@@ -51,6 +51,22 @@ def test_reverification_invalidates_when_market_turns(orch):
     assert stored["invalidation_reason"]
 
 
+def test_window_elapsed_expires_instead_of_invalidating(orch):
+    # An opportunity aged far past its window must retire as EXPIRED (natural
+    # end of life), not INVALIDATED (market turned) — the UI filters differ.
+    from opportunity_os.agents import ScoringEngine, VerificationCouncil
+    from opportunity_os.models import OppStatus
+
+    orch.run_cycle()
+    opp = orch.db.active_opportunities()[0]
+    opp["tick_created"] -= int(opp["window_days"] * 2 + 10)
+    council = VerificationCouncil(orch.cfg, orch.learning.verifier_reliability)
+    scorer = ScoringEngine(orch.learning.weights, orch.cfg.capital_cap_usd)
+    ok, reason, status = orch._reverify(opp, council, scorer, orch.world.tick_no)
+    assert not ok and "window elapsed" in reason
+    assert status is OppStatus.EXPIRED
+
+
 def test_learning_updates_from_outcomes(orch):
     orch.run_cycle()
     opp = orch.db.active_opportunities()[0]

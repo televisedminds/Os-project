@@ -65,7 +65,7 @@ class Config:
     watchlist_path: Path = field(default_factory=lambda: Path(os.environ.get("OOS_WATCHLIST",
                                                                              PROJECT_ROOT / "watchlist.json")))
     http_timeout: float = field(default_factory=lambda: float(os.environ.get("OOS_HTTP_TIMEOUT", "20")))
-    user_agent: str = _env("OOS_USER_AGENT", "OpportunityOS/0.2 (market research bot)")
+    user_agent: str = _env("OOS_USER_AGENT", "OpportunityOS/0.3 (market research bot)")
 
     # Live connector credentials (all optional — missing ones degrade gracefully).
     ebay_client_id: str = _env("EBAY_CLIENT_ID", "")
@@ -78,6 +78,14 @@ class Config:
     scrape_every_n_ticks: int = field(default_factory=lambda: int(os.environ.get("OOS_SCRAPE_EVERY", "4")))
     telegram_bot_token: str = _env("TELEGRAM_BOT_TOKEN", "")
     telegram_chat_id: str = _env("TELEGRAM_CHAT_ID", "")
+
+    # AI brain (optional): Claude judges discovery candidates — filters noise,
+    # fixes categories, rescores — instead of keyword matching. Needs a key
+    # from console.anthropic.com. OOS_AI_MODEL=claude-haiku-4-5 runs cheaper.
+    anthropic_api_key: str = _env("ANTHROPIC_API_KEY", "")
+    ai_model: str = _env("OOS_AI_MODEL", "claude-opus-4-8")
+    ai_enabled: bool = field(
+        default_factory=lambda: os.environ.get("OOS_AI", "1") not in ("0", "false", "no"))
 
     # Discovery engine (live mode): auto-find new products/niches to watch so
     # the fleet isn't limited to the hand-typed watchlist. Off in demo.

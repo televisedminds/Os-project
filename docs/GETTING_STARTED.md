@@ -29,6 +29,8 @@ demand in Bangkok), **info products** (guides Thai people are searching for),
 | News context ("why is this trending?") | ❌ no | fetched automatically |
 | Watching **eBay US** prices automatically (sell-to-America deals) | ✅ free key | eBay developer account (guide below) |
 | Demand signal from **Reddit** (for niches) | ✅ free key | Reddit app (guide below) |
+| **Discovery** — the fleet finds NEW things to watch by itself | partly | Google Trends is keyless; eBay + Reddit keys make it productive |
+| **AI brain** — Claude judges every discovered candidate | ✅ paid key (~$5 lasts months) | console.anthropic.com (guide below) |
 | Telegram morning message | ✅ free bot | @BotFather (guide below) |
 
 So: **you can start today with zero keys.** Keys only make more of it automatic.
@@ -125,8 +127,24 @@ quotes about twice a week (it takes ~2 minutes).
 3. Open `https://api.telegram.org/bot<YOUR-TOKEN>/getUpdates` in a browser —
    find `"chat":{"id":123456789}` → that number is your chat id. Both go in `.env`.
 
+**Claude / Anthropic (10 minutes, ~$5 — the "AI brain", biggest quality upgrade):**
+
+Without this key, the discovery engine filters candidates by keyword matching
+(dumb but free). With it, Claude reads every candidate the fleet finds and
+judges it like an analyst would: *"sports news, nothing to sell — drop"* /
+*"sealed collectible with resale demand — keep, raise score"*. Every verdict
+comes with a reason you can read in the Discovery tab.
+
+1. Go to **console.anthropic.com** → sign up → **API keys** → *Create key*.
+2. Add ~$5 of credit (Billing). At the default cadence the AI runs about 8
+   batched calls per day ≈ a few **cents** per day, so $5 lasts months.
+3. Put the key in `.env` as `ANTHROPIC_API_KEY=sk-ant-...`.
+4. Optional: `OOS_AI_MODEL=claude-haiku-4-5` makes it several times cheaper
+   (slightly less careful judgment). The default model gives the best verdicts.
+
 Then check everything: `set -a; source .env; set +a; python run.py live-check`
-— you want ✓ on every line.
+— you want ✓ on every line, including the discovery panel at the bottom
+(`google_trends`, `reddit_discovery`, `ebay_discovery`, `ai_brain`).
 
 ## Optional: ScrapingDog — automatic Shopee TH prices
 

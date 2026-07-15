@@ -397,7 +397,15 @@ class DiscoveryEngine:
         self.cfg = cfg
         self.store = store
         self.sources = sources if sources is not None else build_sources(cfg, store)
-        # classify_hook(candidates) -> candidates: the LLM seam (kept optional).
+        # classify_hook(candidates) -> candidates. Defaults to the AI brain
+        # when an Anthropic key is configured; falls back to the keyword
+        # heuristics baked into each source otherwise.
+        self.ai = None
+        if classify_hook is None:
+            from .ai import AIClassifier
+            self.ai = AIClassifier(cfg)
+            if self.ai.configured():
+                classify_hook = self.ai.classify
         self.classify_hook = classify_hook
         self.errors: list[str] = []
 
@@ -420,19 +428,25 @@ class DiscoveryEngine:
                 if c.id not in found or c.score > found[c.id].score:
                     found[c.id] = c
         candidates = list(found.values())
+        raw_count = len(candidates)
         if self.classify_hook:
             try:
                 candidates = self.classify_hook(candidates) or candidates
             except Exception as e:  # noqa: BLE001
                 self.errors.append(f"classify_hook: {e}")
+            if self.ai is not None and self.ai.last_error:
+                self.errors.append(f"ai: {self.ai.last_error}")
         promoted = 0
         for c in sorted(candidates, key=lambda x: x.score, reverse=True)[:self.cfg.discovery_scan_cap]:
             if self.store.upsert_discovered(asdict(c)):
                 promoted += 1
         self.store.expire_discovered(self.cfg.discovery_ttl_days,
                                      self.cfg.discovery_max_active)
-        return {"sources": per_source, "found": len(candidates),
-                "promoted": promoted, "errors": self.errors}
+        report = {"sources": per_source, "found": len(candidates),
+                  "promoted": promoted, "errors": self.errors}
+        if self.ai is not None and self.ai.configured():
+            report["ai"] = self.ai.last_summary or f"screened {raw_count} candidates"
+        return report
 
     # ---- merge discovered winners into the observed watch entities ----------
 
@@ -460,6 +474,11 @@ class DiscoveryEngine:
         for src in self.sources:
             out.append({"id": src.id, "name": src.name,
                         "ok": not src.last_error, "note": src.last_error or "ok"})
+        if self.ai is not None:
+            out.append({"id": "ai_brain", "name": "AI brain (Claude judgment)",
+                        "ok": self.ai.configured() and not self.ai.last_error,
+                        "note": (self.ai.last_error or self.ai.last_summary or "ok")
+                        if self.ai.configured() else "no ANTHROPIC_API_KEY — keyword filtering"})
         return out
 
     def healthcheck(self) -> list[dict]:
@@ -467,6 +486,9 @@ class DiscoveryEngine:
         for src in self.sources:
             ok, note = src.check()
             out.append({"id": src.id, "name": src.name, "ok": ok, "note": note})
+        if self.ai is not None:
+            ok, note = self.ai.check()
+            out.append({"id": "ai_brain", "name": "AI brain (Claude judgment)", "ok": ok, "note": note})
         return out
 
 

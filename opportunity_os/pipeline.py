@@ -114,11 +114,11 @@ class Orchestrator:
         for stored in self.db.active_opportunities():
             if stored["id"] in updated_ids:
                 continue
-            ok, reason = self._reverify(stored, council, scorer, tick)
+            ok, reason, fail_status = self._reverify(stored, council, scorer, tick)
             if ok:
                 reverified += 1
             else:
-                stored["status"] = OppStatus.INVALIDATED.value
+                stored["status"] = fail_status.value
                 stored["invalidation_reason"] = reason
                 stored["tick_updated"] = tick
                 self.db.upsert_opportunity(stored)
@@ -187,7 +187,11 @@ class Orchestrator:
     # --------------------------------------------------------------- reverify
 
     def _reverify(self, stored: dict, council: VerificationCouncil, scorer: ScoringEngine,
-                  tick: int) -> tuple[bool, str]:
+                  tick: int) -> tuple[bool, str, OppStatus | None]:
+        """Returns (still_valid, reason, failure_status). A window that ran out
+        is EXPIRED (natural end of life); a failed re-check is INVALIDATED
+        (the market turned) — the dashboard filters distinguish the two."""
+
         # In demo mode one tick == one simulated day; in live mode ticks are
         # observation passes, so expiry runs on wall-clock age instead.
         if self.cfg.mode == "live":
@@ -195,21 +199,21 @@ class Orchestrator:
         else:
             age_days = tick - stored["tick_created"]
         if age_days > stored["window_days"] * 2 + 4:
-            return False, "window elapsed — original edge has fully played out"
+            return False, "window elapsed — original edge has fully played out", OppStatus.EXPIRED
 
         if stored["type"] == OppType.PRODUCT_ARBITRAGE.value:
             cand = self._fresh_flip(stored)
         else:
             cand = self._fresh_venture(stored)
         if cand is None:
-            return False, "source inventory exhausted or listing no longer observable"
+            return False, "source inventory exhausted or listing no longer observable", OppStatus.INVALIDATED
 
         verification = (council.verify_flip(self.world, cand) if cand["kind"] == "flip"
                         else council.verify_venture(self.world, cand))
         confidence = round(min(0.99, verification.consensus * self.learning.calibration), 3)
         reason = self._gates(verification, confidence, cand["economics"])
         if reason:
-            return False, reason
+            return False, reason, OppStatus.INVALIDATED
 
         automation = build_automation(cand)
         score = scorer.score(cand, automation.coverage_pct)
@@ -222,7 +226,7 @@ class Orchestrator:
         stored["tick_updated"] = tick
         stored["status"] = OppStatus.ACTIVE.value
         self.db.upsert_opportunity(stored)
-        return True, ""
+        return True, "", None
 
     def _fresh_flip(self, stored: dict) -> dict | None:
         pid = stored["entity_id"]
@@ -302,6 +306,11 @@ def briefing(store: Store, cfg: Config, plan_name: str | None = None) -> dict:
     if last.get("rejected"):
         lines.append(f"{len(last['rejected'])} candidates were investigated and rejected before "
                      f"reaching you — they didn't survive fee/tax/verification checks.")
+    disc = last.get("discovered") or {}
+    if disc.get("promoted"):
+        lines.append(f"Discovery added {disc['promoted']} new candidate"
+                     f"{'s' if disc['promoted'] != 1 else ''} to the watch fleet"
+                     + (f" ({disc['ai']})." if disc.get("ai") else "."))
 
     return {
         "generated_at": now.isoformat(),
