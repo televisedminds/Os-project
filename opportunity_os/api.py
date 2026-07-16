@@ -677,6 +677,48 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
     def plans():
         return {"default": cfg.default_plan, "plans": PLANS}
 
+    # ------------------------------------------------------------- settings
+
+    from . import settings as app_settings
+
+    def _reset_key_clients():
+        """Drop cached tokens/clients so freshly saved keys take effect now."""
+
+        brain._client = None
+        try:
+            ai = getattr(getattr(orch.world, "discovery", None), "ai", None)
+            if ai is not None:
+                ai._client = None
+            adapters = getattr(orch.world, "adapters", {}) or {}
+            for ad in adapters.values():
+                if hasattr(ad, "_token"):
+                    ad._token = ""
+        except Exception:  # noqa: BLE001
+            pass
+
+    @app.get("/api/settings")
+    def get_settings():
+        """Masked status of every managed key — raw values are never returned."""
+
+        return {"keys": app_settings.status(cfg, store),
+                "note": "Keys save to the local database and apply immediately — no restart. "
+                        "Values are never sent back to the browser."}
+
+    @app.post("/api/settings")
+    def save_settings(updates: dict[str, str]):
+        try:
+            changed = app_settings.save(cfg, store, updates)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        _reset_key_clients()
+        return {"changed": changed, "keys": app_settings.status(cfg, store)}
+
+    @app.post("/api/settings/test")
+    def test_settings():
+        """Live-check every configured service (network); unset ones are skipped."""
+
+        return {"results": app_settings.run_checks(cfg)}
+
     # ------------------------------------------------------------- dashboard
 
     if WEB_DIR.exists():

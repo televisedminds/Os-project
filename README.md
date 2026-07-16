@@ -92,12 +92,17 @@ of the edge.
 
 ```bash
 cp watchlist.example.json watchlist.json   # what to track
-cp .env.example .env                       # eBay/Reddit/Telegram keys
-set -a; source .env; set +a
-python run.py live-check                   # validates keys, adapters, watchlist, FX
 python run.py serve --live                 # observe every 30 min, publish what verifies
-python run.py brief --live --push          # briefing to your Telegram
 ```
+
+**API keys without the terminal:** open the dashboard → **⚙ Keys** tab →
+paste → Save. Keys apply immediately (no restart), are stored only in the
+local SQLite database, and are never sent back to the browser (masked
+previews only). The **🧪 Test connections** button live-checks every key.
+`docs/KEYS.md` is the step-by-step guide for getting each key — including
+the eBay compliance trap and Reddit's 2025 approval rules. Prefer files?
+`cp .env.example .env` still works exactly as before; app-saved keys win
+over `.env`. Validate everything with `python run.py live-check`.
 
 **Full operator guide + DigitalOcean deployment (systemd units, daily Telegram
 briefing at 07:00 Bangkok): [docs/LIVE.md](docs/LIVE.md).** Demo and live keep

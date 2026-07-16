@@ -517,9 +517,14 @@ class DiscoveryEngine:
                     found[c.id] = c
         candidates = list(found.values())
         raw_count = len(candidates)
-        if self.classify_hook:
+        # Re-resolve the hook each sweep so an Anthropic key added at runtime
+        # (via the dashboard Keys tab) starts judging without a restart.
+        hook = self.classify_hook
+        if hook is None and self.ai is not None and self.ai.configured():
+            hook = self.ai.classify
+        if hook:
             try:
-                candidates = self.classify_hook(candidates) or candidates
+                candidates = hook(candidates) or candidates
             except Exception as e:  # noqa: BLE001
                 self.errors.append(f"classify_hook: {e}")
             if self.ai is not None and self.ai.last_error:

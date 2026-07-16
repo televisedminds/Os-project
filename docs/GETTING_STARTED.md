@@ -107,7 +107,13 @@ automatically; the robot then models revenue, startup cost, payback months.
 Edit numbers → save → the next cycle picks it up automatically. Update your
 quotes about twice a week (it takes ~2 minutes).
 
-## Part C — the free keys (only when you want them)
+## Part C — the keys (only when you want them)
+
+**Easiest way — no terminal:** open your dashboard → **⚙ Keys** tab → paste
+each key → **Save** → **🧪 Test connections**. Done; no restart needed. The
+full step-by-step guide for getting every key (with screenshots-level detail,
+costs, and the traps) is **[docs/KEYS.md](KEYS.md)**. The sections below stay
+here for the `.env` way — both work; a key saved in the app wins.
 
 **eBay (15 minutes, unlocks automatic USA sell-side watching):**
 1. Go to **developer.ebay.com** → *Register* (normal eBay login works).

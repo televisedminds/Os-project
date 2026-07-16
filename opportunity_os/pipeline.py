@@ -30,6 +30,8 @@ class Orchestrator:
     def __init__(self, config: Config, store: Store, world=None):
         self.cfg = config
         self.db = store
+        from . import settings as app_settings
+        app_settings.load_into(config, store)      # keys saved in the dashboard
         self._guard_mode()
         self.world = world if world is not None else self._build_world()
         self.operator = self._load_operator()

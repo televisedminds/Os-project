@@ -429,3 +429,22 @@ ul { margin: 6px 0; padding-left: 18px; }
   border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
 }
 .copy-btn:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* ------------------------------------------------------------- keys tab */
+.key-row {
+  display: grid; grid-template-columns: minmax(260px, 1.4fr) auto minmax(220px, 1fr);
+  gap: 10px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--grid);
+}
+.key-row:last-child { border-bottom: 0; }
+.key-label { font-size: 12.5px; color: var(--ink); font-weight: 550; }
+.key-link { font-size: 11px; margin-left: 8px; color: var(--accent); text-decoration: none; }
+.key-link:hover { text-decoration: underline; }
+.key-state { font-size: 11px; color: var(--muted); display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+.key-masked { font-variant-numeric: tabular-nums; }
+.key-src { border: 1px solid var(--grid); border-radius: 999px; padding: 0 7px; }
+.key-input {
+  font: inherit; font-size: 12px; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--grid); border-radius: 7px; padding: 7px 9px; width: 100%;
+}
+.key-input:focus { outline: none; border-color: var(--accent); }
+@media (max-width: 760px) { .key-row { grid-template-columns: 1fr; gap: 6px; } }

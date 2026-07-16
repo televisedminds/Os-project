@@ -75,10 +75,13 @@ def cmd_cycle(args) -> None:
 
 
 def cmd_brief(args) -> None:
+    from opportunity_os import settings as app_settings
     from opportunity_os.notify import briefing_text, send_telegram
     from opportunity_os.pipeline import briefing
     cfg = _cfg(args)
-    b = briefing(_store(cfg), cfg, args.plan)
+    store = _store(cfg)
+    app_settings.load_into(cfg, store)             # keys saved in the dashboard
+    b = briefing(store, cfg, args.plan)
     text = briefing_text(b, max_items=10)
     print("\n" + text + "\n")
     if args.push:
@@ -122,7 +125,12 @@ def cmd_live_check(args) -> None:
         print(f"  watchlist  ✗ {e}")
         raise SystemExit(1)
 
-    lm = LiveMarket(cfg, _store(cfg))
+    from opportunity_os import settings as app_settings
+    lc_store = _store(cfg)
+    applied = app_settings.load_into(cfg, lc_store)    # keys saved in the dashboard
+    if applied:
+        print(f"  keys       ✓ {len(applied)} key(s) loaded from the dashboard settings")
+    lm = LiveMarket(cfg, lc_store)
     all_ok = True
     for st in lm.healthcheck():
         mark = "✓" if st["ok"] else "✗"

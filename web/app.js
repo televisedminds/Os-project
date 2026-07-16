@@ -819,6 +819,80 @@ async function loadOps() {
             ${c.note ? `<div class="r">${esc(c.note)}</div>` : ""}
             ${c.related ? `<div class="r">related: ${esc(c.related)}</div>` : ""}
           </div>`).join("")}</div>`;
+  } else if (state.opsTab === "keys") {
+    const s = await api("/api/settings");
+    const insecure = !window.isSecureContext &&
+      !["localhost", "127.0.0.1"].includes(location.hostname);
+    const groups = {};
+    s.keys.forEach((k) => (groups[k.group] = groups[k.group] || []).push(k));
+    body.innerHTML = `
+      ${insecure ? `<div class="locked-note" style="margin:0 0 12px;border-color:color-mix(in srgb,var(--critical) 55%,transparent);color:var(--critical)">
+        ⚠ This dashboard is on plain HTTP — anyone on the network path can read what you type,
+        and anyone who finds this page can change your keys. Before pasting real keys, protect it:
+        run <code>bash deploy/setup_https_dashboard.sh</code> on your server (adds HTTPS + a password).</div>` : ""}
+      <p class="wf-note" style="margin:0 0 12px">${esc(s.note)} Paste a value and press Save —
+        leave a field empty to keep what's already there. Full step-by-step guide for every key:
+        <b>docs/KEYS.md</b> in the repository.</p>
+      ${Object.entries(groups).map(([g, keys]) => `
+        <h4 style="margin:14px 0 6px">${esc(g)}</h4>
+        ${keys.map((k) => `
+          <div class="key-row" data-name="${esc(k.name)}">
+            <div class="key-info">
+              <div class="key-label">${esc(k.label)}
+                <a class="key-link" href="${esc(k.url)}" target="_blank" rel="noopener">get it ↗</a></div>
+              <div class="wf-note">${esc(k.help)}</div>
+            </div>
+            <div class="key-state">
+              ${k.set ? `<span class="yn y">set</span> <span class="key-masked">${esc(k.masked)}</span>
+                         <span class="key-src">${k.source === "app" ? "saved in app" : "from .env"}</span>
+                         ${k.source === "app" ? '<button class="copy-btn key-clear" type="button">clear</button>' : ""}`
+                      : '<span class="yn n">not set</span>'}
+            </div>
+            <input class="key-input" type="${k.secret ? "password" : "text"}"
+                   placeholder="${k.set ? "paste new value to replace…" : "paste value…"}"
+                   autocomplete="off" spellcheck="false">
+          </div>`).join("")}`).join("")}
+      <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+        <button id="keys-save" class="btn btn-primary" type="button">💾 Save keys</button>
+        <button id="keys-test" class="btn" type="button">🧪 Test connections</button>
+      </div>
+      <div id="keys-test-out" style="margin-top:10px"></div>`;
+
+    $("#keys-save").addEventListener("click", async () => {
+      const updates = {};
+      body.querySelectorAll(".key-row").forEach((row) => {
+        const v = row.querySelector(".key-input").value.trim();
+        if (v) updates[row.dataset.name] = v;
+      });
+      if (!Object.keys(updates).length) { toast("Nothing to save — paste a key first."); return; }
+      try {
+        await api("/api/settings", { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) });
+        toast("✅ Keys saved and applied — no restart needed.");
+        loadOps().catch(() => {});
+      } catch (err) { toast("Save failed: " + err.message, 8000); }
+    });
+    $("#keys-test").addEventListener("click", async () => {
+      const out = $("#keys-test-out");
+      out.innerHTML = '<p class="wf-note">Testing every configured service…</p>';
+      try {
+        const r = await api("/api/settings/test", { method: "POST" });
+        out.innerHTML = r.results.length
+          ? r.results.map((t) => `<div class="pipe-item ${t.ok ? "pub" : "rej"}">
+              ${t.ok ? "✓" : "✗"} <b>${esc(t.label)}</b> <div class="r">${esc(t.note)}</div></div>`).join("")
+          : '<p class="wf-note">No keys configured yet — save at least one, then test.</p>';
+      } catch (err) { out.innerHTML = `<p class="wf-note">Test failed: ${esc(err.message)}</p>`; }
+    });
+    body.querySelectorAll(".key-clear").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const name = b.closest(".key-row").dataset.name;
+        try {
+          await api("/api/settings", { method: "POST",
+            headers: { "Content-Type": "application/json" }, body: JSON.stringify({ [name]: "" }) });
+          toast(`Cleared ${name} — falling back to .env if set there.`);
+          loadOps().catch(() => {});
+        } catch (err) { toast("Clear failed: " + err.message); }
+      }));
   } else if (state.opsTab === "thailand") {
     const t = await api("/api/thailand");
     body.innerHTML = `<div class="th-grid">
