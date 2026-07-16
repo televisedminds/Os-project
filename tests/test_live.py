@@ -114,6 +114,22 @@ def stub_adapters(reddit_series=(5, 5, 5, 5, 6, 18, 24, 30, 34, 36)):
 # ----------------------------------------------------------------- watchlist
 
 
+def test_briefing_names_the_missing_keys(live_cfg):
+    """A blocked pipeline must say WHICH key it is waiting for — silence about
+    a missing key reads as 'the app is broken'."""
+
+    store = Store(live_cfg.db_path)
+    orch = Orchestrator(live_cfg, store, world=LiveMarket(live_cfg, store, adapters=stub_adapters()))
+    orch.run_cycle()
+    notes = " ".join(briefing(store, live_cfg)["notes"])
+    assert "eBay key" in notes and "Reddit key" in notes       # no keys set in live_cfg
+
+    live_cfg.ebay_client_id = "id"
+    live_cfg.reddit_client_id = "rid"
+    notes2 = " ".join(briefing(store, live_cfg)["notes"])
+    assert "eBay key" not in notes2 and "Reddit key" not in notes2
+
+
 def test_watchlist_validation(tmp_path):
     bad = write_watchlist(tmp_path, [{"id": "x", "name": "X", "category": "toys", "weight_kg": 1,
                                       "queries": {"nope_venue": "q"}}])

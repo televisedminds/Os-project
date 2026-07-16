@@ -287,6 +287,40 @@ class Orchestrator:
 
 # --------------------------------------------------------------------- brief
 
+def _key_gaps(store: Store, cfg: Config) -> list[str]:
+    """Loud, specific notes about work that is BLOCKED on a missing key.
+    A silent bottleneck reads as 'the app is broken'; a named one is a
+    15-minute fix. Live mode only — demo needs no keys."""
+
+    if cfg.mode != "live":
+        return []
+    watch = None
+    try:
+        from .market import watchlist as wl
+        if cfg.watchlist_path.exists():
+            watch = wl.load(cfg.watchlist_path)
+    except Exception:  # noqa: BLE001
+        pass
+    discovered = store.list_discovered(active_only=True, limit=100)
+    gaps: list[str] = []
+
+    if not cfg.ebay_client_id:
+        dark = sum(1 for p in (watch.products if watch else []) if "ebay_us" in p.queries)
+        dark += sum(1 for d in discovered if d.get("kind") == "product")
+        if dark:
+            gaps.append(f"🔑 {dark} product{'s are' if dark != 1 else ' is'} WAITING on your free "
+                        f"eBay key — the fleet cannot see US prices without it, so these can never "
+                        f"verify. Fix: ⚙ Keys tab (≈15 min, developer.ebay.com).")
+    if not cfg.reddit_client_id:
+        idle = len(watch.niches) if watch else 0
+        idle += sum(1 for d in discovered if d.get("kind") == "niche")
+        if idle:
+            gaps.append(f"🔑 {idle} niche{'s are' if idle != 1 else ' is'} WAITING on your free "
+                        f"Reddit key — demand can't be measured without it, so these can never "
+                        f"verify. Fix: ⚙ Keys tab (reddit.com/prefs/apps).")
+    return gaps
+
+
 def briefing(store: Store, cfg: Config, plan_name: str | None = None) -> dict:
     plan = cfg.plan(plan_name)
     actives = store.list_opportunities(status="active", limit=200)
@@ -322,6 +356,7 @@ def briefing(store: Store, cfg: Config, plan_name: str | None = None) -> dict:
     if in_progress:
         lines.append(f"{len(in_progress)} deal{'s' if len(in_progress) != 1 else ''} in progress — "
                      f"when one finishes, record the outcome so the scoring learns from YOUR results.")
+    lines += _key_gaps(store, cfg)
 
     return {
         "generated_at": now.isoformat(),

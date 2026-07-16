@@ -87,7 +87,17 @@ async function loadBriefing() {
     : `tick ${s.tick} · 1 cycle ≈ 1 market day`;
   $("#hero-money").textContent = fmtUSD(s.profit_pool_usd, 0);
   $("#briefing-headline").textContent = b.headline;
-  $("#briefing-notes").textContent = b.notes.join("  ");
+  // Key-gap notes (🔑) are blockers, not commentary — render them loud.
+  const gaps = b.notes.filter((n) => n.startsWith("🔑"));
+  const rest = b.notes.filter((n) => !n.startsWith("🔑"));
+  $("#briefing-notes").innerHTML = esc(rest.join("  ")) + gaps.map((n) => `
+    <div class="key-gap-note">${esc(n)}
+      <button class="btn key-gap-cta" type="button">Open ⚙ Keys</button></div>`).join("");
+  document.querySelectorAll(".key-gap-cta").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      document.querySelector('.ops-tab[data-tab="keys"]')?.click();
+      document.querySelector(".ops")?.scrollIntoView({ behavior: "smooth" });
+    }));
 
   const mc = $("#mission-chip");
   if (g.mission) {
