@@ -56,6 +56,88 @@ VERDICTS_SCHEMA = {
     "additionalProperties": False,
 }
 
+# ---------------------------------------------------------------------------
+# Selling kits — the execution layer. A verified opportunity is only worth
+# money once something is LISTED or LAUNCHED; these schemas turn one into
+# ready-to-paste selling content (bilingual TH/EN, because the operator sells
+# on Thai platforms and on eBay US).
+# ---------------------------------------------------------------------------
+
+FLIP_KIT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "listing_title_en": {"type": "string", "description": "eBay-style SEO title, under 80 chars"},
+        "listing_title_th": {"type": "string", "description": "Shopee/TikTok Shop TH title in Thai"},
+        "bullets_en": {"type": "array", "items": {"type": "string"},
+                       "description": "4-6 selling points for the English listing"},
+        "description_en": {"type": "string", "description": "full listing description, plain text"},
+        "description_th": {"type": "string", "description": "Thai listing description"},
+        "seller_message_th": {"type": "string",
+                              "description": "polite Thai message to send the source seller "
+                                             "(availability, condition, best price, shipping)"},
+        "hashtags": {"type": "array", "items": {"type": "string"},
+                     "description": "TikTok/Shopee hashtags, mixed TH/EN, no # symbol"},
+        "pricing_strategy": {"type": "string",
+                             "description": "1-2 sentences: list price, floor, when to reprice"},
+    },
+    "required": ["listing_title_en", "listing_title_th", "bullets_en", "description_en",
+                 "description_th", "seller_message_th", "hashtags", "pricing_strategy"],
+    "additionalProperties": False,
+}
+
+VENTURE_KIT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "product_name": {"type": "string"},
+        "one_liner_en": {"type": "string"},
+        "one_liner_th": {"type": "string"},
+        "outline": {"type": "array", "items": {"type": "string"},
+                    "description": "sections/features of the smallest sellable first version"},
+        "landing_headline_en": {"type": "string"},
+        "landing_headline_th": {"type": "string"},
+        "landing_copy_en": {"type": "string", "description": "short landing-page body"},
+        "landing_copy_th": {"type": "string"},
+        "first_posts": {"type": "array",
+                        "items": {"type": "object",
+                                  "properties": {"platform": {"type": "string"},
+                                                 "text": {"type": "string"}},
+                                  "required": ["platform", "text"],
+                                  "additionalProperties": False},
+                        "description": "3 launch posts (Facebook group / TikTok / Reddit or X), "
+                                       "in the language of that audience"},
+        "pricing_advice": {"type": "string"},
+        "first_week_plan": {"type": "array", "items": {"type": "string"},
+                            "description": "5 concrete steps, day by day"},
+    },
+    "required": ["product_name", "one_liner_en", "one_liner_th", "outline",
+                 "landing_headline_en", "landing_headline_th", "landing_copy_en",
+                 "landing_copy_th", "first_posts", "pricing_advice", "first_week_plan"],
+    "additionalProperties": False,
+}
+
+KIT_SYSTEM = """\
+You write ready-to-use selling content for a solo operator based in Thailand
+with a small budget. They sell physical flips on eBay US (English) and
+Shopee/TikTok Shop Thailand (Thai), and launch small digital/info products and
+services for Thai and global audiences.
+
+Rules:
+- Write like a real seller, not a brochure: concrete, specific, trustworthy.
+  Mention condition, what's included, shipping expectations where relevant.
+- Thai text must be natural Thai an ordinary buyer trusts — not translated-
+  sounding. Keep prices in the message OUT unless given; never invent specs,
+  authenticity claims, or certifications that were not provided.
+- eBay titles: front-load searchable keywords, no emoji, under 80 characters.
+- Thai listings: friendly tone, emoji acceptable, state ของแท้/สภาพ honestly
+  only from the data given.
+- The seller_message_th is the operator asking a SOURCE (Facebook/AliExpress/
+  proxy) about buying: availability, real condition, best price, shipping to
+  their location. Polite, short, ends with a clear question.
+- For ventures: the outline is the SMALLEST version sellable within 1-2 weeks
+  of evening work. The first_week_plan must be doable by one beginner alone.
+Ground everything in the JSON the user sends. Fill every field."""
+
+
 SYSTEM_PROMPT = """\
 You are the discovery filter for an opportunity-intelligence platform whose \
 operator is a solo reseller/builder based in Thailand with limited capital \
@@ -173,6 +255,69 @@ class AIClassifier:
     def _fail(self, msg: str, candidates: list) -> list:
         self.last_error = msg[:300]
         return candidates
+
+    # ------------------------------------------------------------ selling kit
+
+    def generate_kit(self, o: dict) -> tuple[dict | None, str]:
+        """Turn one verified opportunity into ready-to-paste selling content.
+        Returns (kit, "") or (None, human-readable error). Never raises."""
+
+        if not self.configured():
+            return None, ("ANTHROPIC_API_KEY not set — add it to .env (console.anthropic.com) "
+                          "to generate selling kits")
+        is_flip = o.get("type") == "product_arbitrage"
+        e = o.get("economics", {})
+        if is_flip:
+            schema = FLIP_KIT_SCHEMA
+            pb = o.get("playbook") or {}
+            payload = {
+                "task": "flip_listing_kit",
+                "product": o.get("title"), "category": o.get("category"),
+                "buy_venue": (o.get("route") or {}).get("buy_venue"),
+                "sell_venue": (o.get("route") or {}).get("sell_venue"),
+                "buy_price_usd": o.get("economics", {}).get("base", {}).get("lines", [{}])[0].get("amount_usd"),
+                "list_price_usd": (pb.get("listing") or {}).get("price_usd") or e.get("base", {}).get("revenue_usd"),
+                "qty": e.get("qty"), "margin_pct": e.get("base", {}).get("margin_pct"),
+                "window_days": o.get("window_days"),
+                "listing_hints": pb.get("listing"),
+                "why_it_sells": [w.get("finding") for w in (o.get("why_chain") or [])[:2]],
+            }
+        else:
+            schema = VENTURE_KIT_SCHEMA
+            payload = {
+                "task": "venture_launch_kit",
+                "niche": o.get("title"), "kind": (o.get("route") or {}).get("kind"),
+                "geo": (o.get("route") or {}).get("geo"),
+                "monthly_net_estimate_usd": e.get("total_net_usd"),
+                "startup_cost_usd": e.get("capital_usd"),
+                "demand_evidence": [w.get("finding") for w in (o.get("why_chain") or [])[:3]],
+                "window_days": o.get("window_days"),
+            }
+        try:
+            import anthropic
+            client = self._get_client()
+            response = client.messages.create(
+                model=self.cfg.ai_model,
+                max_tokens=4096,
+                system=KIT_SYSTEM,
+                output_config={"format": {"type": "json_schema", "schema": schema}},
+                messages=[{"role": "user",
+                           "content": json.dumps(payload, ensure_ascii=False, default=str)}],
+            )
+            if response.stop_reason == "refusal":
+                return None, "the model declined to write this kit"
+            text = next((b.text for b in response.content if b.type == "text"), "")
+            kit = json.loads(text)
+            kit["_kind"] = "flip" if is_flip else "venture"
+            return kit, ""
+        except ImportError:
+            return None, "anthropic SDK not installed (pip install anthropic)"
+        except anthropic.APIStatusError as e2:
+            return None, f"Claude API error {e2.status_code}: {getattr(e2, 'message', e2)}"[:200]
+        except anthropic.APIConnectionError as e2:
+            return None, f"Claude API unreachable: {e2}"[:200]
+        except Exception as e2:  # noqa: BLE001
+            return None, f"kit generation failed: {e2}"[:200]
 
     # ----------------------------------------------------------------- check
 

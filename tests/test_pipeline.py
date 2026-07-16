@@ -23,6 +23,16 @@ def test_cycle_publishes_verified_opportunities(orch):
     assert card["feasibility"]["requires_proxy"] is True
 
 
+def test_published_entries_flag_new_vs_refreshed(orch):
+    r1, r2 = orch.run_cycle(), orch.run_cycle()
+    assert r1["published"] and all(p["new"] for p in r1["published"])
+    refreshed = [p for p in r2["published"] if not p["new"]]
+    assert refreshed, "second cycle should refresh existing opportunities, not re-flag them as new"
+    from opportunity_os.notify import alert_text
+    text = alert_text([p for p in r1["published"]][:2])
+    assert "new opportunit" in text and r1["published"][0]["title"] in text
+
+
 def test_rejections_carry_reasons(orch):
     r = orch.run_cycle()
     assert r["rejected"], "expected some candidates to fail the gates"

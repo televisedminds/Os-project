@@ -251,6 +251,7 @@ function renderDetail(o) {
     </div>
 
     ${actionCard(o)}
+    ${sellingKit(o)}
     ${discoveryReport(o)}
 
     <div class="d-section"><h3>Step-by-step instructions</h3>${missionBar(o)}${playbook(o)}</div>
@@ -353,6 +354,94 @@ function renderDetail(o) {
 
 const kpi = (l, v, s) => `<div class="kpi"><div class="kpi-l">${esc(l)}</div>
   <div class="kpi-v">${v}</div><div class="kpi-s">${s}</div></div>`;
+
+/* AI selling kit — the execution layer: one tap turns a verified opportunity
+   into ready-to-paste listings (flips) or a launch kit (ventures). */
+const KIT_FIELDS = {
+  flip: [
+    ["listing_title_en", "eBay title (EN)"],
+    ["listing_title_th", "Shopee / TikTok Shop title (TH)"],
+    ["bullets_en", "Selling points (EN)"],
+    ["description_en", "Listing description (EN)"],
+    ["description_th", "Listing description (TH)"],
+    ["seller_message_th", "Message to send the source seller (TH)"],
+    ["hashtags", "Hashtags"],
+    ["pricing_strategy", "Pricing strategy"],
+  ],
+  venture: [
+    ["product_name", "Product name"],
+    ["one_liner_en", "One-liner (EN)"],
+    ["one_liner_th", "One-liner (TH)"],
+    ["outline", "Smallest sellable version — outline"],
+    ["landing_headline_en", "Landing headline (EN)"],
+    ["landing_headline_th", "Landing headline (TH)"],
+    ["landing_copy_en", "Landing copy (EN)"],
+    ["landing_copy_th", "Landing copy (TH)"],
+    ["first_posts", "First 3 launch posts"],
+    ["pricing_advice", "Pricing"],
+    ["first_week_plan", "Your first week, day by day"],
+  ],
+};
+
+function kitValue(key, v) {
+  if (v == null) return "";
+  if (key === "hashtags" && Array.isArray(v)) return v.map((h) => "#" + String(h).replace(/^#/, "")).join(" ");
+  if (key === "first_posts" && Array.isArray(v))
+    return v.map((p) => `[${p.platform}]\n${p.text}`).join("\n\n");
+  if (Array.isArray(v)) return v.map((x) => "• " + x).join("\n");
+  return String(v);
+}
+
+function sellingKit(o) {
+  if (o.locked) return "";
+  let inner;
+  if (o.kit && o.kit.kit) {
+    const k = o.kit.kit;
+    const fields = KIT_FIELDS[k._kind === "venture" ? "venture" : "flip"];
+    inner = fields.filter(([key]) => k[key] != null && String(k[key]).length).map(([key, label]) => `
+      <div class="kit-field">
+        <div class="kit-label">${esc(label)}<button class="copy-btn" type="button">copy</button></div>
+        <div class="kit-text">${esc(kitValue(key, k[key]))}</div>
+      </div>`).join("") + `
+      <div class="wf-note" style="margin-top:8px">Written ${new Date(o.kit.generated_at * 1000).toLocaleString()}
+        by ${esc(o.kit.model)} from this opportunity's verified data — read before posting; you are the final check.
+        <button class="btn kit-gen" data-force="1" type="button" style="margin-left:8px">↻ Regenerate</button></div>`;
+  } else if (o.kit_available) {
+    inner = `<p class="wf-note" style="margin:0 0 8px">One tap writes everything you need to act:
+      ${o.type === "product_arbitrage"
+        ? "a ready-to-paste eBay listing (English), a Shopee/TikTok Shop listing (Thai), and the message to send the source seller."
+        : "the smallest sellable version, bilingual landing copy, launch posts, and a first-week plan."}</p>
+      <button class="btn btn-primary kit-gen" data-force="0" type="button">✨ Generate selling kit</button>`;
+  } else {
+    inner = `<p class="wf-note" style="margin:0">Add <code>ANTHROPIC_API_KEY</code> to your .env
+      (console.anthropic.com — a few cents per kit) to unlock one-tap selling kits:
+      ready-to-paste bilingual listings and launch plans, written from this opportunity's verified data.</p>`;
+  }
+  return `<div class="d-section" id="kit-section"><h3>✨ AI selling kit — from verified deal to posted listing</h3>${inner}</div>`;
+}
+
+function copyText(text, btn) {
+  const done = () => {
+    const old = btn.textContent;
+    btn.textContent = "✓ copied";
+    setTimeout(() => { btn.textContent = old; }, 1400);
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+  } else {
+    fallbackCopy(text, done);            // http:// droplet — no Clipboard API
+  }
+}
+
+function fallbackCopy(text, done) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.cssText = "position:fixed;opacity:0";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); done(); } catch { toast("Copy failed — select the text manually."); }
+  document.body.removeChild(ta);
+}
 
 /* The do-this-deal card: where to buy, where to sell, at which prices,
    what to invest and what you keep. */
@@ -515,6 +604,28 @@ function playbook(o) {
 }
 
 function wireDetail(el, o) {
+  el.querySelectorAll(".kit-gen").forEach((b) =>
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      const old = b.textContent;
+      b.textContent = "✍️ Writing your kit…";
+      try {
+        await api(`/api/opportunities/${o.id}/kit?force=${b.dataset.force}&plan=${state.plan}`,
+          { method: "POST" });
+        await selectOpportunity(o.id);
+        toast("✨ Selling kit ready — copy, check, and post.");
+      } catch (err) {
+        b.disabled = false;
+        b.textContent = old;
+        toast("Kit failed: " + err.message, 8000);
+      }
+    }));
+  el.querySelectorAll(".copy-btn").forEach((b) =>
+    b.addEventListener("click", () => {
+      const txt = b.closest(".kit-field")?.querySelector(".kit-text")?.textContent || "";
+      copyText(txt, b);
+    }));
+
   el.querySelectorAll(".pb-check").forEach((cb) =>
     cb.addEventListener("change", async () => {
       try {

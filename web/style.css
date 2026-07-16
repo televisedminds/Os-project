@@ -414,3 +414,18 @@ ul { margin: 6px 0; padding-left: 18px; }
   padding: 10px 16px; border-radius: 8px; max-width: 640px; z-index: 50; font-size: 12.5px;
   box-shadow: 0 6px 24px rgba(0,0,0,0.5);
 }
+
+/* ------------------------------------------------------- AI selling kit */
+.kit-field { margin: 0 0 10px; border: 1px solid var(--grid); border-radius: 8px; overflow: hidden; }
+.kit-label {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 10px; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--muted); background: var(--surface); border-bottom: 1px solid var(--grid);
+}
+.kit-text { padding: 9px 10px; font-size: 12.5px; color: var(--ink); white-space: pre-wrap; line-height: 1.5; }
+.copy-btn {
+  font: inherit; font-size: 10.5px; padding: 2px 9px; border-radius: 999px; cursor: pointer;
+  color: var(--accent); background: transparent;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.copy-btn:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }

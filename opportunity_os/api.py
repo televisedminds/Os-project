@@ -275,10 +275,27 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
     orch = Orchestrator(cfg, store)
     auto = cfg.auto_cycle_seconds if auto_cycle_seconds is None else auto_cycle_seconds
 
+    def _push_new_verified(report: dict) -> None:
+        """Instant Telegram alert for opportunities that verified for the
+        FIRST time this cycle (refreshes stay quiet). Live mode only; any
+        failure is swallowed — alerting must never break the research loop."""
+
+        if cfg.mode != "live" or not (cfg.telegram_bot_token and cfg.telegram_chat_id):
+            return
+        new = [p for p in report.get("published", []) if p.get("new")]
+        if not new:
+            return
+        try:
+            from .notify import alert_text, send_telegram
+            send_telegram(cfg, alert_text(new))
+        except Exception:  # noqa: BLE001
+            pass
+
     async def _auto_loop():
         while True:
             await asyncio.sleep(auto)
-            await asyncio.to_thread(orch.run_cycle)
+            report = await asyncio.to_thread(orch.run_cycle)
+            _push_new_verified(report)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -300,9 +317,12 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         store.close()
 
     app = FastAPI(title="Opportunity OS", version=__version__, lifespan=lifespan)
+    from .ai import AIClassifier
+    brain = AIClassifier(cfg)                    # selling kits + on-demand judgment
     app.state.orchestrator = orch
     app.state.store = store
     app.state.config = cfg
+    app.state.brain = brain
 
     def plan_of(name: str | None) -> dict:
         return cfg.plan(name)
@@ -371,10 +391,13 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         except Exception:
             o["history"] = None
         p = plan_of(plan)
+        o["kit"] = store.get_kit(opp_id)
+        o["kit_available"] = brain.configured()
         if not p["playbooks"]:
             o = dict(o)
             o["playbook"] = None
             o["automation"] = None
+            o["kit"] = None
             o["locked"] = {"playbooks": "Execution playbooks and automation plans are a Pro feature.",
                            "upgrade": PLANS["pro"]["blurb"]}
         def resolve_link(venue: str) -> tuple[str | None, str | None]:
@@ -422,6 +445,26 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         o["status"] = OppStatus.EXECUTED.value
         store.upsert_opportunity(o)
         return {"recorded": True, "learning": update}
+
+    @app.post("/api/opportunities/{opp_id}/kit")
+    def make_kit(opp_id: str, force: bool = False, plan: str | None = None):
+        """Generate (or return the cached) AI selling kit: ready-to-paste
+        bilingual listings for flips, a launch kit for ventures."""
+
+        o = store.get_opportunity(opp_id)
+        if not o:
+            raise HTTPException(404, "unknown opportunity id")
+        if not plan_of(plan)["playbooks"]:
+            raise HTTPException(403, "Selling kits are a Pro feature — switch the plan picker.")
+        if not force:
+            cached = store.get_kit(opp_id)
+            if cached:
+                return {**cached, "cached": True}
+        kit, err = brain.generate_kit(o)
+        if kit is None:
+            raise HTTPException(503, err)
+        store.save_kit(opp_id, cfg.ai_model, kit)
+        return {"kit": kit, "model": cfg.ai_model, "generated_at": time.time(), "cached": False}
 
     @app.post("/api/opportunities/{opp_id}/progress")
     def set_progress(opp_id: str, body: ProgressIn):

@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS discovered (
     id TEXT PRIMARY KEY, kind TEXT, name TEXT, source TEXT, score REAL,
     status TEXT, first_ts REAL, last_ts REAL, payload TEXT);
 CREATE INDEX IF NOT EXISTS idx_discovered_status ON discovered(status, score);
+CREATE TABLE IF NOT EXISTS kits (
+    opportunity_id TEXT PRIMARY KEY, ts REAL, model TEXT, payload TEXT);
 """
 
 
@@ -369,6 +371,25 @@ class Store:
                     f"AND id NOT IN ({placeholders})", keep)
                 retired += cur.rowcount or 0
         return retired
+
+    # ----------------------------------------------------------- selling kits
+
+    def save_kit(self, opportunity_id: str, model: str, kit: dict) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO kits(opportunity_id,ts,model,payload) VALUES(?,?,?,?) "
+                "ON CONFLICT(opportunity_id) DO UPDATE SET ts=excluded.ts, "
+                "model=excluded.model, payload=excluded.payload",
+                (opportunity_id, time.time(), model, json.dumps(kit, ensure_ascii=False)))
+
+    def get_kit(self, opportunity_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT ts, model, payload FROM kits WHERE opportunity_id=?",
+                (opportunity_id,)).fetchone()
+        if not row:
+            return None
+        return {"kit": json.loads(row["payload"]), "generated_at": row["ts"], "model": row["model"]}
 
     def discovered_counts(self) -> dict:
         with self._lock:

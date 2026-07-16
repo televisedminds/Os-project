@@ -40,7 +40,7 @@ CLI, for the cron-driven lifestyle:
 python run.py cycle -n 3       # run three research cycles right now
 python run.py brief            # print the morning briefing to the terminal
 python run.py reset            # wipe state and re-seed the demo world
-python -m pytest tests/ -q     # 76 tests
+python -m pytest tests/ -q     # 84 tests
 ```
 
 No database server, no build step, no API keys needed to try it: state is SQLite
@@ -74,6 +74,21 @@ operator, and attaches a one-line reason to each verdict. Without the key,
 keyword heuristics do the filtering. The AI never invents opportunities and
 nothing it keeps skips verification — it only decides what deserves the fleet's
 attention. (`opportunity_os/ai.py`; a few cents/day at the default cadence.)
+
+**AI selling kits — from verified deal to posted listing.** The same key powers
+the execution layer: one tap in an opportunity's detail page writes everything
+needed to act on it — for flips, a ready-to-paste eBay listing (English), a
+Shopee/TikTok Shop listing (Thai), the polite Thai message to send the source
+seller, hashtags and a pricing rule; for ventures, the smallest sellable first
+version, bilingual landing copy, three launch posts and a day-by-day first
+week. Kits are cached in SQLite (regenerate on demand) and grounded only in the
+opportunity's verified data. Because listing well is the actual gap between
+"the robot found a deal" and "money arrived".
+
+**Instant deal alerts.** In live mode with Telegram configured, the server
+pushes a message the moment a *new* opportunity verifies (refreshes stay
+quiet) — windows run in days, so waiting for the 07:00 briefing can cost most
+of the edge.
 
 ```bash
 cp watchlist.example.json watchlist.json   # what to track
@@ -200,6 +215,7 @@ re-verify → learn) is already built and tested. The demo UI carries a permanen
 | `GET /api/briefing?plan=` | the morning briefing |
 | `GET /api/opportunities?status=&category=&min_score=&q=&plan=` | the feed |
 | `GET /api/opportunities/{id}?plan=` | full evidence package |
+| `POST /api/opportunities/{id}/kit` | AI selling kit: ready-to-paste TH/EN listings (flips) or launch kit (ventures) |
 | `POST /api/opportunities/{id}/outcome` | close the learning loop |
 | `POST /api/cycle` | run a research cycle now |
 | `GET /api/agents` · `GET /api/signals` · `GET /api/anomalies` | the fleet's raw work |

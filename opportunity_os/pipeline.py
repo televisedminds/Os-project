@@ -105,8 +105,13 @@ class Orchestrator:
             if opp:
                 self.db.upsert_opportunity(opp.to_dict())
                 updated_ids.add(opp.id)
+                stored = self.db.get_opportunity(opp.id) or {}
                 published.append({"id": opp.id, "title": opp.title, "score": opp.score.overall,
-                                  "confidence": opp.confidence})
+                                  "confidence": opp.confidence,
+                                  "net_usd": opp.economics.total_net_usd,
+                                  "window_days": opp.window_days,
+                                  # first time this opportunity ever verified (vs a refresh)
+                                  "new": stored.get("tick_created") == tick})
             else:
                 rejected.append({"title": cand["title"], "type": cand["opp_type"].value, "reason": reason})
 
@@ -311,6 +316,10 @@ def briefing(store: Store, cfg: Config, plan_name: str | None = None) -> dict:
         lines.append(f"Discovery added {disc['promoted']} new candidate"
                      f"{'s' if disc['promoted'] != 1 else ''} to the watch fleet"
                      + (f" ({disc['ai']})." if disc.get("ai") else "."))
+    in_progress = [o for o in actives if store.get_progress(o["id"])]
+    if in_progress:
+        lines.append(f"{len(in_progress)} deal{'s' if len(in_progress) != 1 else ''} in progress — "
+                     f"when one finishes, record the outcome so the scoring learns from YOUR results.")
 
     return {
         "generated_at": now.isoformat(),

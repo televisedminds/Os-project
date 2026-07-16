@@ -53,6 +53,50 @@ def test_detail_carries_full_evidence(client):
     assert d["history"] is None or len(d["history"]["points"]) > 2
 
 
+def test_kit_endpoint_generates_caches_and_gates(tmp_path):
+    import json as _json
+
+    import httpx
+    anthropic = pytest.importorskip("anthropic")
+    from tests.test_ai import FLIP_KIT, _message_body
+
+    cfg = Config(db_path=tmp_path / "kit.db", auto_cycle_seconds=0, anthropic_api_key="test-key")
+    app = create_app(cfg, auto_cycle_seconds=0, seed_cycles=2)
+    calls = {"n": 0}
+
+    def handler(req):
+        calls["n"] += 1
+        return httpx.Response(200, json=_message_body(FLIP_KIT))
+
+    app.state.brain._client = anthropic.Anthropic(
+        api_key="test-key", max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    with TestClient(app) as c:
+        opp = next(o for o in c.get("/api/opportunities?plan=pro").json()["opportunities"]
+                   if o["type"] == "product_arbitrage" and o["status"] == "active")
+        r = c.post(f"/api/opportunities/{opp['id']}/kit?plan=pro")
+        assert r.status_code == 200 and r.json()["cached"] is False
+        assert r.json()["kit"]["_kind"] == "flip"
+        # second call is served from the cache — no new API spend
+        r2 = c.post(f"/api/opportunities/{opp['id']}/kit?plan=pro")
+        assert r2.json()["cached"] is True and calls["n"] == 1
+        # force regenerates
+        r3 = c.post(f"/api/opportunities/{opp['id']}/kit?plan=pro&force=true")
+        assert r3.json()["cached"] is False and calls["n"] == 2
+        # detail carries the cached kit + availability flag
+        d = c.get(f"/api/opportunities/{opp['id']}?plan=pro").json()
+        assert d["kit"]["kit"]["_kind"] == "flip" and d["kit_available"] is True
+        # free plan: kits are gated like playbooks
+        assert c.post(f"/api/opportunities/{opp['id']}/kit?plan=free").status_code == 403
+
+
+def test_kit_endpoint_without_key_says_why(client):
+    opp_id = client.get("/api/opportunities").json()["opportunities"][0]["id"]
+    r = client.post(f"/api/opportunities/{opp_id}/kit")
+    assert r.status_code == 503 and "ANTHROPIC_API_KEY" in r.json()["detail"]
+
+
 def test_item_url_builds_exact_links():
     from opportunity_os import links
     # eBay Browse returns "v1|<legacy id>|0"; link resolves to the numeric middle.

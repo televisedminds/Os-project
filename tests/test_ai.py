@@ -113,6 +113,53 @@ def test_missing_verdict_fails_open():
     assert len(out) == 2                       # the unjudged candidate survives
 
 
+FLIP_OPP = {
+    "id": "opp_x", "type": "product_arbitrage", "title": "Foldable phone gimbal",
+    "category": "electronics", "window_days": 10,
+    "route": {"buy_venue": "aliexpress", "sell_venue": "shopee_th"},
+    "economics": {"kind": "flip", "qty": 10, "capital_usd": 300.0, "total_net_usd": 230.0,
+                  "base": {"revenue_usd": 53.0, "net_usd": 23.0, "margin_pct": 43.0,
+                           "lines": [{"label": "Acquisition", "amount_usd": 23.0}]},
+                  "pessimistic": {"net_usd": 10.0}},
+    "playbook": {"steps": [], "listing": {"price_usd": 53.0}},
+    "why_chain": [{"question": "q", "finding": "US demand spiked"}],
+}
+
+FLIP_KIT = json.dumps({
+    "listing_title_en": "Foldable Phone Gimbal Stabilizer 3-Axis Creator Kit",
+    "listing_title_th": "ไม้กันสั่นมือถือ พับได้ 3 แกน",
+    "bullets_en": ["3-axis stabilization", "Folds flat"],
+    "description_en": "A compact gimbal...", "description_th": "กิมบอลพกพา...",
+    "seller_message_th": "สวัสดีครับ สนใจสินค้า...",
+    "hashtags": ["gimbal", "กันสั่น"],
+    "pricing_strategy": "List at $53, floor $45, reprice after 5 days.",
+})
+
+
+def test_generate_kit_flip():
+    def handler(req):
+        payload = json.loads(req.content)
+        assert payload["output_config"]["format"]["type"] == "json_schema"
+        assert "flip_listing_kit" in payload["messages"][0]["content"]
+        return httpx.Response(200, json=_message_body(FLIP_KIT))
+
+    ai = AIClassifier(_cfg(), client=_client(handler))
+    kit, err = ai.generate_kit(FLIP_OPP)
+    assert err == "" and kit["_kind"] == "flip"
+    assert kit["listing_title_th"].startswith("ไม้กันสั่น")
+
+
+def test_generate_kit_requires_key_and_degrades():
+    ai = AIClassifier(Config(mode="live"))
+    kit, err = ai.generate_kit(FLIP_OPP)
+    assert kit is None and "ANTHROPIC_API_KEY" in err
+
+    ai2 = AIClassifier(_cfg(), client=_client(lambda req: httpx.Response(500, json={
+        "type": "error", "error": {"type": "api_error", "message": "boom"}})))
+    kit2, err2 = ai2.generate_kit(FLIP_OPP)
+    assert kit2 is None and "500" in err2
+
+
 def test_engine_autowires_ai_and_reports_it(tmp_path):
     store = Store(tmp_path / "ai.db")
     cfg = _cfg(db_path=tmp_path / "ai.db", discovery_scan_cap=10, discovery_max_active=10)

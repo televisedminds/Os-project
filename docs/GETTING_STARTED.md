@@ -121,7 +121,8 @@ quotes about twice a week (it takes ~2 minutes).
 2. *Create another app* → choose **script** → any name, redirect `http://localhost`.
 3. The id is under the app name; the secret is labeled. Put both in `.env`.
 
-**Telegram (5 minutes, morning briefing on your phone):**
+**Telegram (5 minutes — morning briefing PLUS an instant push the moment a new
+deal verifies, so you don't lose a short window waiting for 07:00):**
 1. In Telegram, message **@BotFather** → send `/newbot` → copy the token.
 2. Send any message to your new bot.
 3. Open `https://api.telegram.org/bot<YOUR-TOKEN>/getUpdates` in a browser —
@@ -134,6 +135,13 @@ Without this key, the discovery engine filters candidates by keyword matching
 judges it like an analyst would: *"sports news, nothing to sell — drop"* /
 *"sealed collectible with resale demand — keep, raise score"*. Every verdict
 comes with a reason you can read in the Discovery tab.
+
+The same key unlocks the **✨ AI selling kit** button on every opportunity:
+one tap writes the ready-to-paste eBay listing (English), the Shopee/TikTok
+Shop listing (Thai), and the polite Thai message to send the seller — or, for
+business niches, the product outline, landing copy and launch posts. This is
+the step where a found deal becomes a posted listing, which is where money
+actually happens. Each kit costs a few cents and is saved so you only pay once.
 
 1. Go to **console.anthropic.com** → sign up → **API keys** → *Create key*.
 2. Add ~$5 of credit (Billing). At the default cadence the AI runs about 8
