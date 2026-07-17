@@ -50,6 +50,14 @@ KEY_FIELDS: dict[str, dict] = {
         "url": "https://www.reddit.com/prefs/apps",
         "help": "The 'secret' field of the same script app.",
     },
+    "SERPER_API_KEY": {
+        "attr": "serper_api_key", "label": "Serper API key (Google search)", "secret": True,
+        "group": "Market data — free keys",
+        "url": "https://serper.dev",
+        "help": "Free: 2,500 searches at signup, no card (after that the minimum top-up is $50 — "
+                "the free tier is the value). Measures niche demand via Google while your Reddit "
+                "key is pending. 2-minute signup with a Google account.",
+    },
     "ANTHROPIC_API_KEY": {
         "attr": "anthropic_api_key", "label": "Claude / Anthropic API key", "secret": True,
         "group": "AI brain + selling kits",
@@ -173,6 +181,10 @@ def run_checks(cfg) -> list[dict]:
         from .market.adapters import RedditAdapter
         ok, note = RedditAdapter(cfg).check()
         add("reddit", "Reddit", ok, note)
+    if cfg.serper_api_key:
+        from .market.adapters import SerperAdapter
+        ok, note = SerperAdapter(cfg).check()
+        add("serper", "Serper (Google search demand)", ok, note)
     if cfg.anthropic_api_key:
         from .ai import AIClassifier
         ok, note = AIClassifier(cfg).check()

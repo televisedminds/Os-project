@@ -146,6 +146,11 @@ class LiveMarket:
             if news and p.news_query:
                 headlines += self._fresh_headlines(news, p.id, p.news_query)
 
+        serper = self.adapters.get("serper")
+        serper_every = max(1, getattr(serper, "every_n_ticks", 12)) if serper else 12
+        serper_pass = (serper is not None and getattr(serper, "configured", lambda: False)()
+                       and (serper_every == 1 or t % serper_every == 1))
+        serper_budget = 12                         # hard cap per pass — protects free credits
         for n in self._all_niches():
             count = None
             if reddit and n.reddit_query:
@@ -154,6 +159,15 @@ class LiveMarket:
                     self.db.add_live_mention(n.id, "reddit", t, count)
                 else:
                     self._err(f"{n.id}/reddit: {reddit.last_error}")
+            # Reddit down or key pending? Serper measures the same demand via
+            # Google (site:reddit.com, past week) — coarser, but real.
+            if count is None and serper_pass and serper_budget > 0 and n.reddit_query:
+                wk = serper.reddit_posts_7d(n.reddit_query)
+                serper_budget -= 1
+                if wk is not None:
+                    self.db.add_live_mention(n.id, "serper", t, wk)
+                else:
+                    self._err(f"{n.id}/serper: {serper.last_error}")
             self.db.add_live_niche(n.id, t, self._niche_metrics(n, count))
             if news and n.news_query:
                 headlines += self._fresh_headlines(news, n.id, n.news_query)
@@ -190,6 +204,8 @@ class LiveMarket:
 
     def _niche_metrics(self, n: wl.WatchNiche, mentions_today: int | None) -> dict:
         series = self.db.live_mention_series(n.id, "reddit", 30)
+        if len(series) < 6:                        # Reddit dark → Serper series drives momentum
+            series = self.db.live_mention_series(n.id, "serper", 30)
         momentum, growth = 1.0, 0.0
         if len(series) >= 6:
             recent = fmean(series[-3:])

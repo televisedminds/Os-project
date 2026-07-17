@@ -111,6 +111,24 @@ Platform / Data API help pages), describe it as *personal, non-commercial
 market research*, and wait for approval. Everything else in this platform
 keeps working while you wait — Reddit only adds signal, it isn't required.
 
+## 4b. Serper — free Google-search demand, the Reddit stand-in (2 min)
+
+**What it powers here:** while your Reddit key is pending (or if you never get
+one), Serper measures niche demand through Google instead — it counts how many
+Reddit discussions Google indexed this week for each tracked topic. Coarser
+than the Reddit API, but real, and it makes niches verifiable *today*.
+
+**Steps:**
+1. [serper.dev](https://serper.dev) → sign in with your Google account.
+2. Dashboard → **API Key** → copy. That's genuinely all — 2 minutes.
+3. Paste into the Keys tab → Save → Test.
+
+**Cost honesty:** 2,500 searches free at signup, no card. This app throttles
+Serper hard (a few dozen calls/day at most), so the free pile lasts weeks to
+months. After it's gone, the **minimum top-up is $50** (50k searches, expires
+in 6 months) — so treat the free tier as the value, and by the time it runs
+out your Reddit key should be approved anyway.
+
 ## 5. ScrapingDog — $10 one-time, automates your Shopee quotes
 
 **What it powers here:** automatic Shopee TH prices/sold-counts/stock for any

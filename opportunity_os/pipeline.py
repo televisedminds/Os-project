@@ -311,13 +311,14 @@ def _key_gaps(store: Store, cfg: Config) -> list[str]:
             gaps.append(f"🔑 {dark} product{'s are' if dark != 1 else ' is'} WAITING on your free "
                         f"eBay key — the fleet cannot see US prices without it, so these can never "
                         f"verify. Fix: ⚙ Keys tab (≈15 min, developer.ebay.com).")
-    if not cfg.reddit_client_id:
+    if not cfg.reddit_client_id and not cfg.serper_api_key:
         idle = len(watch.niches) if watch else 0
         idle += sum(1 for d in discovered if d.get("kind") == "niche")
         if idle:
-            gaps.append(f"🔑 {idle} niche{'s are' if idle != 1 else ' is'} WAITING on your free "
-                        f"Reddit key — demand can't be measured without it, so these can never "
-                        f"verify. Fix: ⚙ Keys tab (reddit.com/prefs/apps).")
+            gaps.append(f"🔑 {idle} niche{'s are' if idle != 1 else ' is'} WAITING on a demand "
+                        f"signal — add your free Reddit key (reddit.com/prefs/apps), or the "
+                        f"instant stand-in: a free Serper key (serper.dev, 2,500 searches, "
+                        f"2-minute signup). Either one in ⚙ Keys.")
     return gaps
 
 

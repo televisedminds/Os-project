@@ -114,6 +114,49 @@ def stub_adapters(reddit_series=(5, 5, 5, 5, 6, 18, 24, 30, 34, 36)):
 # ----------------------------------------------------------------- watchlist
 
 
+def test_serper_adapter_counts_and_degrades():
+    from opportunity_os.market.adapters import SerperAdapter
+    cfg = Config(mode="live", serper_api_key="sk-serper")
+
+    def handler(req):
+        assert "google.serper.dev" in str(req.url)
+        assert req.headers["X-API-KEY"] == "sk-serper"
+        body = json.loads(req.content)
+        assert body["q"].startswith("site:reddit.com ") and body["tbs"] == "qdr:w"
+        return httpx.Response(200, json={"organic": [{"title": "a"}, {"title": "b"}]})
+
+    ad = SerperAdapter(cfg, _client(handler))
+    assert ad.reddit_posts_7d("thai freelance tax") == 2
+
+    dead = SerperAdapter(cfg, _client(lambda req: httpx.Response(500)))
+    assert dead.reddit_posts_7d("x") is None and "Serper" in dead.last_error
+    assert not SerperAdapter(Config(mode="live")).configured()
+
+
+def test_serper_feeds_niche_demand_when_reddit_dark(live_cfg):
+    """No Reddit key → the Serper series drives niche momentum instead."""
+
+    from opportunity_os.market.adapters import SerperAdapter
+    store = Store(live_cfg.db_path)
+    live_cfg.serper_api_key = "sk-serper"
+    counts = iter([2, 2, 2, 3, 6, 9, 10, 10, 10, 10])
+
+    def handler(req):
+        return httpx.Response(200, json={"organic": [{}] * next(counts)})
+
+    adapters = stub_adapters()
+    del adapters["reddit"]                                   # reddit fully dark
+    serper = SerperAdapter(live_cfg, _client(handler))
+    serper.every_n_ticks = 1                                 # no throttle in test
+    adapters["serper"] = serper
+    lm = LiveMarket(live_cfg, store, adapters=adapters)
+    for _ in range(10):
+        lm.tick()
+    assert len(store.live_mention_series("th_tax", "serper", 30)) == 10
+    metrics = lm.niches()[0]["metrics"]
+    assert metrics["growth_pct"] > 0                         # momentum from the serper series
+
+
 def test_briefing_names_the_missing_keys(live_cfg):
     """A blocked pipeline must say WHICH key it is waiting for — silence about
     a missing key reads as 'the app is broken'."""

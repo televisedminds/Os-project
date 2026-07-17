@@ -76,6 +76,11 @@ class Config:
     scrapingdog_api_key: str = _env("SCRAPINGDOG_API_KEY", "")
     # Scraped venues cost paid credits — fetch them only every Nth cycle.
     scrape_every_n_ticks: int = field(default_factory=lambda: int(os.environ.get("OOS_SCRAPE_EVERY", "4")))
+    # Serper (google.serper.dev): web-search demand signal for niches — the
+    # stand-in while Reddit approval is pending. Throttled hard: 2,500 free
+    # credits should last weeks, not days.
+    serper_api_key: str = _env("SERPER_API_KEY", "")
+    serper_every_n_ticks: int = field(default_factory=lambda: int(os.environ.get("OOS_SERPER_EVERY", "12")))
     telegram_bot_token: str = _env("TELEGRAM_BOT_TOKEN", "")
     telegram_chat_id: str = _env("TELEGRAM_CHAT_ID", "")
 
