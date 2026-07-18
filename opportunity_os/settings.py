@@ -27,9 +27,9 @@ KEY_FIELDS: dict[str, dict] = {
         "attr": "ebay_client_id", "label": "eBay Client ID (App ID)", "secret": False,
         "group": "Market data — free keys",
         "url": "https://developer.ebay.com",
-        "help": "Free. developer.ebay.com → Application Keys → Production. After creating the "
-                "keyset, complete the 'marketplace account deletion' compliance step (opt out) "
-                "or the keyset stays disabled.",
+        "help": "Free. developer.ebay.com → Application Keys → Production. If it says 'Keyset "
+                "currently disabled': click 'exemption' → toggle ON 'Not persisting eBay data' "
+                "→ Confirm → pick a reason → Submit. Enables instantly.",
     },
     "EBAY_CLIENT_SECRET": {
         "attr": "ebay_client_secret", "label": "eBay Client Secret (Cert ID)", "secret": True,
@@ -41,8 +41,9 @@ KEY_FIELDS: dict[str, dict] = {
         "attr": "reddit_client_id", "label": "Reddit Client ID", "secret": False,
         "group": "Market data — free keys",
         "url": "https://www.reddit.com/prefs/apps",
-        "help": "Free, personal use. reddit.com/prefs/apps → create app → type 'script'. The id "
-                "is the short string under the app name.",
+        "help": "Free, personal use. reddit.com/prefs/apps → create app → type 'script'. In the "
+                "required 'redirect uri' box just type http://localhost:8080 — it is never used. "
+                "The id is the short string under the app name.",
     },
     "REDDIT_CLIENT_SECRET": {
         "attr": "reddit_client_secret", "label": "Reddit Client Secret", "secret": True,

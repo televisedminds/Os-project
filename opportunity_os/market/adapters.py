@@ -137,7 +137,9 @@ class EbayAdapter(BaseAdapter):
             return False, "needs EBAY_CLIENT_ID + EBAY_CLIENT_SECRET (free at developer.ebay.com)"
         if self._get_token():
             return True, f"OAuth OK against {self.base}"
-        return False, self.last_error
+        return False, (self.last_error + " — if eBay's Application Keys page says 'Your Keyset "
+                       "is currently disabled', click its 'exemption' link, switch ON 'Not "
+                       "persisting eBay data', Confirm, pick a reason, Submit. Instant fix.")
 
 
 # ------------------------------------------------------------------- Reddit
