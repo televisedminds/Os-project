@@ -47,9 +47,11 @@ def _cfg(**kw):
 
 VERDICTS = json.dumps({"verdicts": [
     {"id": "disc_p_pokemon", "keep": True, "score_adj": 0.5,
-     "category": "trading_cards", "niche_kind": "", "reason": "Sealed product with strong resale."},
+     "category": "trading_cards", "niche_kind": "", "shopee_query_th": "โปเกมอน 151 กล่องสุ่ม",
+     "reason": "Sealed product with strong resale."},
     {"id": "disc_n_tennis", "keep": False, "score_adj": 0.0,
-     "category": "", "niche_kind": "", "reason": "Sports news, nothing to sell."},
+     "category": "", "niche_kind": "", "shopee_query_th": "",
+     "reason": "Sports news, nothing to sell."},
 ]})
 
 
@@ -75,6 +77,7 @@ def test_classify_applies_verdicts():
     kept = out[0]
     assert kept.score == 1.5 and kept.category == "trading_cards"
     assert "AI:" in kept.reason
+    assert kept.queries["shopee_th"] == "โปเกมอน 151 กล่องสุ่ม"   # AI-written Thai buy-side query
     assert ai.last_error == "" and "kept 1, dropped 1" in ai.last_summary
 
 

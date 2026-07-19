@@ -205,6 +205,38 @@ def test_engine_expiry_respects_max_active(tmp_path):
     assert store.discovered_counts()["active"] == 1        # capped down to 1 active
 
 
+def test_engine_pairs_top_products_with_shopee_capped(tmp_path):
+    """With a ScrapingDog key, the best discovered products get a Shopee TH
+    buy-side query (complete automatic flips) — capped at 8 to protect
+    credits, and pairings survive re-discovery across sweeps."""
+
+    store = Store(tmp_path / "p.db")
+    prods = [Candidate(kind="product", id=f"disc_p_{i}", name=f"Gadget {i}", source="stub",
+                       score=2.0 - i * 0.1, queries={"ebay_us": f"gadget {i}"})
+             for i in range(12)]
+    cfg = Config(mode="live", scrapingdog_api_key="sd_test",
+                 discovery_scan_cap=20, discovery_max_active=20)
+    eng = DiscoveryEngine(cfg, store, sources=[StubSource(prods)])
+    eng.run()
+    rows = store.list_discovered(active_only=True, limit=50)
+    paired = [r for r in rows if "shopee_th" in (r.get("queries") or {})]
+    assert len(paired) == 8
+    assert {r["id"] for r in paired} == {f"disc_p_{i}" for i in range(8)}   # top scores win
+
+    eng.run()                                     # re-sweep: pairings carry forward, cap holds
+    rows2 = store.list_discovered(active_only=True, limit=50)
+    assert sum(1 for r in rows2 if "shopee_th" in (r.get("queries") or {})) == 8
+
+    fresh = [Candidate(kind="product", id=f"disc_p_{i}", name=f"Gadget {i}", source="stub",
+                       score=2.0 - i * 0.1, queries={"ebay_us": f"gadget {i}"})
+             for i in range(12)]
+    nokey = DiscoveryEngine(Config(mode="live", db_path=tmp_path / "nk.db"),
+                            Store(tmp_path / "nk.db"), sources=[StubSource(fresh)])
+    nokey.run()
+    assert all("shopee_th" not in (r.get("queries") or {})
+               for r in nokey.store.list_discovered(active_only=True, limit=50))
+
+
 def test_upsert_discovered_reports_new_vs_seen(tmp_path):
     store = Store(tmp_path / "d.db")
     c = Candidate(kind="niche", id="disc_n_x", name="X", source="stub", score=1.0)

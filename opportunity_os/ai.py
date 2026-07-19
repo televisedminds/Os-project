@@ -45,9 +45,14 @@ VERDICTS_SCHEMA = {
                                  "description": "corrected product category, or empty to keep"},
                     "niche_kind": {"type": "string",
                                    "enum": ["digital", "info", "local", "b2b", ""]},
+                    "shopee_query_th": {"type": "string",
+                                        "description": "for product candidates plausibly sold on "
+                                                       "Shopee Thailand: a natural Thai search "
+                                                       "query a Thai buyer would type; else empty"},
                     "reason": {"type": "string", "description": "one short sentence"},
                 },
-                "required": ["id", "keep", "score_adj", "category", "niche_kind", "reason"],
+                "required": ["id", "keep", "score_adj", "category", "niche_kind",
+                             "shopee_query_th", "reason"],
                 "additionalProperties": False,
             },
         }
@@ -164,6 +169,11 @@ cameras, watches, toys, electronics, apparel, books, food, handmade, \
 luxury_bags, collectibles); empty string to keep the current value.
 - niche_kind: for niche candidates pick digital/info/local/b2b; empty string \
 to keep the current value.
+- shopee_query_th: for KEPT product candidates that are plausibly sold on \
+Shopee Thailand (electronics, fashion, toys, accessories — not US-only or \
+auction-only collectibles), write the natural Thai search query a Thai buyer \
+would type (e.g. "กิมบอลกันสั่น มือถือ"). Empty string otherwise. This pairs \
+the product with a Thai buy-side price so it can become a complete flip.
 - reason: one short sentence a non-expert can understand.
 Return a verdict for every candidate id you were given."""
 
@@ -245,6 +255,8 @@ class AIClassifier:
                 c.category = v["category"]
             if v.get("niche_kind"):
                 c.niche_kind = v["niche_kind"]
+            if c.kind == "product" and v.get("shopee_query_th"):
+                c.queries.setdefault("shopee_th", v["shopee_query_th"])
             if v.get("reason"):
                 c.reason = f"{c.reason} · AI: {v['reason']}".strip(" ·")
             kept.append(c)

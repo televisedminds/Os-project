@@ -421,9 +421,34 @@ class EbayBrowseDiscovery(DiscoverySource):
     id = "ebay_discovery"
     name = "eBay Browse (category sweep)"
 
+    # One query ≈ one market checked per sweep. Curated for a Thailand-based
+    # operator: things that are buyable from TH/JP/CN and liquid on eBay US.
+    # ~38 seeds × 1 call, every 6th cycle ≈ 300 calls/day — well inside the
+    # free eBay allowance.
     DEFAULT_SEEDS = [
-        "pokemon booster box japanese", "new balance made in usa", "vintage film camera",
-        "retro handheld console", "seiko chronograph vintage", "gundam model kit sealed",
+        # trading cards
+        "pokemon japanese booster box sealed", "pokemon 151 booster box",
+        "one piece card game booster box japanese", "pokemon promo card japanese",
+        # retro gaming
+        "game boy advance sp ags-101", "game boy color boxed", "nintendo ds lite boxed",
+        "psp 3000 boxed", "gamecube controller oem", "pokemon nintendo ds authentic",
+        # film cameras
+        "contax t2", "olympus mju ii", "canon ae-1 program", "nikon fm2", "yashica t4",
+        # watches
+        "seiko 6139 chronograph", "seiko skx007", "citizen bullhead vintage",
+        "casio g-shock vintage",
+        # audio
+        "sony walkman cassette", "sony minidisc player", "audio technica turntable",
+        # toys / anime / collectibles
+        "pg unicorn gundam", "metal build gundam", "nendoroid sealed", "figma figure",
+        "bearbrick 400", "lego retired sealed", "hot wheels premium lot",
+        # fashion
+        "vintage band tee 90s", "new balance 2002r", "louis vuitton speedy vintage",
+        "coach bag vintage leather",
+        # stationery / hobby
+        "pilot custom 823", "sailor fountain pen 21k", "mechanical keyboard hot swap",
+        # manga / media
+        "slam dunk complete set manga", "akira 35th anniversary box",
     ]
 
     def __init__(self, cfg, client=None, ebay_adapter=None):
@@ -529,6 +554,33 @@ class DiscoveryEngine:
                 self.errors.append(f"classify_hook: {e}")
             if self.ai is not None and self.ai.last_error:
                 self.errors.append(f"ai: {self.ai.last_error}")
+        # Pair the best product candidates with a Shopee TH buy-side query when
+        # ScrapingDog is configured. A product with BOTH a Thai price and a US
+        # eBay price is a complete, automatic flip candidate — no manual quote
+        # needed. Hard cap (8 paired products) keeps scraping credits alive
+        # for months; the AI brain supplies a natural Thai query when it can,
+        # otherwise the cleaned English name is used.
+        if getattr(self.cfg, "scrapingdog_api_key", ""):
+            active = {r["id"]: r for r in self.store.list_discovered(active_only=True, limit=200)}
+            cand_ids = {c.id for c in candidates}
+            for c in candidates:                   # carry pairings across sweeps
+                prev_q = (active.get(c.id) or {}).get("queries") or {}
+                if "shopee_th" in prev_q:
+                    c.queries.setdefault("shopee_th", prev_q["shopee_th"])
+            paired = sum(1 for r in active.values()
+                         if r.get("kind") == "product" and r["id"] not in cand_ids
+                         and "shopee_th" in (r.get("queries") or {}))
+            paired += sum(1 for c in candidates
+                          if c.kind == "product" and "shopee_th" in c.queries)
+            budget = max(0, 8 - paired)
+            for c in sorted((x for x in candidates if x.kind == "product"),
+                            key=lambda x: x.score, reverse=True):
+                if budget <= 0:
+                    break
+                if "shopee_th" not in c.queries:
+                    c.queries["shopee_th"] = clean_query(c.name)
+                    budget -= 1
+
         promoted = 0
         for c in sorted(candidates, key=lambda x: x.score, reverse=True)[:self.cfg.discovery_scan_cap]:
             if self.store.upsert_discovered(asdict(c)):
