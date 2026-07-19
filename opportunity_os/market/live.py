@@ -264,7 +264,11 @@ class LiveMarket:
         return self.db.live_mention_series(entity_id, source, HISTORY)
 
     def social_sources(self) -> list[str]:
-        return ["reddit"]
+        out = ["reddit"]
+        serper = self.adapters.get("serper")
+        if serper is not None and getattr(serper, "configured", lambda: False)():
+            out.append("serper")               # council counts it as social corroboration
+        return out
 
     def niches(self) -> list[dict]:
         out = []

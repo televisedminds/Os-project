@@ -97,6 +97,20 @@ def test_kit_endpoint_without_key_says_why(client):
     assert r.status_code == 503 and "ANTHROPIC_API_KEY" in r.json()["detail"]
 
 
+def test_funnel_counts_new_verifications_not_refreshes(client):
+    """'103 verified' when it's 2 deals re-checked 50 times reads as a lie.
+    The funnel must count first-time verifications; refreshes are re-checks."""
+
+    client.post("/api/cycle")                    # extra cycle: mostly refreshes
+    fu = client.get("/api/funnel").json()
+    active = client.get("/api/stats").json()["opportunities_active"]
+    assert fu["rechecked"] > 0
+    assert fu["verified"] <= active + fu["killed"] + 5      # same order as reality
+    assert fu["verified"] < fu["investigations"]            # no per-cycle inflation
+    s = client.get("/api/stats").json()
+    assert s["watching"]["total"] > 0                       # breadth is now visible
+
+
 def test_item_url_builds_exact_links():
     from opportunity_os import links
     # eBay Browse returns "v1|<legacy id>|0"; link resolves to the numeric middle.

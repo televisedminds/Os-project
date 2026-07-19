@@ -457,3 +457,4 @@ ul { margin: 6px 0; padding-left: 18px; }
   display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap;
 }
 .key-gap-cta { flex-shrink: 0; }
+.fn-sub { color: var(--muted); font-weight: 400; font-size: 10.5px; }

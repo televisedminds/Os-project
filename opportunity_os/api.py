@@ -562,16 +562,20 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
 
         cutoff = time.time() - hours * 3600
         agg = {"observations": 0, "anomalies": 0, "investigations": 0,
-               "verified": 0, "rejected": 0, "killed": 0, "cycles": 0}
+               "verified": 0, "rechecked": 0, "rejected": 0, "killed": 0, "cycles": 0}
         for c in store.recent_cycles(50):
             if c["ts"] < cutoff:
                 continue
             rep = c["report"]
+            pubs = rep.get("published", [])
             agg["cycles"] += 1
             agg["observations"] += rep.get("signals", 0)
             agg["anomalies"] += rep.get("anomalies", 0)
             agg["investigations"] += rep.get("candidates", 0)
-            agg["verified"] += len(rep.get("published", []))
+            # honesty: "verified" = verified for the FIRST time; a deal that
+            # re-verifies every cycle is a re-check, not 48 new wins a day.
+            agg["verified"] += len([p for p in pubs if p.get("new")])
+            agg["rechecked"] += rep.get("reverified", 0) + len([p for p in pubs if not p.get("new")])
             agg["rejected"] += len(rep.get("rejected", []))
             agg["killed"] += len(rep.get("invalidated", []))
         agg["recommended_now"] = store.stats()["opportunities_active"]
@@ -665,6 +669,15 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         rois = [(o["economics"]["total_net_usd"] / o["economics"]["capital_usd"] * 100)
                 for o in actives if o["economics"]["capital_usd"] > 0]
         s["best_roi_pct"] = round(max(rois), 0) if rois else 0
+        try:
+            n_products = len(orch.world.product_ids())
+            n_niches = len(orch.world.niches())
+            s["watching"] = {"products": n_products, "niches": n_niches,
+                             "total": n_products + n_niches,
+                             "discovered": store.discovered_counts()["active"]
+                             if cfg.mode == "live" else 0}
+        except Exception:  # noqa: BLE001
+            s["watching"] = None
         return s
 
     @app.get("/api/thailand")

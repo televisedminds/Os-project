@@ -129,13 +129,19 @@ async function loadBriefing() {
       in the operator section of watchlist.json and the whole product starts working toward your number.</div>`;
   }
 
+  const watching = s.watching && s.watching.total
+    ? `<span class="fn-step"><b>${s.watching.total.toLocaleString()}</b> markets watched${
+        s.watching.discovered ? ` <span class="fn-sub">(${s.watching.discovered} auto-found)</span>` : ""}</span><span class="fn-a">→</span>`
+    : "";
   $("#funnel-strip").innerHTML = `
     <span class="fn-label">RESEARCH FUNNEL · last 24h</span>
+    ${watching}
     <span class="fn-step"><b>${fu.observations.toLocaleString()}</b> observations</span><span class="fn-a">→</span>
     <span class="fn-step"><b>${fu.anomalies.toLocaleString()}</b> anomalies</span><span class="fn-a">→</span>
     <span class="fn-step"><b>${fu.investigations.toLocaleString()}</b> investigated</span><span class="fn-a">→</span>
     <span class="fn-step"><b>${fu.rejected.toLocaleString()}</b> rejected</span><span class="fn-a">→</span>
-    <span class="fn-step"><b>${fu.verified.toLocaleString()}</b> verified</span><span class="fn-a">→</span>
+    <span class="fn-step"><b>${fu.verified.toLocaleString()}</b> newly verified</span><span class="fn-a">→</span>
+    <span class="fn-step"><b>${(fu.rechecked || 0).toLocaleString()}</b> re-checks held</span><span class="fn-a">→</span>
     <span class="fn-step fn-final"><b>${fu.recommended_now}</b> live for you now</span>`;
 
   const conf = s.avg_confidence || 0;

@@ -155,6 +155,8 @@ def test_serper_feeds_niche_demand_when_reddit_dark(live_cfg):
     assert len(store.live_mention_series("th_tax", "serper", 30)) == 10
     metrics = lm.niches()[0]["metrics"]
     assert metrics["growth_pct"] > 0                         # momentum from the serper series
+    assert "serper" in lm.social_sources()                   # council sees it as corroboration
+    assert lm.mentions("th_tax", "serper")[-1] == 10
 
 
 def test_briefing_names_the_missing_keys(live_cfg):
