@@ -52,8 +52,27 @@ const fmtUSD = (v, dp) => {
 const fmtTHB = (v) => v == null ? "—" : "฿" + Math.round(v).toLocaleString("en-US");
 const pct = (v, dp = 0) => v == null ? "—" : (v * 100).toFixed(dp) + "%";
 
-async function api(path, opts) {
-  const r = await fetch(path, opts);
+/* Admin token: attached to every call (harmless on public reads, required on
+   settings + cycle). Stored locally, never in the page source. On a 401/403 we
+   prompt once and retry — so the dashboard stays usable once a token is set on
+   the server, without shipping the secret to the browser. */
+function adminToken() { return localStorage.getItem("oos_admin_token") || ""; }
+
+async function api(path, opts = {}) {
+  const withTok = (tok) => Object.assign({}, opts, {
+    headers: Object.assign({}, opts.headers || {}, tok ? { "X-OOS-Token": tok } : {}),
+  });
+  let r = await fetch(path, withTok(adminToken()));
+  if (r.status === 401 || r.status === 403) {
+    const entered = (window.prompt(
+      "Admin token required to view/manage keys or run cycles.\n" +
+      "Set OOS_DASHBOARD_TOKEN on the server (see SECURITY.md), then paste it here:") || "").trim();
+    if (entered) {
+      localStorage.setItem("oos_admin_token", entered);
+      r = await fetch(path, withTok(entered));
+      if (r.status === 401 || r.status === 403) localStorage.removeItem("oos_admin_token");
+    }
+  }
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
   return r.json();
 }

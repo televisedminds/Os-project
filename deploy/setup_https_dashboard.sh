@@ -30,28 +30,62 @@ read -rsp "Choose a password for the dashboard login: " OOS_PASS
 echo ""
 HASH=$(caddy hash-password --plaintext "$OOS_PASS")
 
-DOMAIN_OR_PORT=":80"
-read -rp "Domain name pointed at this droplet (leave empty to use the bare IP over HTTP): " DOMAIN
-[ -n "$DOMAIN" ] && DOMAIN_OR_PORT="$DOMAIN"
+read -rp "Domain name pointed at this droplet (leave empty to use the bare IP): " DOMAIN
 
-cat > /etc/caddy/Caddyfile <<EOF
-${DOMAIN_OR_PORT} {
+if [ -n "$DOMAIN" ]; then
+  # Real domain → Caddy fetches a trusted Let's Encrypt certificate.
+  cat > /etc/caddy/Caddyfile <<EOF
+${DOMAIN} {
 	basic_auth {
 		${OOS_USER} ${HASH}
 	}
 	reverse_proxy localhost:8000
 }
 EOF
+else
+  # Bare IP → HTTPS with Caddy's internal (self-signed) certificate. The
+  # browser shows a one-time warning, but credentials and API keys are
+  # encrypted in transit — never plain HTTP on a public interface.
+  cat > /etc/caddy/Caddyfile <<'EOF'
+https:// {
+	tls internal
+	basic_auth {
+		__USER__ __HASH__
+	}
+	reverse_proxy localhost:8000
+}
+http:// {
+	redir https://{host}{uri} permanent
+}
+EOF
+  sed -i "s|__USER__|${OOS_USER}|; s|__HASH__|${HASH}|" /etc/caddy/Caddyfile
+fi
 
 systemctl enable --now caddy
 systemctl reload caddy
 
+# App-level admin token: gates the key-management + cycle endpoints inside the
+# app (defence in depth behind the Caddy login). Generate once, keep in .env.
+ENV_FILE="${APP_DIR}/.env"
+touch "$ENV_FILE"
+if ! grep -q '^OOS_DASHBOARD_TOKEN=' "$ENV_FILE"; then
+  TOK=$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 32)
+  echo "OOS_DASHBOARD_TOKEN=${TOK}" >> "$ENV_FILE"
+  systemctl restart opportunity-os || true
+  echo ""
+  echo "✓ Generated your admin token (needed for the ⚙ Keys tab — paste it when the dashboard asks):"
+  echo "    ${TOK}"
+  echo "  Stored in ${ENV_FILE}. Show it again anytime: grep OOS_DASHBOARD_TOKEN ${ENV_FILE}"
+fi
+
 echo ""
-echo "✓ Dashboard is now behind a login."
+echo "✓ Dashboard is now behind a login, over HTTPS."
 if [ -n "$DOMAIN" ]; then
-  echo "  Open: https://${DOMAIN}/   (Caddy fetches HTTPS automatically — first load may take ~30s)"
+  echo "  Open: https://${DOMAIN}/   (trusted certificate — first load may take ~30s)"
 else
   IP=$(curl -s ifconfig.me || echo "<your-droplet-ip>")
-  echo "  Open: http://${IP}/   (plain HTTP — fine for personal use, but add a domain later for HTTPS)"
+  echo "  Open: https://${IP}/"
+  echo "  Your browser will warn once about a self-signed certificate — choose Advanced → Proceed."
+  echo "  (Add a free domain later for a warning-free certificate.)"
 fi
 echo "  Login: ${OOS_USER} / (the password you typed)"

@@ -10,8 +10,9 @@ from opportunity_os.config import Config
 @pytest.fixture
 def client(tmp_path):
     cfg = Config(db_path=tmp_path / "api.db", auto_cycle_seconds=0)
+    cfg.dashboard_token = "test-admin-token"       # exercise the real auth path
     app = create_app(cfg, auto_cycle_seconds=0, seed_cycles=2)
-    with TestClient(app) as c:
+    with TestClient(app, headers={"X-OOS-Token": "test-admin-token"}) as c:
         yield c
 
 

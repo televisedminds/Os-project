@@ -13,7 +13,7 @@ import contextlib
 import time
 from datetime import date as _date
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -334,6 +334,10 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
     app.state.config = cfg
     app.state.brain = brain
 
+    from .security import AdminGuard, SecretBox
+    guard = AdminGuard(cfg)                       # gates settings + mutating endpoints
+    app.state.guard = guard
+
     def plan_of(name: str | None) -> dict:
         return cfg.plan(name)
 
@@ -634,7 +638,10 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         return {"items": out}
 
     @app.post("/api/cycle")
-    def run_cycle():
+    def run_cycle(_: None = Depends(guard)):
+        """Trigger a research cycle. Gated: it spends API budget (paid credits)
+        and mutates state, so it is not open to anonymous callers."""
+
         return orch.run_cycle()
 
     @app.get("/api/agents")
@@ -732,15 +739,17 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
             pass
 
     @app.get("/api/settings")
-    def get_settings():
-        """Masked status of every managed key — raw values are never returned."""
+    def get_settings(_: None = Depends(guard)):
+        """Masked status of every managed key — raw values are never returned.
+        Auth-gated: unauthenticated callers cannot even learn which keys exist."""
 
         return {"keys": app_settings.status(cfg, store),
-                "note": "Keys save to the local database and apply immediately — no restart. "
+                "security": _security_status(),
+                "note": "Keys are encrypted at rest and applied immediately — no restart. "
                         "Values are never sent back to the browser."}
 
     @app.post("/api/settings")
-    def save_settings(updates: dict[str, str]):
+    def save_settings(updates: dict[str, str], _: None = Depends(guard)):
         try:
             changed = app_settings.save(cfg, store, updates)
         except ValueError as e:
@@ -749,10 +758,22 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         return {"changed": changed, "keys": app_settings.status(cfg, store)}
 
     @app.post("/api/settings/test")
-    def test_settings():
+    def test_settings(_: None = Depends(guard)):
         """Live-check every configured service (network); unset ones are skipped."""
 
         return {"results": app_settings.run_checks(cfg)}
+
+    def _security_status() -> dict:
+        box = SecretBox(cfg)
+        insecure = []
+        if not guard.configured():
+            insecure.append("OOS_DASHBOARD_TOKEN is not set — admin endpoints are "
+                            "localhost-only; set a token to use them remotely.")
+        if not box.active:
+            insecure.append("credential encryption is INACTIVE — install cryptography "
+                            "and set OOS_SECRET_KEY.")
+        return {"admin_token_set": guard.configured(),
+                "encryption_active": box.active, "warnings": insecure}
 
     # ------------------------------------------------------------- dashboard
 

@@ -67,6 +67,14 @@ class Config:
     http_timeout: float = field(default_factory=lambda: float(os.environ.get("OOS_HTTP_TIMEOUT", "20")))
     user_agent: str = _env("OOS_USER_AGENT", "OpportunityOS/0.3 (market research bot)")
 
+    # Dashboard security. dashboard_token gates settings/mutating endpoints
+    # (bearer token, sent as `Authorization: Bearer` or `X-OOS-Token`). When
+    # unset, those endpoints are reachable only from localhost — a public
+    # deploy is closed by default. secret_key encrypts stored credentials at
+    # rest; if unset a persisted data/.secret_key (0600) is used. See SECURITY.md.
+    dashboard_token: str = _env("OOS_DASHBOARD_TOKEN", "")
+    secret_key: str = _env("OOS_SECRET_KEY", "")
+
     # Live connector credentials (all optional — missing ones degrade gracefully).
     ebay_client_id: str = _env("EBAY_CLIENT_ID", "")
     ebay_client_secret: str = _env("EBAY_CLIENT_SECRET", "")

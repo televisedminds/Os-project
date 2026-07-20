@@ -8,11 +8,13 @@ not set. `.env` keeps working exactly as before for people who prefer it.
 
 Security rules, non-negotiable:
 * raw key values are NEVER returned by any endpoint — only masked previews;
-* values are stored only in the local SQLite file, never logged.
-The dashboard itself has no login — anyone who can open it can SAVE keys and
-trigger tests, which is why live deployments should sit behind the bundled
-HTTPS+password proxy (deploy/setup_https_dashboard.sh). The UI warns when it
-detects plain HTTP.
+* values are ENCRYPTED at rest (Fernet) before touching SQLite, never logged;
+* the settings endpoints are AUTH-GATED (see security.py / AdminGuard): a
+  bearer token is required, or localhost-only when no token is set — so a
+  public deploy cannot read or write keys anonymously.
+Live deployments should still sit behind the bundled HTTPS+password proxy
+(deploy/setup_https_dashboard.sh) for transport security; set OOS_DASHBOARD_TOKEN
+and OOS_SECRET_KEY as documented in SECURITY.md.
 """
 
 from __future__ import annotations
@@ -101,41 +103,74 @@ def mask(value: str) -> str:
     return f"{v[:3]}…{v[-4:]} ({len(v)} chars)"
 
 
+def _box(cfg):
+    """Cache one SecretBox per config so we don't re-read the key file each call."""
+
+    box = getattr(cfg, "_secretbox", None)
+    if box is None:
+        from .security import SecretBox
+        box = SecretBox(cfg)
+        try:
+            cfg._secretbox = box
+        except Exception:  # noqa: BLE001 - frozen configs still work, just uncached
+            pass
+    return box
+
+
 def stored(store) -> dict:
+    """The raw stored dict — values may be encrypted (enc:v1:…) or legacy plaintext."""
+
     return store.meta_get(META_KEY, {}) or {}
 
 
+def decrypted(cfg, store) -> dict:
+    """{env: plaintext} for every app-saved key, decrypting at-rest values."""
+
+    box = _box(cfg)
+    return {env: box.decrypt(val) for env, val in stored(store).items()}
+
+
 def load_into(cfg, store) -> list[str]:
-    """Apply app-saved keys onto the running config. Returns the env names applied."""
+    """Apply app-saved keys onto the running config. Returns the env names applied.
+    Also opportunistically migrates any legacy plaintext values to encrypted."""
 
     applied = []
-    saved = stored(store)
+    box = _box(cfg)
+    raw = stored(store)
+    needs_migration = box.active and any(
+        v and not v.startswith("enc:v1:") for v in raw.values())
     for env, spec in KEY_FIELDS.items():
-        val = (saved.get(env) or "").strip()
+        val = box.decrypt(raw.get(env) or "").strip()
         if val:
             setattr(cfg, spec["attr"], val)
             applied.append(env)
+    if needs_migration:
+        migrated = {env: box.encrypt(box.decrypt(v)) for env, v in raw.items() if v}
+        store.meta_set(META_KEY, migrated)
     return applied
 
 
 def save(cfg, store, updates: dict) -> list[str]:
     """Merge updates into the stored keys and apply them to the live config.
-    An empty value clears the app-saved key and falls back to the environment.
-    Raises ValueError on unknown names. Returns the env names that changed."""
+    Values are encrypted at rest. An empty value clears the app-saved key and
+    falls back to the environment. Raises ValueError on unknown names.
+    Returns the env names that changed."""
 
     unknown = [k for k in updates if k not in KEY_FIELDS]
     if unknown:
         raise ValueError(f"unknown key(s): {', '.join(sorted(unknown))} — "
                          f"valid: {', '.join(KEY_FIELDS)}")
+    box = _box(cfg)
     saved = stored(store)
+    current = decrypted(cfg, store)
     changed = []
     for env, raw in updates.items():
         val = (raw or "").strip()
         spec = KEY_FIELDS[env]
         if val:
-            if saved.get(env) != val:
+            if current.get(env) != val:
                 changed.append(env)
-            saved[env] = val
+            saved[env] = box.encrypt(val)                          # encrypt at rest
             setattr(cfg, spec["attr"], val)
         else:
             if env in saved:
@@ -149,7 +184,7 @@ def save(cfg, store, updates: dict) -> list[str]:
 def status(cfg, store) -> list[dict]:
     """Masked, safe-to-serve view of every managed key."""
 
-    saved = stored(store)
+    saved = decrypted(cfg, store)
     out = []
     for env, spec in KEY_FIELDS.items():
         app_val = (saved.get(env) or "").strip()
