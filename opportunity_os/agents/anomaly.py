@@ -12,7 +12,7 @@ from statistics import fmean, pstdev
 
 from ..config import Config
 from ..models import Anomaly, AnomalyKind
-from .. import economics, thailand
+from .. import economics, research, thailand
 
 
 class AnomalyDetector:
@@ -30,6 +30,48 @@ class AnomalyDetector:
         sd = max(pstdev(window), abs(mu) * 0.005, 1e-6)
         return (cur - mu) / sd
 
+    def _dislocations(self, ds, pid: str, product: dict) -> list[Anomaly]:
+        """Underpriced individual listings + single-seller liquidations, read
+        from the last full page of asks the adapter captured for each venue."""
+
+        if not hasattr(ds, "listing_sample"):
+            return []
+        out: list[Anomaly] = []
+        t = ds.tick_no
+        for vid in product["venues"]:
+            v = economics.VENUES.get(vid, {})
+            acc = thailand.VENUE_ACCESS.get(vid, {})
+            # A same-venue dislocation flip means buying the underpriced listing
+            # and RE-listing it on that same venue — so the venue must support
+            # both buying and selling, and be reachable both ways from Thailand.
+            if not (v.get("buy") and v.get("sell") and acc.get("buy") and acc.get("sell")):
+                continue
+            sample = ds.listing_sample(pid, vid)
+            if not sample:
+                continue
+            query = product.get("name", "")
+            for hit in research.find_dislocations(sample, query,
+                                                  min_edge=self.cfg.dislocation_min_edge):
+                out.append(Anomaly(
+                    kind=AnomalyKind.PRICE_DISLOCATION, entity_id=pid, tick=t,
+                    severity=min(1.0, hit["edge_pct"] / 100),
+                    summary=f"{product['name']}: a listing on {economics.VENUES[vid]['name']} is "
+                            f"${hit['ask_usd']:.2f} — {hit['edge_pct']:.0f}% below the market's "
+                            f"${hit['fair_usd']:.2f} clearing value ({hit['market_n']} asks, "
+                            f"{hit['market_sellers']} sellers).",
+                    evidence=[{"venue": vid, **hit}]))
+            liq = research.find_liquidation(sample)
+            if liq:
+                out.append(Anomaly(
+                    kind=AnomalyKind.SELLER_LIQUIDATION, entity_id=pid, tick=t,
+                    severity=min(1.0, liq["avg_discount_pct"] / 40),
+                    summary=f"{product['name']}: seller '{liq['seller']}' is holding "
+                            f"{liq['listings']} below-fair asks on {economics.VENUES[vid]['name']} "
+                            f"(avg {liq['avg_discount_pct']:.0f}% under ${liq['fair_usd']:.2f}) — "
+                            f"a liquidation worth sweeping.",
+                    evidence=[{"venue": vid, **liq}]))
+        return out
+
     # -- detection ---------------------------------------------------------
 
     def detect(self, ds) -> list[Anomaly]:
@@ -39,6 +81,13 @@ class AnomalyDetector:
         for pid in ds.product_ids():
             product = ds.product_public(pid)
             listings = {v: ds.listing(pid, v) for v in product["venues"]}
+
+            # Per-listing dislocations: the alpha INSIDE a single response.
+            # A sell-side venue's latest page of asks is mined for individual
+            # listings priced far below the market's own conservative clearing
+            # value, and for a single seller dumping several at once. Zero extra
+            # API calls — the page was already fetched for the aggregate stats.
+            anomalies += self._dislocations(ds, pid, product)
 
             for vid in product["venues"]:
                 hist = ds.product_history(pid, vid)

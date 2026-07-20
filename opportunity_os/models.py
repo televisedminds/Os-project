@@ -43,6 +43,8 @@ class AnomalyKind(str, Enum):
     DEMAND_ACCELERATION = "demand_acceleration"  # sell-through speeding up
     MARGIN_EXPANSION = "margin_expansion"        # cross-venue spread widening
     TREND_REVERSAL = "trend_reversal"            # a declining niche turning up
+    PRICE_DISLOCATION = "price_dislocation"      # single ask far below its market
+    SELLER_LIQUIDATION = "seller_liquidation"    # one seller dumping below fair
 
 
 @dataclass

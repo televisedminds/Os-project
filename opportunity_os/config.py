@@ -126,6 +126,19 @@ class Config:
     require_pessimistic_profit: bool = True
     anomaly_zscore: float = 2.0
     cross_venue_spread_pct: float = 0.25  # raw spread that triggers investigation
+    # Dislocation engine: an individual ask this far below the market's own
+    # conservative clearing value is a per-listing flip candidate. The single
+    # richest alpha source per API call — one response yields many candidates.
+    dislocation_min_edge: float = field(
+        default_factory=lambda: float(os.environ.get("OOS_DISLOCATION_MIN_EDGE", "0.32")))
+    # Graph fan-out: mine related products from listing titles and feed the
+    # strongest as discovery candidates (zero API calls). Off in demo.
+    graph_fanout_enabled: bool = field(
+        default_factory=lambda: os.environ.get("OOS_GRAPH_FANOUT", "1") not in ("0", "false", "no"))
+    # EV allocator: rank scan slots by verified-yield-per-scan (a bandit) once
+    # enough history exists, instead of by raw discovery score alone.
+    ev_allocator_enabled: bool = field(
+        default_factory=lambda: os.environ.get("OOS_EV_ALLOCATOR", "1") not in ("0", "false", "no"))
 
     # Operator profile used to size positions.
     capital_cap_usd: float = field(default_factory=lambda: float(os.environ.get("OOS_CAPITAL_CAP", "2000")))

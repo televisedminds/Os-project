@@ -378,6 +378,50 @@ class SimulatedMarket:
             return None
         return p.venues[venue].snapshot()
 
+    def listing_sample(self, product_id: str, venue: str) -> list[dict]:
+        """Synthesize the page of individual asks a real Browse response would
+        carry, from the aggregate listing. Deterministic per (product, venue,
+        tick) so demo replays are stable. Faithful in structure — a spread of
+        asks around the median, a handful of sellers, some junk, recurring
+        variant phrases, and *occasionally* a genuinely underpriced listing —
+        so the dislocation and title-mining engines are exercised on demo data
+        exactly as they would be on eBay data. Clearly synthetic, never sold
+        to the user as real listings."""
+
+        p = self.products.get(product_id)
+        if not p or venue not in p.venues:
+            return []
+        lst = p.venues[venue]
+        if lst.stock <= 0 or lst.price <= 0:
+            return []
+        import hashlib
+        seed = int(hashlib.sha1(f"{product_id}|{venue}|{self.tick_no}".encode()).hexdigest()[:8], 16)
+        rng = random.Random(seed)
+        n = max(6, min(int(lst.stock), 24, lst.sellers * 4 or 12))
+        variants = ["complete in box", "cib tested", "japan import", "us seller",
+                    f"{p.category} lot", "free shipping", "mint condition"]
+        sellers = [f"sim_seller_{i}" for i in range(max(3, min(lst.sellers, 8)))]
+        sample = []
+        for i in range(n):
+            mult = rng.uniform(0.9, 1.35) * (1.0 + 0.12 * (i / max(1, n)))  # sorted-ish ascending
+            price = round(lst.price * mult, 2)
+            title = f"{p.name} {rng.choice(variants)}"
+            if rng.random() < 0.12:
+                title += " for parts"                       # junk the filters must drop
+            sample.append({
+                "item_id": f"sim{seed}{i:02d}", "title": title, "price": price,
+                "url": f"https://www.ebay.com/itm/sim{seed}{i:02d}",
+                "seller": rng.choice(sellers), "condition": "USED_GOOD"})
+        # Occasionally a real dislocation: one seller lists ~40% under fair.
+        if rng.random() < 0.28 and n >= 8:
+            disl_seller = rng.choice(sellers)
+            sample.append({
+                "item_id": f"sim{seed}X", "title": f"{p.name} {rng.choice(variants)}",
+                "price": round(lst.price * rng.uniform(0.5, 0.62), 2),
+                "url": f"https://www.ebay.com/itm/sim{seed}X",
+                "seller": disl_seller, "condition": "USED_GOOD"})
+        return sample
+
     def product_history(self, product_id: str, venue: str) -> list[dict]:
         return list(self.products[product_id].history.get(venue, []))
 

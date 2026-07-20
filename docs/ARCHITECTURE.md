@@ -6,6 +6,67 @@ The objective function, stated once and used to judge every idea below:
 > API budget and operator attention.** Scan count is an input cost, not a KPI.
 > 20 high-confidence opportunities beat 20,000 weak ones.
 
+## 0. v0.7 — the alpha-density rewrite (the single biggest bottleneck)
+
+**The bottleneck was never compute or scanner count. It was how much alpha we
+extracted from each API response.** Every eBay call returns ~50 individual
+listings — a whole distribution, every seller, every exact URL — and the old
+pipeline collapsed all of that into ONE number (the median price) and threw the
+rest away. One API call → at most one signal. That is the ceiling that kept us
+at ~3 verified opportunities/day, and no amount of "more scanners" moves it.
+
+The redesign treats every response as a **graph of information**, not a price.
+The new `research.py` core turns one call into many independent candidates:
+
+1. **Dislocation detection (the richest source).** Within a single response,
+   `find_dislocations` finds individual listings priced far below the market's
+   own *conservative* clearing value (median of the cheapest page's upper half
+   — deliberately below the true market median). Each hit is an intra-venue
+   flip with an **exact URL**, needing no second venue and no price history —
+   the edge is *inside* one response. Junk ("for parts", "box only", repros)
+   and wrong-model-number variants are filtered before they can masquerade as
+   bargains. `find_liquidation` spots one seller dumping several below-fair
+   asks — an estate/closing sale worth sweeping.
+2. **Full ask-distribution microstructure.** `market_stats` reads fair value,
+   p25/p75, dispersion, seller count and **top-seller concentration** from the
+   same page — turning "the price" into the shape of the whole market.
+3. **Title mining → graph fan-out (free candidates).** Sellers write the
+   product graph into their titles. `mine_related` extracts recurring model
+   variants / adjacent products across a page and promotes the strongest as
+   **new discovery candidates plus graph edges — zero extra API calls.** One
+   response about a Game Boy SP seeds the Pokémon-edition variant, the boxed
+   edition, the adjacent handheld.
+4. **Opportunity propagation.** When an entity produces a *verified* opportunity,
+   the pipeline **boosts the discovery priority of its graph neighbors** — so
+   finding one edge pulls the fleet toward the cluster around it.
+
+Two more quant-desk pieces sit on top of the richer candidate stream:
+
+5. **EV research-budget allocator (a bandit, not a rota).** `ucb_rank` orders
+   the scan tail by *verified research yield per scan* (anomaly/candidate/
+   publication rewards) with a UCB exploration bonus, so the fixed API budget
+   flows to whatever is actually PRODUCING opportunities while still probing the
+   unknown. The `research_yield` ledger accrues every scan/anomaly/candidate/
+   publication per entity.
+6. **Capital optimizer (allocate, don't just rank).** `allocate_capital` solves
+   for the best use of the operator's finite capital: greedy over net-per-dollar-
+   per-day, capped per category for diversification, respecting the real budget
+   — returning an execution order, deployed vs reserve capital, and expected
+   ROI. Surfaced in the daily briefing as `capital_plan`.
+
+**Measured effect (demo, same API budget):** anomalies per cycle ~5 → ~50,
+investigated candidates ~5 → ~20, verified active opportunities ~3 → ~14, each
+dislocation carrying the exact listing URL to buy. The honesty bar did not move:
+every candidate still faces the council and the pessimistic fee waterfall, and
+same-venue dislocations must clear the venue's round-trip take — thin ones die
+in the gate, which is exactly why the survivors are real.
+
+Everything above is exercised in **demo mode too**: the simulator synthesizes a
+faithful page of asks per listing (spread, sellers, junk, recurring variants,
+and an occasional genuine dislocation) so the alpha engine runs on demo data
+exactly as it runs on eBay data — clearly synthetic, never shown to the user as
+real listings.
+
 ## 1. The pipeline (target vs actual)
 
 The requested architecture and the shipped one, stage by stage:
@@ -59,7 +120,10 @@ Ordered by impact on expected-value throughput:
 
 Price z-spike · supply crunch · cross-venue spread · social spike ·
 search gap · service imbalance · B2B surge · **seller exodus** ·
-**demand acceleration** · **margin expansion** · **trend reversal**.
+**demand acceleration** · **margin expansion** · **trend reversal** ·
+**price dislocation** (v0.7 — a single ask far below its market's fair value,
+the highest-yield detector because it fires per-listing, not per-market) ·
+**seller liquidation** (v0.7 — one seller dumping several below-fair asks).
 Planned (need data we don't store yet): review velocity, rank changes,
 seasonality (needs ≥1y of history — accumulating now).
 

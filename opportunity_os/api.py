@@ -184,14 +184,21 @@ def _action_card(o: dict, operator: dict | None = None, resolve=None) -> dict | 
         steps = [s["title"] for s in pb.get("steps", [])]
 
         if o["type"] == "product_arbitrage":
-            bv, sv = o["route"]["buy_venue"], o["route"]["sell_venue"]
+            route = o["route"]
+            bv, sv = route["buy_venue"], route["sell_venue"]
             buy_usd = e["base"]["lines"][0]["amount_usd"]
             listing = pb.get("listing") or {}
             sell_usd = float(listing.get("price_usd") or e["base"]["revenue_usd"])
             buy_url, buy_search = _links(bv)
             sell_url, sell_search = _links(sv)
+            dislocation = route.get("kind") == "dislocation"
+            if dislocation and route.get("buy_url"):
+                # The exact underpriced listing — the whole point of a
+                # dislocation is that we can hand over the precise URL to buy.
+                buy_url = route["buy_url"]
             return {
                 "type": "flip",
+                "dislocation": dislocation,
                 "buy": {"venue": economics.VENUES[bv]["name"],
                         "price_usd": round(buy_usd, 2), "price_thb": thb(buy_usd),
                         "max_price_usd": round(buy_usd * 1.08, 2),
@@ -241,7 +248,10 @@ def _row(o: dict, affinity: int = 0) -> dict:
 
     route = o.get("route", {})
     if o["type"] == "product_arbitrage":
-        route_label = f"{route.get('buy_country', '?')} → {route.get('sell_country', '?')}"
+        if route.get("kind") == "dislocation":
+            route_label = f"{economics.VENUES.get(route.get('buy_venue', ''), {}).get('name', '?')} dislocation"
+        else:
+            route_label = f"{route.get('buy_country', '?')} → {route.get('sell_country', '?')}"
     else:
         route_label = route.get("geo", "global")
     return {
@@ -497,14 +507,26 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
                 items.append({"ts": c["ts"], "kind": "publish", "actor": "Verification council",
                               "text": f"VERIFIED · {p['title']} — score {p['score']}, "
                                       f"confidence {p['confidence']:.0%}"})
-            for r_ in rep.get("rejected", []):
+            # Rejections are the most numerous events (the fee/verification
+            # gate is strict on purpose); cap them per cycle so they don't
+            # crowd scans and publications out of the live feed.
+            for r_ in rep.get("rejected", [])[:6]:
                 items.append({"ts": c["ts"], "kind": "reject", "actor": "Verification council",
                               "text": f"REJECTED · {r_['title']} — {r_['reason']}"})
             for iv in rep.get("invalidated", []):
                 items.append({"ts": c["ts"], "kind": "invalidate", "actor": "Re-verification",
                               "text": f"KILLED · {iv['title']} — {iv['reason']}"})
         items.sort(key=lambda x: x["ts"], reverse=True)
-        return {"items": items[:limit]}
+        top = items[:limit]
+        # Cycle events are written after signals, so a busy cycle can bury the
+        # "fleet scanned" lines. Guarantee they stay visible — the live feed
+        # exists to show the fleet working, not only its conclusions.
+        if not any(i["kind"] == "scan" for i in top):
+            scans = [i for i in items if i["kind"] == "scan"][:3]
+            if scans:
+                top = (scans + [i for i in top if i["kind"] != "scan"])[:limit]
+                top.sort(key=lambda x: x["ts"], reverse=True)
+        return {"items": top}
 
     @app.get("/api/goal")
     def goal():

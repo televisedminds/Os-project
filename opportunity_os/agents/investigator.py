@@ -14,7 +14,7 @@ import math
 from statistics import fmean
 
 from ..config import Config
-from ..models import Anomaly, InvestigationStep, OppType
+from ..models import Anomaly, AnomalyKind, InvestigationStep, OppType
 from .. import economics, thailand
 
 NICHE_TYPE = {"digital": OppType.DIGITAL_PRODUCT, "info": OppType.INFO_PRODUCT,
@@ -41,11 +41,112 @@ class Investigator:
             group = by_entity[entity_id]
             if entity_id in niche_ids:
                 cand = self._venture_candidate(ds, entity_id, group)
+                if cand:
+                    candidates.append(cand)
             else:
+                # A product can yield BOTH a cross-venue flip AND one or more
+                # per-listing dislocation flips — they are distinct, separately
+                # priced opportunities with distinct identities.
                 cand = self._flip_candidate(ds, entity_id, group)
-            if cand:
-                candidates.append(cand)
+                if cand:
+                    candidates.append(cand)
+                candidates += self._dislocation_candidates(ds, entity_id, group)
         return candidates
+
+    # ------------------------------------------------------- dislocation flips
+
+    def _dislocation_candidates(self, ds, pid: str, anomalies: list[Anomaly]) -> list[dict]:
+        """Turn PRICE_DISLOCATION anomalies (a specific listing far below its
+        market's fair value) into intra-venue flip candidates: buy that exact
+        listing, resell at the market's own conservative clearing price. The
+        pessimistic fee waterfall then decides whether the edge is real after
+        the venue takes its cut both ways — only fat dislocations survive, and
+        each survivor ships with an exact URL."""
+
+        disl = [a for a in anomalies if a.kind == AnomalyKind.PRICE_DISLOCATION]
+        if not disl:
+            return []
+        product = ds.product_public(pid)
+        out = []
+        seen: set[str] = set()
+        for a in sorted(disl, key=lambda x: x.severity, reverse=True)[:3]:
+            ev = a.evidence[0]
+            venue, item_id = ev["venue"], ev.get("item_id", "")
+            if item_id in seen or not economics.VENUES.get(venue):
+                continue
+            seen.add(item_id)
+            ask, fair = float(ev["ask_usd"]), float(ev["fair_usd"])
+            # Resell at conservative fair value on the SAME venue (you become
+            # one more seller at the going rate). Round-trip fees are paid to
+            # one venue — the gate below is where thin dislocations die.
+            econ = economics.compute_flip(product, venue, venue, ask, fair, qty=1)
+            feas = thailand.feasibility(OppType.PRODUCT_ARBITRAGE.value, product["category"], venue, venue)
+            agg = ds.listing(pid, venue) or {}
+            velocity = max(agg.get("sold_7d", 0) / 7.0, 0.2)
+            vname = economics.VENUES[venue]["name"]
+            why = [
+                InvestigationStep(
+                    "What is mispriced?",
+                    a.summary,
+                    {"item_id": item_id, "ask_usd": ask, "fair_usd": fair,
+                     "edge_pct": ev.get("edge_pct")}),
+                InvestigationStep(
+                    "Why does the edge exist?",
+                    f"One listing sits {ev.get('edge_pct', 0):.0f}% under the market's own "
+                    f"clearing value while {ev.get('market_sellers', 0)} other sellers hold ~"
+                    f"${fair:.2f}. Usual causes: a weak title, wrong category, an ending auction, "
+                    f"or a seller who wants out — none of which change what the item IS.",
+                    {"market_n": ev.get("market_n"), "market_sellers": ev.get("market_sellers")}),
+                InvestigationStep(
+                    "Is it the real product (not junk or a variant)?",
+                    "Passed the junk filter (no 'for parts', 'box only', repro) and the "
+                    "model-number match against the market query before being surfaced.",
+                    {"condition": ev.get("condition", "")}),
+                InvestigationStep(
+                    "What is the real profit after fees both ways?",
+                    f"Buy ${ask:.2f}, resell ${fair:.2f} on {vname}: "
+                    f"${econ.base.net_usd:.2f} net ({econ.base.margin_pct:.0f}% margin), "
+                    f"${econ.pessimistic.net_usd:.2f} pessimistic. You pay {vname}'s fee on the "
+                    f"resale, so only a wide dislocation clears.",
+                    {"net_base": econ.base.net_usd, "net_pessimistic": econ.pessimistic.net_usd}),
+                InvestigationStep(
+                    "Can a Thailand operator execute it?",
+                    f"Same-venue relist: buy the listing to a US prep/reship address, then "
+                    f"re-list on {vname}. Buy: {'yes' if feas.can_buy else 'no'}; "
+                    f"Sell: {'yes' if feas.can_sell else 'no'}. {feas.buy_notes[0]}",
+                    {"requires_proxy": feas.requires_proxy}),
+                InvestigationStep(
+                    "How long will it last?",
+                    "Until this specific listing sells — re-verification drops it the moment "
+                    "it disappears (edge taken) or is repriced up.",
+                    {"single_listing": True}),
+            ]
+            out.append({
+                "kind": "flip",
+                "opp_type": OppType.PRODUCT_ARBITRAGE,
+                "entity_id": pid,
+                "title": f"{product['name']} — underpriced listing",
+                "subtitle": f"Buy one {vname} listing ${ask:.2f} → resell ${fair:.2f} "
+                            f"({ev.get('edge_pct', 0):.0f}% under fair)",
+                "category": product["category"],
+                "item": product,
+                "buy_venue": venue, "sell_venue": venue,
+                "buy_usd": ask, "sell_usd": fair,
+                "qty": 1, "buy_stock": 1, "velocity": velocity,
+                "sellers": int(ev.get("market_sellers", 1)),
+                "window_days": round(min(10.0, max(2.0, ev.get("market_n", 10) / max(0.5, velocity))), 1),
+                "economics": econ, "feasibility": feas, "why": why,
+                "anomalies": [a], "sources": sorted({venue}),
+                "dislocation": {"item_id": item_id, "url": ev.get("url", ""),
+                                "ask_usd": ask, "fair_usd": fair,
+                                "min_edge": self.cfg.dislocation_min_edge},
+                "route": {"buy_venue": venue, "sell_venue": venue,
+                          "buy_country": economics.VENUES[venue]["country"],
+                          "sell_country": economics.VENUES[venue]["country"],
+                          "kind": "dislocation", "item_id": item_id,
+                          "buy_url": ev.get("url", "")},
+            })
+        return out
 
     # ----------------------------------------------------------------- flips
 

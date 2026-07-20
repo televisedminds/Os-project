@@ -35,6 +35,8 @@ class VerificationCouncil:
     # ------------------------------------------------------------------ flips
 
     def verify_flip(self, ds, cand: dict) -> Verification:
+        if cand.get("dislocation"):
+            return self.verify_dislocation(ds, cand)
         econ, feas = cand["economics"], cand["feasibility"]
         pid, bv, sv = cand["entity_id"], cand["buy_venue"], cand["sell_venue"]
         buy_now = ds.listing(pid, bv)
@@ -86,6 +88,70 @@ class VerificationCouncil:
         checks.append(Check("competition_analyst", "Competitive pressure acceptable", comp_ok, 0.8,
                             f"{sell_now['sellers']} active sellers (8-day mean {fmean(sellers_hist):.0f}).",
                             critical=False))
+
+        v = self._consensus(checks)
+        v.tick = ds.tick_no
+        return v
+
+    # ----------------------------------------------------------- dislocations
+
+    def verify_dislocation(self, ds, cand: dict) -> Verification:
+        """Independently re-check the ONE specific listing: does it still exist,
+        is it still far below fair, is the market still deep enough to resell
+        into, and does the round-trip survive pessimistic fees. The listing
+        disappearing is not a failure of judgement — it means the edge was real
+        and someone took it; we invalidate it either way."""
+
+        from .. import research
+        econ, feas = cand["economics"], cand["feasibility"]
+        pid, venue = cand["entity_id"], cand["buy_venue"]
+        d = cand["dislocation"]
+        checks: list[Check] = []
+
+        sample = ds.listing_sample(pid, venue) if hasattr(ds, "listing_sample") else []
+        stats = research.market_stats(sample)
+        row = next((s for s in sample if s.get("item_id") == d["item_id"]), None)
+
+        present = row is not None
+        checks.append(Check("listing_verifier", "Exact listing still live", present, 0.95,
+                            (f"Listing {d['item_id']} present at ${float(row['price']):.2f}."
+                             if present else
+                             f"Listing {d['item_id']} no longer on the page — sold or pulled."),
+                            critical=True))
+        if not present:
+            return self._consensus(checks)
+
+        price_now = float(row["price"])
+        fair_now = stats["fair_usd"] or d["fair_usd"]
+        edge_now = 1 - price_now / fair_now if fair_now else 0.0
+        edge_ok = edge_now >= 0.6 * d["min_edge"] and price_now <= d["ask_usd"] * 1.05
+        checks.append(Check("price_verifier", "Still dislocated vs fair value", edge_ok, 0.9,
+                            f"Now {edge_now * 100:.0f}% under fair (${price_now:.2f} vs ${fair_now:.2f}); "
+                            f"entry was {(1 - d['ask_usd'] / d['fair_usd']) * 100:.0f}%.", critical=True))
+
+        depth_ok = stats["n"] >= research.MIN_MARKET_DEPTH and stats["sellers"] >= research.MIN_MARKET_SELLERS
+        checks.append(Check("supply_verifier", "Resale market deep enough", depth_ok,
+                            0.85, f"{stats['n']} comparable asks from {stats['sellers']} sellers "
+                            f"to resell into.", critical=True))
+
+        junk = research.looks_junk(row.get("title", ""), row.get("condition", ""))
+        matches = research.title_matches_query(row.get("title", ""), cand["item"]["name"])
+        real_ok = (not junk) and matches
+        checks.append(Check("authenticity_check", "Listing is the real product", real_ok, 0.8,
+                            (f"Title '{row.get('title', '')[:60]}' matches the product and is not junk."
+                             if real_ok else "Title looks like a variant/part/junk on re-read."),
+                            critical=True))
+
+        fee_ok = econ.pessimistic.net_usd > 0
+        checks.append(Check("fee_auditor", "Survives round-trip fees + reship", fee_ok, 0.9,
+                            f"Pessimistic net ${econ.pessimistic.net_usd:.2f} after paying "
+                            f"{economics.VENUES[venue]['name']}'s fee on resale, reship and a mishap "
+                            f"reserve.", critical=True))
+
+        tax_ok = feas.can_buy and feas.can_sell
+        checks.append(Check("tax_auditor", "Thailand execution path", tax_ok, 0.9,
+                            "Executable from TH via a US prep/reship address." if tax_ok
+                            else "Not executable from TH.", critical=True))
 
         v = self._consensus(checks)
         v.tick = ds.tick_no

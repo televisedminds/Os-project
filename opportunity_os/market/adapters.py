@@ -87,7 +87,14 @@ class EbayAdapter(BaseAdapter):
             return self._fail(f"eBay OAuth failed: {e}")
 
     def product_snapshot(self, query: str) -> dict | None:
-        """-> {price, stock, sellers, item_ids, min_price} or None."""
+        """-> {price, stock, sellers, item_ids, min_price, sample} or None.
+
+        One API call, fully strip-mined: besides the aggregate stats, `sample`
+        carries EVERY listing on the page (id, title, exact URL, price, seller,
+        condition) so downstream research can measure the ask distribution,
+        spot individually mispriced listings, read seller concentration and
+        mine related-product phrases — all without further requests.
+        """
 
         if not self.configured():
             return self._fail("EBAY_CLIENT_ID / EBAY_CLIENT_SECRET not set")
@@ -117,8 +124,19 @@ class EbayAdapter(BaseAdapter):
             r.raise_for_status()
             body = r.json()
             items = body.get("itemSummaries", []) or []
-            prices = [float(i["price"]["value"]) for i in items
-                      if i.get("price", {}).get("currency", "USD") == "USD"]
+            sample = []
+            for i in items:
+                if i.get("price", {}).get("currency", "USD") != "USD":
+                    continue
+                sample.append({
+                    "item_id": i.get("itemId", ""),
+                    "title": (i.get("title") or "")[:140],
+                    "price": float(i["price"]["value"]),
+                    "url": i.get("itemWebUrl", ""),
+                    "seller": i.get("seller", {}).get("username", "?"),
+                    "condition": i.get("condition", ""),
+                })
+            prices = [s["price"] for s in sample]
             if not prices:
                 return self._fail(f"no priced results for query '{query}'")
             self.last_error = ""
@@ -126,8 +144,9 @@ class EbayAdapter(BaseAdapter):
                 "price": round(statistics.median(prices), 2),
                 "min_price": round(min(prices), 2),
                 "stock": int(body.get("total", len(items))),
-                "sellers": len({i.get("seller", {}).get("username", "?") for i in items}),
-                "item_ids": [i.get("itemId", "") for i in items],
+                "sellers": len({s["seller"] for s in sample}),
+                "item_ids": [s["item_id"] for s in sample],
+                "sample": sample,
             }
         except Exception as e:  # noqa: BLE001
             return self._fail(f"eBay search failed: {e}")
@@ -355,7 +374,8 @@ class ScrapingDogShopeeAdapter(BaseAdapter):
                              "sold_month": int(it.get("sold", 0)),
                              "stock": int(it.get("stock", 0)),
                              "shop": it.get("shopid"),
-                             "itemid": str(it.get("itemid", ""))})
+                             "itemid": str(it.get("itemid", "")),
+                             "name": (it.get("name") or "")[:140]})
             if not rows:
                 return self._fail(f"no parseable Shopee results for '{query}' "
                                   f"(site layout may have changed — update the parser)")
@@ -370,6 +390,10 @@ class ScrapingDogShopeeAdapter(BaseAdapter):
                 "sellers": len({r_["shop"] for r_ in rows}),
                 "sold_7d_hint": round(sum(r_["sold_month"] for r_ in rows) / 4),
                 "item_ids": [r_["itemid"] for r_ in rows],
+                "sample": [{"item_id": r_["itemid"], "title": r_["name"],
+                            "price": round(r_["price_thb"] / economics.USD_THB, 2),
+                            "url": f"https://shopee.co.th/product/{r_['shop']}/{r_['itemid']}",
+                            "seller": str(r_["shop"]), "condition": ""} for r_ in rows],
             }
         except Exception as e:  # noqa: BLE001
             return self._fail(f"ScrapingDog/Shopee fetch failed: {e}")

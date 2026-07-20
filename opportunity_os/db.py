@@ -52,6 +52,16 @@ CREATE TABLE IF NOT EXISTS discovered (
 CREATE INDEX IF NOT EXISTS idx_discovered_status ON discovered(status, score);
 CREATE TABLE IF NOT EXISTS kits (
     opportunity_id TEXT PRIMARY KEY, ts REAL, model TEXT, payload TEXT);
+CREATE TABLE IF NOT EXISTS listing_samples (
+    entity_id TEXT, venue TEXT, tick INTEGER, ts REAL, payload TEXT,
+    PRIMARY KEY (entity_id, venue));
+CREATE TABLE IF NOT EXISTS research_yield (
+    entity_id TEXT PRIMARY KEY, scans INTEGER DEFAULT 0, anomalies INTEGER DEFAULT 0,
+    candidates INTEGER DEFAULT 0, published INTEGER DEFAULT 0, prior REAL DEFAULT 0,
+    updated_tick INTEGER DEFAULT 0, ts REAL);
+CREATE TABLE IF NOT EXISTS graph_edges (
+    src TEXT, dst TEXT, kind TEXT, weight REAL DEFAULT 1, tick INTEGER, ts REAL,
+    PRIMARY KEY (src, dst, kind));
 """
 
 
@@ -397,6 +407,108 @@ class Store:
                 "SELECT COUNT(*) FROM discovered WHERE status='active'").fetchone()[0]
             total = self._conn.execute("SELECT COUNT(*) FROM discovered").fetchone()[0]
         return {"active": active, "total": total}
+
+    def bump_discovered_score(self, ids: list[str], delta: float) -> int:
+        """Opportunity propagation: raise the priority of graph neighbors when
+        a related entity produces a verified opportunity."""
+
+        if not ids:
+            return 0
+        with self._lock, self._conn:
+            placeholders = ",".join("?" * len(ids))
+            cur = self._conn.execute(
+                f"UPDATE discovered SET score = score + ?, last_ts = ? "
+                f"WHERE id IN ({placeholders}) AND status='active'",
+                [float(delta), time.time(), *ids])
+        return cur.rowcount or 0
+
+    # ---------------------------------------------- listing samples (research)
+
+    def save_listing_sample(self, entity_id: str, venue: str, tick: int,
+                            sample: list[dict]) -> None:
+        """Latest full page of listings per (entity, venue) — one row, replaced
+        each scan, so the research layer always sees fresh microstructure
+        without the history tables growing by 50 listings per snapshot."""
+
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO listing_samples(entity_id,venue,tick,ts,payload) VALUES(?,?,?,?,?) "
+                "ON CONFLICT(entity_id,venue) DO UPDATE SET tick=excluded.tick, "
+                "ts=excluded.ts, payload=excluded.payload",
+                (entity_id, venue, tick, time.time(), json.dumps(sample)))
+
+    def get_listing_sample(self, entity_id: str, venue: str) -> tuple[list[dict], int]:
+        """-> (sample, tick) — empty list if never captured."""
+
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload, tick FROM listing_samples WHERE entity_id=? AND venue=?",
+                (entity_id, venue)).fetchone()
+        if not row:
+            return [], 0
+        return json.loads(row["payload"]), int(row["tick"])
+
+    # ------------------------------------------------- research yield (bandit)
+
+    def yield_bump(self, entity_id: str, tick: int, *, scans: int = 0, anomalies: int = 0,
+                   candidates: int = 0, published: int = 0, prior: float = 0.0) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO research_yield(entity_id,scans,anomalies,candidates,published,"
+                "prior,updated_tick,ts) VALUES(?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(entity_id) DO UPDATE SET "
+                "scans=scans+excluded.scans, anomalies=anomalies+excluded.anomalies, "
+                "candidates=candidates+excluded.candidates, published=published+excluded.published, "
+                "prior=prior+excluded.prior, updated_tick=excluded.updated_tick, ts=excluded.ts",
+                (entity_id, scans, anomalies, candidates, published, prior, tick, time.time()))
+
+    def yield_rows(self, entity_ids: list[str] | None = None) -> list[dict]:
+        with self._lock:
+            if entity_ids:
+                placeholders = ",".join("?" * len(entity_ids))
+                rows = self._conn.execute(
+                    f"SELECT * FROM research_yield WHERE entity_id IN ({placeholders})",
+                    entity_ids).fetchall()
+            else:
+                rows = self._conn.execute("SELECT * FROM research_yield").fetchall()
+        return [dict(r) for r in rows]
+
+    def yield_totals(self) -> dict:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COALESCE(SUM(scans),0) s, COALESCE(SUM(anomalies),0) a, "
+                "COALESCE(SUM(candidates),0) c, COALESCE(SUM(published),0) p "
+                "FROM research_yield").fetchone()
+        return {"scans": row["s"], "anomalies": row["a"],
+                "candidates": row["c"], "published": row["p"]}
+
+    # -------------------------------------------------- knowledge graph edges
+
+    def add_graph_edges(self, src: str, edges: list[dict], tick: int) -> None:
+        """edges: [{dst, kind, weight}] — weight accumulates on re-observation."""
+
+        if not edges:
+            return
+        now = time.time()
+        with self._lock, self._conn:
+            for e in edges:
+                self._conn.execute(
+                    "INSERT INTO graph_edges(src,dst,kind,weight,tick,ts) VALUES(?,?,?,?,?,?) "
+                    "ON CONFLICT(src,dst,kind) DO UPDATE SET "
+                    "weight=weight+excluded.weight, tick=excluded.tick, ts=excluded.ts",
+                    (src, e["dst"], e.get("kind", "related"), float(e.get("weight", 1.0)),
+                     tick, now))
+
+    def graph_neighbors(self, src: str, limit: int = 12) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT dst, kind, weight FROM graph_edges WHERE src=? "
+                "ORDER BY weight DESC LIMIT ?", (src, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+    def graph_edge_count(self) -> int:
+        with self._lock:
+            return self._conn.execute("SELECT COUNT(*) FROM graph_edges").fetchone()[0]
 
     def close(self) -> None:
         with self._lock:

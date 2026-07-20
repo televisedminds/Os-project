@@ -294,18 +294,27 @@ def test_ebay_adapter_oauth_search_and_token_cache():
         return httpx.Response(200, json={
             "total": 143,
             "itemSummaries": [
-                {"itemId": "a", "price": {"value": "120.00", "currency": "USD"},
-                 "seller": {"username": "s1"}},
-                {"itemId": "b", "price": {"value": "129.00", "currency": "USD"},
+                {"itemId": "a", "title": "GBA SP AGS-101", "itemWebUrl": "http://x/a",
+                 "price": {"value": "120.00", "currency": "USD"},
+                 "seller": {"username": "s1"}, "condition": "USED_GOOD"},
+                {"itemId": "b", "title": "GBA SP AGS-101 boxed", "itemWebUrl": "http://x/b",
+                 "price": {"value": "129.00", "currency": "USD"},
                  "seller": {"username": "s2"}},
-                {"itemId": "c", "price": {"value": "300.00", "currency": "USD"},
+                {"itemId": "c", "title": "GBA SP AGS-001", "itemWebUrl": "http://x/c",
+                 "price": {"value": "300.00", "currency": "USD"},
                  "seller": {"username": "s1"}},
             ]})
 
     ad = EbayAdapter(cfg, _client(handler))
     snap = ad.product_snapshot("gba sp")
-    assert snap == {"price": 129.0, "min_price": 120.0, "stock": 143, "sellers": 2,
-                    "item_ids": ["a", "b", "c"]}
+    # Aggregate stats unchanged, plus the full per-listing sample for research.
+    assert snap["price"] == 129.0 and snap["min_price"] == 120.0
+    assert snap["stock"] == 143 and snap["sellers"] == 2
+    assert snap["item_ids"] == ["a", "b", "c"]
+    assert len(snap["sample"]) == 3
+    assert snap["sample"][0] == {"item_id": "a", "title": "GBA SP AGS-101",
+                                 "price": 120.0, "url": "http://x/a", "seller": "s1",
+                                 "condition": "USED_GOOD"}
     ad.product_snapshot("gba sp")
     assert calls["token"] == 1 and calls["search"] == 2       # token reused
 
@@ -410,6 +419,67 @@ def test_full_live_pipeline_publishes_verified_flip_and_niche(live_cfg):
     b = briefing(store, live_cfg)
     assert "opportunities worth your attention" in b["headline"]
     assert briefing_text(b).startswith("◆ OPPORTUNITY OS")
+    store.close()
+
+
+class FakeEbayDislocation:
+    """A deep eBay market for one product with a single, persistent, genuinely
+    underpriced listing — the raw material of a dislocation flip."""
+
+    name = "fake eBay dislocation"
+    last_error = ""
+
+    def configured(self):
+        return True
+
+    def product_snapshot(self, query):
+        sample = [{"item_id": f"fair{i}", "title": "GBA SP AGS-101 boxed tested",
+                   "price": 128.0 + i, "url": f"https://ebay.com/itm/fair{i}",
+                   "seller": f"seller{i}", "condition": "USED_GOOD"} for i in range(10)]
+        sample.append({"item_id": "BARGAIN", "title": "GBA SP AGS-101 works great",
+                       "price": 62.0, "url": "https://ebay.com/itm/BARGAIN",
+                       "seller": "motivated_seller", "condition": "USED_GOOD"})
+        prices = [s["price"] for s in sample]
+        return {"price": 130.0, "min_price": min(prices), "stock": 40, "sellers": 11,
+                "item_ids": [s["item_id"] for s in sample], "sample": sample}
+
+    def check(self):
+        return True, "ok"
+
+
+def test_live_pipeline_publishes_dislocation_with_exact_url(tmp_path):
+    path = write_watchlist(tmp_path, products=[{
+        "id": "gba", "name": "GBA SP AGS-101", "category": "gaming", "weight_kg": 0.4,
+        "queries": {"ebay_us": "gba sp ags-101"}, "manual_listings": {}}])
+    cfg = Config(db_path=tmp_path / "live.db", mode="live", watchlist_path=path,
+                 discovery_enabled=False)
+    store = Store(cfg.db_path)
+    adapters = {"ebay_us": FakeEbayDislocation(), "reddit": FakeReddit((5,) * 10),
+                "news": FakeNews(), "fx": FakeFx()}
+    lm = LiveMarket(cfg, store, adapters=adapters)
+    orch = Orchestrator(cfg, store, world=lm)
+    last = None
+    for _ in range(6):
+        last = orch.run_cycle()
+
+    disl = [o for o in store.active_opportunities()
+            if o.get("route", {}).get("kind") == "dislocation"]
+    assert disl, f"no dislocation published; last report: {last}"
+    o = disl[0]
+    assert o["route"]["item_id"] == "BARGAIN"
+    assert o["route"]["buy_url"] == "https://ebay.com/itm/BARGAIN"   # exact listing
+    assert o["route"]["buy_venue"] == "ebay_us" and o["route"]["sell_venue"] == "ebay_us"
+    assert o["economics"]["pessimistic"]["net_usd"] > 0
+
+    # The action card must hand over the exact buy URL, not a search.
+    from opportunity_os.api import _action_card
+    card = _action_card(o, {}, resolve=lambda v: (None, None))
+    assert card["dislocation"] is True
+    assert card["buy"]["url"] == "https://ebay.com/itm/BARGAIN"
+
+    # The research yield ledger recorded the win against the entity.
+    totals = store.yield_totals()
+    assert totals["scans"] > 0 and totals["published"] > 0
     store.close()
 
 

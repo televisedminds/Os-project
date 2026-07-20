@@ -49,6 +49,7 @@ class LiveMarket:
         self.watch = wl.load(config.watchlist_path)
         self.tick_no = int(store.meta_get("live_tick", 0))
         self.errors: list[str] = []
+        self.scanned_this_tick: set[str] = set()
         self.discovery = discovery
         if self.discovery is None and getattr(config, "discovery_enabled", False):
             from ..discovery import DiscoveryEngine
@@ -83,7 +84,14 @@ class LiveMarket:
         return int(hashlib.sha1(pid.encode()).hexdigest()[:6], 16)
 
     def _build_scan_tiers(self, t: int) -> dict[str, int]:
-        """product_id -> rescan interval (in ticks) for this pass."""
+        """product_id -> rescan interval (in ticks) for this pass.
+
+        Hot entities (watchlist, live opportunities, fresh anomalies) rescan
+        every cycle. The rest — the discovered tail — is ordered by the EV
+        allocator: a UCB bandit over each entity's verified research yield per
+        scan, so the warm slots go to whatever has actually been PRODUCING
+        opportunities, with an exploration bonus that still probes the unknown.
+        Falls back to raw discovery score until yield history accumulates."""
 
         hot = {p.id for p in self.watch.products}
         try:
@@ -93,13 +101,30 @@ class LiveMarket:
         except Exception:  # noqa: BLE001
             pass
         tiers: dict[str, int] = {pid: 1 for pid in hot}
-        ranked = sorted(self.db.list_discovered(active_only=True, limit=500),
-                        key=lambda r: r.get("score", 0), reverse=True)
-        for i, row in enumerate(ranked):
-            if row["id"] in tiers:
+        discovered = self.db.list_discovered(active_only=True, limit=500)
+
+        if self.cfg.ev_allocator_enabled:
+            from .. import research
+            yrows = {r["entity_id"]: r for r in self.db.yield_rows()}
+            total = sum(r.get("scans", 0) for r in yrows.values())
+            rows = []
+            for d in discovered:
+                y = yrows.get(d["id"], {})
+                rows.append({"entity_id": d["id"], "scans": y.get("scans", 0),
+                             "anomalies": y.get("anomalies", 0),
+                             "candidates": y.get("candidates", 0),
+                             "published": y.get("published", 0),
+                             "prior": 0.5 * float(d.get("score", 0))})
+            order = [eid for eid, _ in research.ucb_rank(rows, total)]
+        else:
+            order = [d["id"] for d in sorted(discovered, key=lambda r: r.get("score", 0),
+                                             reverse=True)]
+
+        for i, did in enumerate(order):
+            if did in tiers:
                 continue
-            tiers[row["id"]] = (self.cfg.scan_warm_interval if i < self.cfg.scan_warm_slots
-                                else self.cfg.scan_cold_interval)
+            tiers[did] = (self.cfg.scan_warm_interval if i < self.cfg.scan_warm_slots
+                          else self.cfg.scan_cold_interval)
         return tiers
 
     def _due(self, pid: str, t: int, tiers: dict[str, int]) -> bool:
@@ -115,6 +140,7 @@ class LiveMarket:
         self.tick_no += 1
         t = self.tick_no
         self.errors = []
+        self.scanned_this_tick: set[str] = set()           # entities that cost an API call
 
         # Discovery sweeps are heavier (many outbound calls) so they run every
         # Nth cycle. New candidates join the observed set immediately below.
@@ -165,7 +191,15 @@ class LiveMarket:
                                           extra={"item_ids": raw.get("item_ids", []),
                                                  "min_price": raw.get("min_price"),
                                                  "query": query})
+                sample = raw.get("sample") or []
+                if sample:
+                    # The whole page of asks, kept for the research layer:
+                    # dislocation detection, seller concentration, title mining.
+                    self.db.save_listing_sample(p.id, venue, t, sample)
+                    if self.discovery and self.cfg.graph_fanout_enabled:
+                        self._fanout(p, query, sample, t)
                 fetched.add(venue)
+                self.scanned_this_tick.add(p.id)
             for venue, m in sorted(p.manual_listings.items()):
                 if venue in fetched:
                     continue                       # live scrape beats the manual fallback
@@ -217,6 +251,37 @@ class LiveMarket:
 
     def _err(self, msg: str) -> None:
         self.errors.append(msg)
+
+    def _fanout(self, p: wl.WatchProduct, query: str, sample: list[dict], t: int) -> None:
+        """Graph fan-out: mine related-product phrases from the page's titles
+        and register them as discovery candidates + graph edges. This is how
+        one API response spawns many future investigations for free — the
+        sellers already wrote the product graph into their listing titles."""
+
+        from .. import research
+        from ..discovery import Candidate, slug, clean_query, infer_category
+        related = research.mine_related(sample, query)
+        if not related:
+            return
+        edges, cands = [], []
+        for g in related:
+            phrase = g["phrase"]
+            cid = slug(phrase, "disc_p")
+            edges.append({"dst": cid, "kind": "co_listed", "weight": g["support"]})
+            # A model-number variant is a concrete tradeable product; a plain
+            # phrase is weaker. Score reflects support and specificity.
+            score = round(min(1.6, 0.3 + g["support"] / 8 + (0.4 if g["model_like"] else 0)), 3)
+            cands.append(Candidate(
+                kind="product", id=cid, name=phrase.title(), source="graph_fanout",
+                score=score, category=infer_category(phrase),
+                reason=f"Co-listed with '{p.name}' across {g['support']} titles "
+                       f"({g['sellers']} sellers) — adjacent market found for free.",
+                queries={"ebay_us": clean_query(phrase)},
+                reddit_query=clean_query(phrase)))
+        self.db.add_graph_edges(p.id, edges, t)
+        for c in cands:
+            from dataclasses import asdict
+            self.db.upsert_discovered(asdict(c))
 
     def _fresh_headlines(self, news, entity_id: str, query: str) -> list[dict]:
         got = news.headlines(query, 4)
@@ -286,6 +351,10 @@ class LiveMarket:
     def listing(self, product_id: str, venue: str) -> dict | None:
         rows = self.db.live_snapshot_series(product_id, venue, 1)
         return self._snap_dict(rows[-1]) if rows else None
+
+    def listing_sample(self, product_id: str, venue: str) -> list[dict]:
+        sample, _ = self.db.get_listing_sample(product_id, venue)
+        return sample
 
     def listings(self, venue: str) -> list[tuple[dict, dict]]:
         out = []

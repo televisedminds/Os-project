@@ -23,7 +23,7 @@ from .config import Config
 from .db import Store
 from .market import SimulatedMarket
 from .models import Opportunity, OppStatus, OppType, opportunity_id
-from . import economics, thailand
+from . import economics, research, thailand
 
 
 class Orchestrator:
@@ -104,22 +104,27 @@ class Orchestrator:
         scorer = ScoringEngine(self.learning.weights, self.cfg.capital_cap_usd)
 
         published, rejected, updated_ids = [], [], set()
+        published_entities: list[str] = []
         for cand in candidates:
             opp, reason = self._assess(cand, council, scorer, tick)
             if opp:
                 self.db.upsert_opportunity(opp.to_dict())
                 updated_ids.add(opp.id)
                 stored = self.db.get_opportunity(opp.id) or {}
+                is_new = stored.get("tick_created") == tick
                 published.append({"id": opp.id, "title": opp.title, "score": opp.score.overall,
                                   "confidence": opp.confidence,
                                   "net_usd": opp.economics.total_net_usd,
                                   "window_days": opp.window_days,
                                   # first time this opportunity ever verified (vs a refresh)
-                                  "new": stored.get("tick_created") == tick})
+                                  "new": is_new})
+                if is_new:
+                    published_entities.append(opp.entity_id)
             else:
                 rejected.append({"title": cand["title"], "type": cand["opp_type"].value, "reason": reason})
 
         self._ai_risk_pass(published)
+        self._record_yield(tick, anomalies, candidates, published_entities)
 
         invalidated, reverified = [], 0
         for stored in self.db.active_opportunities():
@@ -150,6 +155,31 @@ class Orchestrator:
         self.db.add_cycle(tick, round((time.time() - t0) * 1000, 1), report)
         self.db.meta_set("tick", tick)
         return report
+
+    def _record_yield(self, tick: int, anomalies: list, candidates: list[dict],
+                      published_entities: list[str]) -> None:
+        """Feed the EV allocator: every scan, anomaly, candidate and publication
+        is credited to its entity, so scan budget flows toward what produces.
+        And propagate — a publication raises the priority of its graph
+        neighbors, so finding one edge pulls the fleet toward adjacent ones."""
+
+        if not hasattr(self.db, "yield_bump"):
+            return
+        try:
+            from collections import Counter
+            for pid in getattr(self.world, "scanned_this_tick", set()) or set():
+                self.db.yield_bump(pid, tick, scans=1)
+            for eid, c in Counter(a.entity_id for a in anomalies).items():
+                self.db.yield_bump(eid, tick, anomalies=c)
+            for eid, c in Counter(c["entity_id"] for c in candidates).items():
+                self.db.yield_bump(eid, tick, candidates=c)
+            for eid in published_entities:
+                self.db.yield_bump(eid, tick, published=1)
+                neighbors = [n["dst"] for n in self.db.graph_neighbors(eid, 8)]
+                if neighbors:
+                    self.db.bump_discovered_score(neighbors, 0.25)
+        except Exception:  # noqa: BLE001 - telemetry must never break a cycle
+            pass
 
     def _ai_risk_pass(self, published: list[dict]) -> None:
         """Advisory AI risk review for FIRST-TIME publications: names the edge
@@ -208,9 +238,14 @@ class Orchestrator:
         automation = build_automation(cand)
         playbook = build_playbook(cand)
         score = scorer.score(cand, automation.coverage_pct)
+        # A dislocation is identified by its specific listing, so two under-
+        # priced listings of the same product get distinct, stable identities.
+        buy_key = cand["buy_venue"]
+        if cand.get("dislocation"):
+            buy_key = f"{cand['buy_venue']}:{cand['dislocation']['item_id']}"
         opp = Opportunity(
             id=opportunity_id(cand["opp_type"].value, cand["entity_id"],
-                              cand["buy_venue"], cand["sell_venue"]),
+                              buy_key, cand["sell_venue"]),
             type=cand["opp_type"], status=OppStatus.ACTIVE,
             category=cand["category"], title=cand["title"], subtitle=cand["subtitle"],
             entity_id=cand["entity_id"], route=cand["route"],
@@ -240,7 +275,10 @@ class Orchestrator:
             return False, "window elapsed — original edge has fully played out", OppStatus.EXPIRED
 
         if stored["type"] == OppType.PRODUCT_ARBITRAGE.value:
-            cand = self._fresh_flip(stored)
+            if stored.get("route", {}).get("kind") == "dislocation":
+                cand = self._fresh_dislocation(stored)
+            else:
+                cand = self._fresh_flip(stored)
         else:
             cand = self._fresh_venture(stored)
         if cand is None:
@@ -289,6 +327,43 @@ class Orchestrator:
             "window_days": round(min(14.0, max(2.0, (sell["stock"] + qty) / max(0.5, velocity))), 1),
             "economics": econ,
             "feasibility": thailand.feasibility(OppType.PRODUCT_ARBITRAGE.value, stored["category"], bv, sv),
+            "route": stored["route"],
+        }
+
+    def _fresh_dislocation(self, stored: dict) -> dict | None:
+        pid = stored["entity_id"]
+        venue = stored["route"]["buy_venue"]
+        item_id = stored["route"].get("item_id", "")
+        if not hasattr(self.world, "listing_sample"):
+            return None
+        sample = self.world.listing_sample(pid, venue)
+        row = next((s for s in sample if s.get("item_id") == item_id), None)
+        if not row:
+            return None                    # the underpriced listing is gone — edge taken
+        stats = research.market_stats(sample)
+        product = self.world.product_public(pid)
+        ask = float(row["price"])
+        fair = stats["fair_usd"] or float(stored["route"].get("fair_usd", ask * 1.4))
+        econ = economics.compute_flip(product, venue, venue, ask, fair, qty=1)
+        agg = self.world.listing(pid, venue) or {}
+        velocity = max(agg.get("sold_7d", 0) / 7.0, 0.2)
+        vname = economics.VENUES[venue]["name"]
+        edge = (1 - ask / fair) * 100 if fair else 0
+        return {
+            "kind": "flip", "opp_type": OppType.PRODUCT_ARBITRAGE, "entity_id": pid,
+            "title": stored["title"],
+            "subtitle": f"Buy one {vname} listing ${ask:.2f} → resell ${fair:.2f} ({edge:.0f}% under fair)",
+            "category": stored["category"], "item": product,
+            "buy_venue": venue, "sell_venue": venue, "buy_usd": ask, "sell_usd": fair,
+            "qty": 1, "buy_stock": 1, "velocity": velocity,
+            "sellers": stats["sellers"],
+            "window_days": round(min(10.0, max(2.0, stats["n"] / max(0.5, velocity))), 1),
+            "economics": econ,
+            "feasibility": thailand.feasibility(OppType.PRODUCT_ARBITRAGE.value,
+                                                stored["category"], venue, venue),
+            "dislocation": {"item_id": item_id, "url": stored["route"].get("buy_url", ""),
+                            "ask_usd": ask, "fair_usd": fair,
+                            "min_edge": self.cfg.dislocation_min_edge},
             "route": stored["route"],
         }
 
@@ -353,6 +428,23 @@ def _key_gaps(store: Store, cfg: Config) -> list[str]:
     return gaps
 
 
+def _operator_capital(store: Store, cfg: Config) -> float:
+    """The operator's deployable capital: their watchlist budget if set,
+    otherwise the configured capital cap."""
+
+    try:
+        from .market import watchlist as wl
+        if cfg.watchlist_path.exists():
+            op = wl.load(cfg.watchlist_path).operator
+            for key in ("capital_usd", "budget_usd"):
+                v = getattr(op, key, None)
+                if v:
+                    return float(v)
+    except Exception:  # noqa: BLE001
+        pass
+    return float(cfg.capital_cap_usd)
+
+
 def briefing(store: Store, cfg: Config, plan_name: str | None = None) -> dict:
     plan = cfg.plan(plan_name)
     actives = store.list_opportunities(status="active", limit=200)
@@ -390,6 +482,12 @@ def briefing(store: Store, cfg: Config, plan_name: str | None = None) -> dict:
                      f"when one finishes, record the outcome so the scoring learns from YOUR results.")
     lines += _key_gaps(store, cfg)
 
+    # Capital allocation: don't just rank opportunities — solve for the best
+    # use of finite capital. Greedy over net-per-dollar-per-day, capped per
+    # category, respecting the operator's actual budget.
+    capital = float(_operator_capital(store, cfg))
+    capital_plan = research.allocate_capital(actives, capital)
+
     return {
         "generated_at": now.isoformat(),
         "timezone": cfg.home_timezone,
@@ -397,6 +495,7 @@ def briefing(store: Store, cfg: Config, plan_name: str | None = None) -> dict:
         "plan": plan["label"],
         "headline": lines[0],
         "notes": lines[1:],
+        "capital_plan": capital_plan,
         "counts": {"active": len(actives), "new_today": len(new_today),
                    "closing_soon": len(closing_soon), "expired_total": len(expired),
                    "reverified_last_cycle": last.get("reverified", 0),
