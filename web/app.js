@@ -73,6 +73,8 @@ async function loadBriefing() {
   const [b, s, h, g, fu] = await Promise.all([
     api(`/api/briefing?plan=${state.plan}`), api("/api/stats"), api("/api/health"),
     api("/api/goal"), api("/api/funnel")]);
+  const ver = $("#brand-version");
+  if (ver && h.version) ver.textContent = "v" + h.version;
   const badge = document.querySelector(".badge-demo");
   if (badge && h.mode === "live") {
     badge.textContent = "LIVE FEED";
