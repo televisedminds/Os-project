@@ -41,6 +41,8 @@ class Orchestrator:
         self.detector = AnomalyDetector(config)
         self.investigator = Investigator(config)
         self.learning = LearningEngine(store)
+        from .ai import AIClassifier
+        self.ai = AIClassifier(config)             # advisory risk desk (needs key)
 
     def _load_operator(self) -> dict:
         """Operator profile from the watchlist (works in both modes)."""
@@ -117,6 +119,8 @@ class Orchestrator:
             else:
                 rejected.append({"title": cand["title"], "type": cand["opp_type"].value, "reason": reason})
 
+        self._ai_risk_pass(published)
+
         invalidated, reverified = [], 0
         for stored in self.db.active_opportunities():
             if stored["id"] in updated_ids:
@@ -146,6 +150,33 @@ class Orchestrator:
         self.db.add_cycle(tick, round((time.time() - t0) * 1000, 1), report)
         self.db.meta_set("tick", tick)
         return report
+
+    def _ai_risk_pass(self, published: list[dict]) -> None:
+        """Advisory AI risk review for FIRST-TIME publications: names the edge
+        (why the mispricing exists) and the concrete risks, appended to the
+        opportunity's investigation timeline. Never blocks, never crashes."""
+
+        new_ids = [p["id"] for p in published if p.get("new")]
+        if not new_ids or not self.ai.configured():
+            return
+        try:
+            opps = [o for oid in new_ids if (o := self.db.get_opportunity(oid))]
+            reviews = self.ai.risk_review(opps)
+            labels = {"proceed": "PROCEED", "proceed_with_caution": "CAUTION",
+                      "high_risk": "HIGH RISK"}
+            for o in opps:
+                r = reviews.get(o["id"])
+                if not r:
+                    continue
+                o["why_chain"].append({
+                    "question": "AI risk review — why does this edge exist, and what could go wrong?",
+                    "finding": f"[{labels.get(r['verdict'], r['verdict'])}] {r['edge']} "
+                               f"Risks: {' · '.join(r['risks'])}",
+                    "data": {"verdict": r["verdict"]},
+                })
+                self.db.upsert_opportunity(o)
+        except Exception:  # noqa: BLE001 - advisory only
+            pass
 
     # ----------------------------------------------------------------- assess
 

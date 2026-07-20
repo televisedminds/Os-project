@@ -97,10 +97,21 @@ class Config:
     discovery_enabled: bool = field(
         default_factory=lambda: os.environ.get("OOS_DISCOVERY", "1") not in ("0", "false", "no"))
     discover_every_n_ticks: int = field(default_factory=lambda: int(os.environ.get("OOS_DISCOVER_EVERY", "6")))
-    # Sized against the free eBay allowance (5,000 calls/day): ~60 discovered
-    # + watchlist ≈ 3.4k calls/day at the 30-min cadence — real headroom kept.
-    discovery_scan_cap: int = field(default_factory=lambda: int(os.environ.get("OOS_DISCOVERY_SCAN_CAP", "100")))
-    discovery_max_active: int = field(default_factory=lambda: int(os.environ.get("OOS_DISCOVERY_MAX", "60")))
+    # Coverage is budgeted, not capped: the tiered scan scheduler (below)
+    # keeps API spend flat while the watched universe grows — hot markets
+    # rescan every cycle, the long tail rotates. 200 watched markets ≈ 2.5k
+    # eBay calls/day at the 30-min cadence (free allowance: 5k).
+    discovery_scan_cap: int = field(default_factory=lambda: int(os.environ.get("OOS_DISCOVERY_SCAN_CAP", "150")))
+    discovery_max_active: int = field(default_factory=lambda: int(os.environ.get("OOS_DISCOVERY_MAX", "200")))
+
+    # Tiered scanning: hot = watchlist, active opportunities, and anything
+    # with a fresh anomaly (rescanned every cycle); warm = the best-scored
+    # discoveries; cold = the long tail, rotated with a per-entity offset so
+    # every cycle carries a similar call load.
+    scan_warm_interval: int = field(default_factory=lambda: int(os.environ.get("OOS_SCAN_WARM_EVERY", "4")))
+    scan_cold_interval: int = field(default_factory=lambda: int(os.environ.get("OOS_SCAN_COLD_EVERY", "12")))
+    scan_warm_slots: int = field(default_factory=lambda: int(os.environ.get("OOS_SCAN_WARM_SLOTS", "60")))
+    scan_hot_anomaly_window: int = field(default_factory=lambda: int(os.environ.get("OOS_SCAN_HOT_WINDOW", "6")))
     discovery_ttl_days: float = field(default_factory=lambda: float(os.environ.get("OOS_DISCOVERY_TTL_DAYS", "10")))
     discovery_trends_geo: str = _env("OOS_DISCOVERY_GEO", "US")
 

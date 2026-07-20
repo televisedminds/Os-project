@@ -192,3 +192,46 @@ def test_engine_without_key_has_no_hook(tmp_path):
     assert engine.classify_hook is None
     ai_row = next(s for s in engine.status() if s["id"] == "ai_brain")
     assert not ai_row["ok"] and "keyword" in ai_row["note"]
+
+
+def test_risk_review_parses_and_degrades():
+    reviews = json.dumps({"reviews": [
+        {"id": "opp_1", "verdict": "proceed_with_caution",
+         "edge": "US restock lag keeps prices high for ~2 weeks.",
+         "risks": ["Counterfeit exposure on ungraded cards", "Fad decay if restock lands early"]},
+    ]})
+    ai = AIClassifier(_cfg(), client=_client(
+        lambda req: httpx.Response(200, json=_message_body(reviews))))
+    out = ai.risk_review([{"id": "opp_1", "title": "X", "type": "product_arbitrage",
+                           "economics": {}, "why_chain": []}])
+    assert out["opp_1"]["verdict"] == "proceed_with_caution"
+    assert AIClassifier(Config(mode="live")).risk_review([{"id": "x"}]) == {}   # no key -> {}
+    dead = AIClassifier(_cfg(), client=_client(lambda req: httpx.Response(500, json={
+        "type": "error", "error": {"type": "api_error", "message": "boom"}})))
+    assert dead.risk_review([{"id": "x", "title": "t", "type": "p",
+                              "economics": {}, "why_chain": []}]) == {}
+
+
+def test_pipeline_appends_ai_risk_step(tmp_path):
+    from opportunity_os.db import Store
+    from opportunity_os.market import SimulatedMarket
+    from opportunity_os.pipeline import Orchestrator
+
+    cfg = _cfg(db_path=tmp_path / "risk.db", mode="demo")
+    orch = Orchestrator(cfg, Store(cfg.db_path),
+                        SimulatedMarket(seed=cfg.world_seed, warmup=cfg.warmup_ticks))
+
+    def handler(req):
+        payload = json.loads(req.content)
+        sent = json.loads(payload["messages"][0]["content"])
+        body = json.dumps({"reviews": [
+            {"id": o["id"], "verdict": "proceed", "edge": "Supply shock lag.",
+             "risks": ["Restock risk"]} for o in sent]})
+        return httpx.Response(200, json=_message_body(body))
+
+    orch.ai._client = _client(handler)
+    orch.run_cycle()
+    opp = orch.db.active_opportunities()[0]
+    last = opp["why_chain"][-1]
+    assert "risk review" in last["question"]
+    assert "PROCEED" in last["finding"] and "Restock risk" in last["finding"]

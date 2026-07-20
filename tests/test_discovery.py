@@ -274,3 +274,26 @@ def test_discovered_entity_flows_through_pipeline(tmp_path):
     # and the cycle report carries the discovery summary
     rep = store.recent_cycles(3)[-1]["report"]
     assert rep["discovered"]["promoted"] == 2
+
+
+def test_plugin_sources_register_via_decorator(tmp_path):
+    from opportunity_os import plugins
+    from opportunity_os.discovery import build_sources
+
+    @plugins.discovery_source
+    class MyPluginSource(disc.DiscoverySource):
+        id, name = "my_plugin", "My Plugin"
+
+        def discover(self):
+            return []
+
+        def check(self):
+            return True, "ok"
+
+    try:
+        srcs = build_sources(Config(mode="live"), store=None,
+                             client=httpx.Client(transport=httpx.MockTransport(
+                                 lambda req: httpx.Response(500))))
+        assert any(s.id == "my_plugin" for s in srcs)
+    finally:
+        plugins.DISCOVERY_SOURCES.remove(MyPluginSource)

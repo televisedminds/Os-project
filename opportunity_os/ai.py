@@ -178,6 +178,49 @@ the product with a Thai buy-side price so it can become a complete flip.
 Return a verdict for every candidate id you were given."""
 
 
+RISK_REVIEW_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reviews": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "verdict": {"type": "string",
+                                "enum": ["proceed", "proceed_with_caution", "high_risk"]},
+                    "edge": {"type": "string",
+                             "description": "one sentence: why this mispricing exists and who "
+                                            "is on the losing side of it"},
+                    "risks": {"type": "array", "items": {"type": "string"},
+                              "description": "2-4 concrete, specific risks for THIS deal"},
+                },
+                "required": ["id", "verdict", "edge", "risks"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["reviews"],
+    "additionalProperties": False,
+}
+
+RISK_SYSTEM = """\
+You are the specialist risk desk (market, competition, legal/IP, logistics,
+Thailand operations) reviewing opportunities that already passed quantitative
+verification, for a solo Thailand-based operator with small capital.
+
+For each opportunity give:
+- edge: WHY does this mispricing exist? (information asymmetry, friction,
+  fad, restock lag…) If you cannot name a plausible edge, that is itself a
+  red flag — someone may simply know something the data doesn't show.
+- risks: 2-4 concrete risks specific to THIS deal — authenticity/counterfeit
+  exposure, IP/licensing problems, platform policy (eBay/Shopee bans),
+  fragility/shipping damage, fad decay speed, competitor response, cash-flow
+  timing, customs surprises. Never generic filler like "market may change".
+- verdict: proceed / proceed_with_caution / high_risk.
+Ground everything in the data given; never invent facts about the product."""
+
+
 class AIClassifier:
     """classify_hook implementation backed by the Claude API."""
 
@@ -267,6 +310,41 @@ class AIClassifier:
     def _fail(self, msg: str, candidates: list) -> list:
         self.last_error = msg[:300]
         return candidates
+
+    # ------------------------------------------------------------ risk review
+
+    def risk_review(self, opps: list[dict]) -> dict[str, dict]:
+        """Specialist risk desk over newly verified opportunities. Returns
+        {opportunity_id: {verdict, edge, risks}}; empty dict on any failure
+        (the review is advisory — it must never block a cycle)."""
+
+        if not self.configured() or not opps:
+            return {}
+        payload = [{
+            "id": o["id"], "title": o["title"], "type": o["type"],
+            "category": o.get("category"), "route": o.get("route"),
+            "margin_pct": o.get("economics", {}).get("base", {}).get("margin_pct"),
+            "net_usd": o.get("economics", {}).get("total_net_usd"),
+            "capital_usd": o.get("economics", {}).get("capital_usd"),
+            "qty": o.get("economics", {}).get("qty"),
+            "window_days": o.get("window_days"),
+            "signals": [w.get("finding") for w in (o.get("why_chain") or [])[:2]],
+        } for o in opps[:10]]
+        try:
+            import anthropic
+            client = self._get_client()
+            response = client.messages.create(
+                model=self.cfg.ai_model, max_tokens=4096, system=RISK_SYSTEM,
+                output_config={"format": {"type": "json_schema", "schema": RISK_REVIEW_SCHEMA}},
+                messages=[{"role": "user",
+                           "content": json.dumps(payload, ensure_ascii=False, default=str)}])
+            if response.stop_reason == "refusal":
+                return {}
+            text = next((b.text for b in response.content if b.type == "text"), "")
+            return {r["id"]: r for r in json.loads(text).get("reviews", [])}
+        except Exception as e:  # noqa: BLE001
+            self.last_error = f"risk review failed: {e}"[:300]
+            return {}
 
     # ------------------------------------------------------------ selling kit
 

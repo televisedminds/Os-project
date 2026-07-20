@@ -159,6 +159,55 @@ def test_serper_feeds_niche_demand_when_reddit_dark(live_cfg):
     assert lm.mentions("th_tax", "serper")[-1] == 10
 
 
+def test_tiered_scheduler_budgets_scans_by_priority(tmp_path):
+    """Watchlist entities rescan every cycle; warm discoveries every 4th;
+    the cold tail every 12th — same API budget, several times the coverage."""
+
+    from opportunity_os.discovery import Candidate
+    from dataclasses import asdict
+    path = write_watchlist(tmp_path, [PRODUCT], [])
+    cfg = Config(db_path=tmp_path / "tier.db", mode="live", watchlist_path=path,
+                 discovery_enabled=False, scan_warm_slots=1,
+                 scan_warm_interval=4, scan_cold_interval=12)
+    store = Store(cfg.db_path)
+    for i, score in enumerate([2.0, 1.0]):
+        store.upsert_discovered(asdict(Candidate(
+            kind="product", id=f"disc_p_t{i}", name=f"T{i}", source="stub",
+            score=score, queries={"ebay_us": f"tier query {i}"})))
+
+    calls: dict[str, int] = {}
+
+    class CountingEbay:
+        name, last_error = "fake eBay", ""
+
+        def configured(self):
+            return True
+
+        def product_snapshot(self, query):
+            calls[query] = calls.get(query, 0) + 1
+            return {"price": 100.0, "min_price": 90.0, "stock": 30, "sellers": 9,
+                    "item_ids": ["a"]}
+
+        def check(self):
+            return True, "ok"
+
+    adapters = stub_adapters()
+    adapters["ebay_us"] = CountingEbay()
+    lm = LiveMarket(cfg, store, adapters=adapters)
+    # discovered entities must be observed even with the engine off in tests
+    lm.discovery = type("D", (), {"extra_products": lambda s, ids: [
+        wl.WatchProduct(id=f"disc_p_t{i}", name=f"T{i}", category="collectibles",
+                        weight_kg=0.5, queries={"ebay_us": f"tier query {i}"})
+        for i in range(2)], "extra_niches": lambda s, ids: [],
+        "run": lambda s: {}, "status": lambda s: [], "ai": None})()
+    for _ in range(24):
+        lm.tick()
+
+    assert calls["gba sp ags-101"] == 24                    # watchlist = hot, every cycle
+    assert calls["tier query 0"] == 6                       # warm: every 4th
+    assert calls["tier query 1"] == 2                       # cold: every 12th
+
+
 def test_briefing_names_the_missing_keys(live_cfg):
     """A blocked pipeline must say WHICH key it is waiting for — silence about
     a missing key reads as 'the app is broken'."""

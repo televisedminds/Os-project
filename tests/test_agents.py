@@ -100,3 +100,64 @@ def test_playbook_and_automation_are_concrete(cfg, world):
     auto = build_automation(card)
     assert 0 < auto.coverage_pct <= 100
     assert auto.human_checkpoints
+
+
+class _FakeDS:
+    """Minimal DataSource with crafted histories for the new detectors."""
+
+    tick_no = 20
+
+    def product_ids(self):
+        return ["p1"]
+
+    def product_public(self, pid):
+        return {"id": "p1", "name": "Widget", "category": "electronics",
+                "weight_kg": 0.5, "venues": ["shopee_th", "ebay_us"]}
+
+    def listing(self, pid, venue):
+        return ({"price": 20.0, "stock": 50, "sellers": 10, "sold_7d": 14}
+                if venue == "shopee_th" else
+                {"price": 60.0, "stock": 30, "sellers": 4, "sold_7d": 35})
+
+    def product_history(self, pid, venue):
+        if venue == "shopee_th":       # flat buy side
+            return [{"price": 20.0, "stock": 50, "sellers": 10, "sold_7d": 14}] * 10
+        # sell side: sellers collapsing 10 -> 4, velocity 1/day -> 5/day,
+        # spread vs the flat buy side widening as the price climbs
+        out = []
+        for i in range(10):
+            out.append({"price": 30.0 + i * 3.5, "stock": 30,
+                        "sellers": 10 if i < 8 else 4,
+                        "sold_7d": 7 if i < 8 else 35})
+        return out
+
+    def mentions(self, eid, src):
+        return []
+
+    def social_sources(self):
+        return ["reddit"]
+
+    def niches(self):
+        return [{"id": "n1", "name": "Turnaround niche", "kind": "digital", "geo": "global",
+                 "price_point_usd": 9.0,
+                 "metrics": {"volume": 1300, "growth_pct": 5, "solution_count": 2,
+                             "demand_posts": 50, "providers": 2}}]
+
+    def niche_history(self, nid):
+        return ([{"volume": 1000.0, "growth_pct": 0, "solution_count": 2,
+                  "demand_posts": 50, "providers": 2}] * 8
+                + [{"volume": 1250.0, "growth_pct": 8, "solution_count": 2,
+                    "demand_posts": 55, "providers": 2},
+                   {"volume": 1300.0, "growth_pct": 9, "solution_count": 2,
+                    "demand_posts": 60, "providers": 2},
+                   {"volume": 1350.0, "growth_pct": 10, "solution_count": 2,
+                    "demand_posts": 60, "providers": 2}])
+
+
+def test_new_detectors_fire_on_crafted_histories():
+    from opportunity_os.config import Config
+    kinds = {a.kind for a in AnomalyDetector(Config()).detect(_FakeDS())}
+    assert AnomalyKind.SELLER_EXODUS in kinds
+    assert AnomalyKind.DEMAND_ACCELERATION in kinds
+    assert AnomalyKind.MARGIN_EXPANSION in kinds
+    assert AnomalyKind.TREND_REVERSAL in kinds

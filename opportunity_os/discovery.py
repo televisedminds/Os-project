@@ -656,9 +656,17 @@ def build_sources(cfg, store, client: httpx.Client | None = None) -> list[Discov
         ebay_ad = EbayAdapter(cfg, client)
     except Exception:  # pragma: no cover
         pass
-    return [
+    sources: list[DiscoverySource] = [
         GoogleTrendsDiscovery(cfg, client),
         HackerNewsDiscovery(cfg, client),
         RedditDiscovery(cfg, client, reddit_adapter=reddit_ad),
         EbayBrowseDiscovery(cfg, client, ebay_adapter=ebay_ad),
     ]
+    from .plugins import DISCOVERY_SOURCES, load_plugins
+    load_plugins()
+    for cls in DISCOVERY_SOURCES:                # drop-in scanners, zero core edits
+        try:
+            sources.append(cls(cfg, client))
+        except Exception:  # noqa: BLE001 - a broken plugin never blocks the fleet
+            pass
+    return sources

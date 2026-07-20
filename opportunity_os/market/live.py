@@ -22,6 +22,7 @@ Every adapter failure degrades that source for the cycle instead of crashing;
 
 from __future__ import annotations
 
+import hashlib
 import time
 from statistics import fmean
 
@@ -71,6 +72,40 @@ class LiveMarket:
     def _product(self, pid: str) -> wl.WatchProduct | None:
         return next((p for p in self._all_products() if p.id == pid), None)
 
+    # ---- tiered scan scheduler ----------------------------------------------
+    # Coverage scales by rescanning what MOVES, not everything: hot entities
+    # (your watchlist, live opportunities, fresh anomalies) every cycle; the
+    # best discoveries every warm interval; the long tail on slow rotation,
+    # offset per entity so the per-cycle call load stays flat.
+
+    @staticmethod
+    def _offset(pid: str) -> int:
+        return int(hashlib.sha1(pid.encode()).hexdigest()[:6], 16)
+
+    def _build_scan_tiers(self, t: int) -> dict[str, int]:
+        """product_id -> rescan interval (in ticks) for this pass."""
+
+        hot = {p.id for p in self.watch.products}
+        try:
+            hot |= {o["entity_id"] for o in self.db.active_opportunities()}
+            hot |= {a["entity_id"] for a in self.db.recent_anomalies(100)
+                    if a["tick"] >= t - self.cfg.scan_hot_anomaly_window}
+        except Exception:  # noqa: BLE001
+            pass
+        tiers: dict[str, int] = {pid: 1 for pid in hot}
+        ranked = sorted(self.db.list_discovered(active_only=True, limit=500),
+                        key=lambda r: r.get("score", 0), reverse=True)
+        for i, row in enumerate(ranked):
+            if row["id"] in tiers:
+                continue
+            tiers[row["id"]] = (self.cfg.scan_warm_interval if i < self.cfg.scan_warm_slots
+                                else self.cfg.scan_cold_interval)
+        return tiers
+
+    def _due(self, pid: str, t: int, tiers: dict[str, int]) -> bool:
+        interval = tiers.get(pid, self.cfg.scan_cold_interval)
+        return interval <= 1 or (t + self._offset(pid)) % interval == 0
+
     # ------------------------------------------------------------------ tick
 
     def tick(self) -> None:
@@ -102,9 +137,13 @@ class LiveMarket:
         news = self.adapters.get("news")
         headlines: list[dict] = []
 
+        tiers = self._build_scan_tiers(t)
         for p in self._all_products():
+            due = self._due(p.id, t, tiers)
             fetched: set[str] = set()
             for venue, query in sorted(p.queries.items()):
+                if not due:
+                    continue                       # not this entity's turn — budget goes to movers
                 ad = self.adapters.get(venue)
                 if not ad or not hasattr(ad, "product_snapshot"):
                     self._err(f"{p.id}/{venue}: no adapter for this venue yet")
@@ -137,13 +176,13 @@ class LiveMarket:
                                            "sellers": int(m.get("sellers", 1)),
                                            "sold_7d": int(m.get("sold_7d", 0))},
                                           extra={"manual": True, "note": m.get("note", "")})
-            if reddit and p.reddit_query:
+            if due and reddit and p.reddit_query:
                 n = reddit.mentions_24h(p.reddit_query)
                 if n is not None:
                     self.db.add_live_mention(p.id, "reddit", t, n)
                 else:
                     self._err(f"{p.id}/reddit: {reddit.last_error}")
-            if news and p.news_query:
+            if due and news and p.news_query:
                 headlines += self._fresh_headlines(news, p.id, p.news_query)
 
         serper = self.adapters.get("serper")

@@ -385,7 +385,7 @@ class ScrapingDogShopeeAdapter(BaseAdapter):
 def build_adapters(cfg, client: httpx.Client | None = None) -> dict[str, BaseAdapter]:
     """The default live adapter set, keyed by venue/source id."""
 
-    return {
+    out: dict[str, BaseAdapter] = {
         "ebay_us": EbayAdapter(cfg, client),
         "shopee_th": ScrapingDogShopeeAdapter(cfg, client),
         "reddit": RedditAdapter(cfg, client),
@@ -393,3 +393,11 @@ def build_adapters(cfg, client: httpx.Client | None = None) -> dict[str, BaseAda
         "news": NewsAdapter(cfg, client),
         "fx": FxAdapter(cfg, client),
     }
+    from ..plugins import VENUE_ADAPTERS, load_plugins
+    load_plugins()
+    for venue_id, cls in VENUE_ADAPTERS.items():  # drop-in venues, zero core edits
+        try:
+            out[venue_id] = cls(cfg, client)
+        except Exception:  # noqa: BLE001
+            pass
+    return out

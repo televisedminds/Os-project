@@ -239,7 +239,9 @@ opportunity_os/
   market/world.py    deterministic causal market simulator (demo mode)
   market/live.py     live data source (watchlist + discovery, real adapters)
   discovery.py       discovery engine — auto-finds new products/niches to watch
-  ai.py              AI brain — Claude judges discovery candidates (optional)
+  plugins/           drop-in scanner plugins (one file = one new source)
+  ai.py              AI brain — discovery judgment, risk desk, selling kits
+  (docs/ARCHITECTURE.md — the audit, scaling design and source roadmap)
   agents/scanners.py 13 scanner agents (venues, social, trends, news)
   agents/anomaly.py  z-scores, stock crashes, spreads, gaps, imbalances
   agents/investigator.py   the why-chain + candidate builder
