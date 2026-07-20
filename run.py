@@ -65,16 +65,23 @@ def cmd_cycle(args) -> None:
             print(f"   - rejected: {rj['title']} — {rj['reason'][:110]}")
         for iv in r["invalidated"]:
             print(f"   x invalidated: {iv['title']} — {iv['reason'][:110]}")
+        d = r.get("discovered") or {}
+        if d.get("promoted"):
+            print(f"   ~ discovery: +{d['promoted']} new candidate(s) promoted "
+                  f"({d.get('found', 0)} found this sweep across {len(d.get('sources', {}))} sources)")
         if cfg.mode == "live" and getattr(orch.world, "errors", None):
             for e in orch.world.errors:
                 print(f"   ! source degraded: {e}")
 
 
 def cmd_brief(args) -> None:
+    from opportunity_os import settings as app_settings
     from opportunity_os.notify import briefing_text, send_telegram
     from opportunity_os.pipeline import briefing
     cfg = _cfg(args)
-    b = briefing(_store(cfg), cfg, args.plan)
+    store = _store(cfg)
+    app_settings.load_into(cfg, store)             # keys saved in the dashboard
+    b = briefing(store, cfg, args.plan)
     text = briefing_text(b, max_items=10)
     print("\n" + text + "\n")
     if args.push:
@@ -118,12 +125,24 @@ def cmd_live_check(args) -> None:
         print(f"  watchlist  ✗ {e}")
         raise SystemExit(1)
 
-    lm = LiveMarket(cfg, _store(cfg))
+    from opportunity_os import settings as app_settings
+    lc_store = _store(cfg)
+    applied = app_settings.load_into(cfg, lc_store)    # keys saved in the dashboard
+    if applied:
+        print(f"  keys       ✓ {len(applied)} key(s) loaded from the dashboard settings")
+    lm = LiveMarket(cfg, lc_store)
     all_ok = True
     for st in lm.healthcheck():
         mark = "✓" if st["ok"] else "✗"
         all_ok &= st["ok"] or st["id"] in ("reddit", "shopee_th")   # optional sources
         print(f"  {st['id']:<8} {mark} {st['name']}: {st['note']}")
+
+    if lm.discovery is not None:
+        print("\n  discovery engine (auto-finds new opportunities across the internet):")
+        for st in lm.discovery.healthcheck():
+            print(f"  {st['id']:<18} {'✓' if st['ok'] else '−'} {st['name']}: {st['note']}")
+    else:
+        print("\n  discovery − disabled (set OOS_DISCOVERY=1 to auto-find beyond your watchlist)")
 
     from opportunity_os.notify import send_telegram
     if cfg.telegram_bot_token:

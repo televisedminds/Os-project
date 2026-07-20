@@ -39,6 +39,10 @@ class AnomalyKind(str, Enum):
     SEARCH_GAP = "search_gap"
     SERVICE_IMBALANCE = "service_imbalance"
     B2B_SURGE = "b2b_surge"
+    SELLER_EXODUS = "seller_exodus"              # competitors leaving a market
+    DEMAND_ACCELERATION = "demand_acceleration"  # sell-through speeding up
+    MARGIN_EXPANSION = "margin_expansion"        # cross-venue spread widening
+    TREND_REVERSAL = "trend_reversal"            # a declining niche turning up
 
 
 @dataclass

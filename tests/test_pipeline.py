@@ -23,6 +23,16 @@ def test_cycle_publishes_verified_opportunities(orch):
     assert card["feasibility"]["requires_proxy"] is True
 
 
+def test_published_entries_flag_new_vs_refreshed(orch):
+    r1, r2 = orch.run_cycle(), orch.run_cycle()
+    assert r1["published"] and all(p["new"] for p in r1["published"])
+    refreshed = [p for p in r2["published"] if not p["new"]]
+    assert refreshed, "second cycle should refresh existing opportunities, not re-flag them as new"
+    from opportunity_os.notify import alert_text
+    text = alert_text([p for p in r1["published"]][:2])
+    assert "new opportunit" in text and r1["published"][0]["title"] in text
+
+
 def test_rejections_carry_reasons(orch):
     r = orch.run_cycle()
     assert r["rejected"], "expected some candidates to fail the gates"
@@ -49,6 +59,22 @@ def test_reverification_invalidates_when_market_turns(orch):
     stored = orch.db.get_opportunity(invalidated["id"])
     assert stored["status"] == "invalidated"
     assert stored["invalidation_reason"]
+
+
+def test_window_elapsed_expires_instead_of_invalidating(orch):
+    # An opportunity aged far past its window must retire as EXPIRED (natural
+    # end of life), not INVALIDATED (market turned) — the UI filters differ.
+    from opportunity_os.agents import ScoringEngine, VerificationCouncil
+    from opportunity_os.models import OppStatus
+
+    orch.run_cycle()
+    opp = orch.db.active_opportunities()[0]
+    opp["tick_created"] -= int(opp["window_days"] * 2 + 10)
+    council = VerificationCouncil(orch.cfg, orch.learning.verifier_reliability)
+    scorer = ScoringEngine(orch.learning.weights, orch.cfg.capital_cap_usd)
+    ok, reason, status = orch._reverify(opp, council, scorer, orch.world.tick_no)
+    assert not ok and "window elapsed" in reason
+    assert status is OppStatus.EXPIRED
 
 
 def test_learning_updates_from_outcomes(orch):

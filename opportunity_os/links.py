@@ -24,6 +24,29 @@ SEARCH_URLS: dict[str, str] = {
     "mercari_jp": "https://buyee.jp/mercari/search?keyword={q}",
 }
 
+# Templates for linking a *specific* listing when we know its id (exact product,
+# not a search). eBay Browse returns ids like "v1|123456789012|0"; the numeric
+# middle segment is the legacy item id that ebay.com/itm/{id} resolves.
+ITEM_URLS: dict[str, str] = {
+    "ebay_us": "https://www.ebay.com/itm/{id}",
+    "aliexpress": "https://www.aliexpress.com/item/{id}.html",
+    "etsy": "https://www.etsy.com/listing/{id}",
+}
+
+
+def item_url(venue: str, item_id: str | None) -> str | None:
+    """Direct link to one listing, or None if we can't build one for this venue."""
+
+    tpl = ITEM_URLS.get(venue)
+    if not tpl or not item_id:
+        return None
+    iid = str(item_id)
+    if venue == "ebay_us" and "|" in iid:
+        parts = iid.split("|")
+        iid = parts[1] if len(parts) > 1 and parts[1] else iid
+    return tpl.format(id=iid)
+
+
 SELLER_SIGNUP_URLS: dict[str, str] = {
     "ebay_us": "https://www.ebay.com/sl/sell",
     "amazon_us": "https://sell.amazon.com/global-selling",

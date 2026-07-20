@@ -159,12 +159,23 @@ class ProgressIn(BaseModel):
     done: bool = True
 
 
-def _action_card(o: dict, operator: dict | None = None) -> dict | None:
+def _action_card(o: dict, operator: dict | None = None, resolve=None) -> dict | None:
     """A do-this-deal summary: where to buy, where to sell, at which prices,
-    with clickable links — everything needed to act, in one block."""
+    with clickable links — everything needed to act, in one block.
+
+    `resolve(venue) -> (exact_url, search_url)` maps a venue to the most
+    specific link we can offer (a manual watchlist URL or a live listing id,
+    falling back to the venue's search). Defaults to search-only."""
 
     operator = operator or {}
     registered = set(operator.get("registered_venues", []))
+
+    def _links(venue: str) -> tuple[str | None, str | None]:
+        if resolve:
+            return resolve(venue)
+        s = links.search_url(venue, o["title"])
+        return s, s
+
     try:
         e = o["economics"]
         fx = e.get("fx", {}).get("USD_THB", 36.4)
@@ -177,17 +188,21 @@ def _action_card(o: dict, operator: dict | None = None) -> dict | None:
             buy_usd = e["base"]["lines"][0]["amount_usd"]
             listing = pb.get("listing") or {}
             sell_usd = float(listing.get("price_usd") or e["base"]["revenue_usd"])
+            buy_url, buy_search = _links(bv)
+            sell_url, sell_search = _links(sv)
             return {
                 "type": "flip",
                 "buy": {"venue": economics.VENUES[bv]["name"],
                         "price_usd": round(buy_usd, 2), "price_thb": thb(buy_usd),
                         "max_price_usd": round(buy_usd * 1.08, 2),
                         "qty": e["qty"],
-                        "url": links.search_url(bv, o["title"]),
+                        "url": buy_url, "search_url": buy_search,
+                        "exact": bool(buy_url and buy_url != buy_search),
                         "how": thailand.VENUE_ACCESS.get(bv, {}).get("buy_note", "")},
                 "sell": {"venue": economics.VENUES[sv]["name"],
                          "price_usd": round(sell_usd, 2), "price_thb": thb(sell_usd),
-                         "url": links.search_url(sv, o["title"]),
+                         "url": sell_url, "search_url": sell_search,
+                         "exact": bool(sell_url and sell_url != sell_search),
                          "signup_url": links.signup_url(sv),
                          "registered": sv in registered,
                          "how": ("✓ You're already registered here."
@@ -260,10 +275,27 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
     orch = Orchestrator(cfg, store)
     auto = cfg.auto_cycle_seconds if auto_cycle_seconds is None else auto_cycle_seconds
 
+    def _push_new_verified(report: dict) -> None:
+        """Instant Telegram alert for opportunities that verified for the
+        FIRST time this cycle (refreshes stay quiet). Live mode only; any
+        failure is swallowed — alerting must never break the research loop."""
+
+        if cfg.mode != "live" or not (cfg.telegram_bot_token and cfg.telegram_chat_id):
+            return
+        new = [p for p in report.get("published", []) if p.get("new")]
+        if not new:
+            return
+        try:
+            from .notify import alert_text, send_telegram
+            send_telegram(cfg, alert_text(new))
+        except Exception:  # noqa: BLE001
+            pass
+
     async def _auto_loop():
         while True:
             await asyncio.sleep(auto)
-            await asyncio.to_thread(orch.run_cycle)
+            report = await asyncio.to_thread(orch.run_cycle)
+            _push_new_verified(report)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -285,9 +317,12 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         store.close()
 
     app = FastAPI(title="Opportunity OS", version=__version__, lifespan=lifespan)
+    from .ai import AIClassifier
+    brain = AIClassifier(cfg)                    # selling kits + on-demand judgment
     app.state.orchestrator = orch
     app.state.store = store
     app.state.config = cfg
+    app.state.brain = brain
 
     def plan_of(name: str | None) -> dict:
         return cfg.plan(name)
@@ -306,6 +341,13 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
             out["adapters"] = orch.world.status() if hasattr(orch.world, "status") else []
             out["source_errors_last_cycle"] = getattr(orch.world, "errors", [])
             out["fx"] = store.meta_get("live_fx")
+            disc = getattr(orch.world, "discovery", None)
+            if disc is not None:
+                out["discovery"] = {"enabled": True, "sources": disc.status(),
+                                    "counts": store.discovered_counts(),
+                                    "last_run": getattr(orch.world, "discovery_report", {})}
+            else:
+                out["discovery"] = {"enabled": False}
         return out
 
     @app.get("/api/briefing")
@@ -349,13 +391,39 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         except Exception:
             o["history"] = None
         p = plan_of(plan)
+        o["kit"] = store.get_kit(opp_id)
+        o["kit_available"] = brain.configured()
         if not p["playbooks"]:
             o = dict(o)
             o["playbook"] = None
             o["automation"] = None
+            o["kit"] = None
             o["locked"] = {"playbooks": "Execution playbooks and automation plans are a Pro feature.",
                            "upgrade": PLANS["pro"]["blurb"]}
-        o["action"] = _action_card(o, orch.operator)
+        def resolve_link(venue: str) -> tuple[str | None, str | None]:
+            """Most specific link we can build for this venue, plus the search fallback."""
+
+            search = links.search_url(venue, o["title"])
+            # 1) a URL the operator pinned on a manual watchlist quote (their exact source)
+            watch = getattr(orch.world, "watch", None)
+            if watch is not None:
+                wp = watch.product(o["entity_id"])
+                if wp:
+                    manual = wp.manual_listings.get(venue) or {}
+                    if manual.get("url"):
+                        return manual["url"], search
+            # 2) an exact live listing id captured by the adapter (e.g. eBay Browse)
+            try:
+                rows = store.live_snapshot_series(o["entity_id"], venue, 1)
+                ids = rows[-1]["extra"].get("item_ids") if rows else None
+                exact = links.item_url(venue, ids[0]) if ids else None
+                if exact:
+                    return exact, search
+            except Exception:
+                pass
+            return search, search
+
+        o["action"] = _action_card(o, orch.operator, resolve_link)
         o["discovery"] = _discovery(o, orch.world)
         done = store.get_progress(opp_id)
         n_steps = len((o.get("playbook") or {}).get("steps", []) or [])
@@ -377,6 +445,26 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         o["status"] = OppStatus.EXECUTED.value
         store.upsert_opportunity(o)
         return {"recorded": True, "learning": update}
+
+    @app.post("/api/opportunities/{opp_id}/kit")
+    def make_kit(opp_id: str, force: bool = False, plan: str | None = None):
+        """Generate (or return the cached) AI selling kit: ready-to-paste
+        bilingual listings for flips, a launch kit for ventures."""
+
+        o = store.get_opportunity(opp_id)
+        if not o:
+            raise HTTPException(404, "unknown opportunity id")
+        if not plan_of(plan)["playbooks"]:
+            raise HTTPException(403, "Selling kits are a Pro feature — switch the plan picker.")
+        if not force:
+            cached = store.get_kit(opp_id)
+            if cached:
+                return {**cached, "cached": True}
+        kit, err = brain.generate_kit(o)
+        if kit is None:
+            raise HTTPException(503, err)
+        store.save_kit(opp_id, cfg.ai_model, kit)
+        return {"kit": kit, "model": cfg.ai_model, "generated_at": time.time(), "cached": False}
 
     @app.post("/api/opportunities/{opp_id}/progress")
     def set_progress(opp_id: str, body: ProgressIn):
@@ -474,16 +562,20 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
 
         cutoff = time.time() - hours * 3600
         agg = {"observations": 0, "anomalies": 0, "investigations": 0,
-               "verified": 0, "rejected": 0, "killed": 0, "cycles": 0}
+               "verified": 0, "rechecked": 0, "rejected": 0, "killed": 0, "cycles": 0}
         for c in store.recent_cycles(50):
             if c["ts"] < cutoff:
                 continue
             rep = c["report"]
+            pubs = rep.get("published", [])
             agg["cycles"] += 1
             agg["observations"] += rep.get("signals", 0)
             agg["anomalies"] += rep.get("anomalies", 0)
             agg["investigations"] += rep.get("candidates", 0)
-            agg["verified"] += len(rep.get("published", []))
+            # honesty: "verified" = verified for the FIRST time; a deal that
+            # re-verifies every cycle is a re-check, not 48 new wins a day.
+            agg["verified"] += len([p for p in pubs if p.get("new")])
+            agg["rechecked"] += rep.get("reverified", 0) + len([p for p in pubs if not p.get("new")])
             agg["rejected"] += len(rep.get("rejected", []))
             agg["killed"] += len(rep.get("invalidated", []))
         agg["recommended_now"] = store.stats()["opportunities_active"]
@@ -538,6 +630,19 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
     def anomalies(limit: int = Query(default=30, le=200)):
         return {"anomalies": store.recent_anomalies(limit)}
 
+    @app.get("/api/discovery")
+    def discovery(limit: int = Query(default=60, le=200), active_only: bool = True):
+        """What the discovery engine has auto-found and is watching."""
+
+        disc = getattr(orch.world, "discovery", None)
+        return {
+            "enabled": disc is not None,
+            "counts": store.discovered_counts(),
+            "sources": disc.status() if disc is not None else [],
+            "last_run": getattr(orch.world, "discovery_report", {}),
+            "found": store.list_discovered(active_only=active_only, limit=limit),
+        }
+
     @app.get("/api/learning")
     def learning():
         st = orch.learning.state
@@ -564,6 +669,15 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         rois = [(o["economics"]["total_net_usd"] / o["economics"]["capital_usd"] * 100)
                 for o in actives if o["economics"]["capital_usd"] > 0]
         s["best_roi_pct"] = round(max(rois), 0) if rois else 0
+        try:
+            n_products = len(orch.world.product_ids())
+            n_niches = len(orch.world.niches())
+            s["watching"] = {"products": n_products, "niches": n_niches,
+                             "total": n_products + n_niches,
+                             "discovered": store.discovered_counts()["active"]
+                             if cfg.mode == "live" else 0}
+        except Exception:  # noqa: BLE001
+            s["watching"] = None
         return s
 
     @app.get("/api/thailand")
@@ -575,6 +689,48 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
     @app.get("/api/plans")
     def plans():
         return {"default": cfg.default_plan, "plans": PLANS}
+
+    # ------------------------------------------------------------- settings
+
+    from . import settings as app_settings
+
+    def _reset_key_clients():
+        """Drop cached tokens/clients so freshly saved keys take effect now."""
+
+        brain._client = None
+        try:
+            ai = getattr(getattr(orch.world, "discovery", None), "ai", None)
+            if ai is not None:
+                ai._client = None
+            adapters = getattr(orch.world, "adapters", {}) or {}
+            for ad in adapters.values():
+                if hasattr(ad, "_token"):
+                    ad._token = ""
+        except Exception:  # noqa: BLE001
+            pass
+
+    @app.get("/api/settings")
+    def get_settings():
+        """Masked status of every managed key — raw values are never returned."""
+
+        return {"keys": app_settings.status(cfg, store),
+                "note": "Keys save to the local database and apply immediately — no restart. "
+                        "Values are never sent back to the browser."}
+
+    @app.post("/api/settings")
+    def save_settings(updates: dict[str, str]):
+        try:
+            changed = app_settings.save(cfg, store, updates)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        _reset_key_clients()
+        return {"changed": changed, "keys": app_settings.status(cfg, store)}
+
+    @app.post("/api/settings/test")
+    def test_settings():
+        """Live-check every configured service (network); unset ones are skipped."""
+
+        return {"results": app_settings.run_checks(cfg)}
 
     # ------------------------------------------------------------- dashboard
 

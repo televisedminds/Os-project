@@ -8,6 +8,9 @@
     "Tip for Thai platforms: Shopee/Lazada/TikTok show a public 'sold' number on every",
     "listing (ขายแล้ว …) — copy it into sold_7d (divide monthly figures by 4).",
     "'bootstrap_sold_7d' seeds sell-through until enough real snapshots accumulate.",
+    "Add a 'url' to any manual_listing to link the EXACT product you sourced — the",
+    "action card then opens that listing instead of a search. eBay-queried venues get",
+    "the exact live listing automatically from the Browse API.",
     "niches: reddit_query drives the live demand signal; you maintain the supply-side",
     "counts (solution_count/providers) as you scout competitors."
   ],
@@ -77,8 +80,10 @@
       "queries": { "shopee_th": "กันสั่นมือถือ gimbal พับได้" },
       "manual_listings": {
         "aliexpress":     { "price_usd": 23.0, "stock": 500, "sellers": 40, "sold_7d": 30,
-                            "note": "AliExpress: use the 'sold' counter; order 1 sample first" },
+                            "url": "https://www.aliexpress.com/item/1005006357290000.html",
+                            "note": "AliExpress: paste the exact item URL you'd buy; order 1 sample first" },
         "shopee_th":      { "price_thb": 1790, "stock": 60, "sellers": 18, "sold_7d": 20,
+                            "url": "https://shopee.co.th/product/123456789/987654321",
                             "note": "Shopee TH sell side — from the ขายแล้ว counter" },
         "tiktok_shop_th": { "price_thb": 1990, "stock": 45, "sellers": 12, "sold_7d": 16,
                             "note": "TikTok Shop TH — video demos sell these" }

@@ -65,7 +65,7 @@ class Config:
     watchlist_path: Path = field(default_factory=lambda: Path(os.environ.get("OOS_WATCHLIST",
                                                                              PROJECT_ROOT / "watchlist.json")))
     http_timeout: float = field(default_factory=lambda: float(os.environ.get("OOS_HTTP_TIMEOUT", "20")))
-    user_agent: str = _env("OOS_USER_AGENT", "OpportunityOS/0.2 (market research bot)")
+    user_agent: str = _env("OOS_USER_AGENT", "OpportunityOS/0.3 (market research bot)")
 
     # Live connector credentials (all optional — missing ones degrade gracefully).
     ebay_client_id: str = _env("EBAY_CLIENT_ID", "")
@@ -76,8 +76,44 @@ class Config:
     scrapingdog_api_key: str = _env("SCRAPINGDOG_API_KEY", "")
     # Scraped venues cost paid credits — fetch them only every Nth cycle.
     scrape_every_n_ticks: int = field(default_factory=lambda: int(os.environ.get("OOS_SCRAPE_EVERY", "4")))
+    # Serper (google.serper.dev): web-search demand signal for niches — the
+    # stand-in while Reddit approval is pending. Throttled hard: 2,500 free
+    # credits should last weeks, not days.
+    serper_api_key: str = _env("SERPER_API_KEY", "")
+    serper_every_n_ticks: int = field(default_factory=lambda: int(os.environ.get("OOS_SERPER_EVERY", "12")))
     telegram_bot_token: str = _env("TELEGRAM_BOT_TOKEN", "")
     telegram_chat_id: str = _env("TELEGRAM_CHAT_ID", "")
+
+    # AI brain (optional): Claude judges discovery candidates — filters noise,
+    # fixes categories, rescores — instead of keyword matching. Needs a key
+    # from console.anthropic.com. OOS_AI_MODEL=claude-haiku-4-5 runs cheaper.
+    anthropic_api_key: str = _env("ANTHROPIC_API_KEY", "")
+    ai_model: str = _env("OOS_AI_MODEL", "claude-opus-4-8")
+    ai_enabled: bool = field(
+        default_factory=lambda: os.environ.get("OOS_AI", "1") not in ("0", "false", "no"))
+
+    # Discovery engine (live mode): auto-find new products/niches to watch so
+    # the fleet isn't limited to the hand-typed watchlist. Off in demo.
+    discovery_enabled: bool = field(
+        default_factory=lambda: os.environ.get("OOS_DISCOVERY", "1") not in ("0", "false", "no"))
+    discover_every_n_ticks: int = field(default_factory=lambda: int(os.environ.get("OOS_DISCOVER_EVERY", "6")))
+    # Coverage is budgeted, not capped: the tiered scan scheduler (below)
+    # keeps API spend flat while the watched universe grows — hot markets
+    # rescan every cycle, the long tail rotates. 200 watched markets ≈ 2.5k
+    # eBay calls/day at the 30-min cadence (free allowance: 5k).
+    discovery_scan_cap: int = field(default_factory=lambda: int(os.environ.get("OOS_DISCOVERY_SCAN_CAP", "150")))
+    discovery_max_active: int = field(default_factory=lambda: int(os.environ.get("OOS_DISCOVERY_MAX", "200")))
+
+    # Tiered scanning: hot = watchlist, active opportunities, and anything
+    # with a fresh anomaly (rescanned every cycle); warm = the best-scored
+    # discoveries; cold = the long tail, rotated with a per-entity offset so
+    # every cycle carries a similar call load.
+    scan_warm_interval: int = field(default_factory=lambda: int(os.environ.get("OOS_SCAN_WARM_EVERY", "4")))
+    scan_cold_interval: int = field(default_factory=lambda: int(os.environ.get("OOS_SCAN_COLD_EVERY", "12")))
+    scan_warm_slots: int = field(default_factory=lambda: int(os.environ.get("OOS_SCAN_WARM_SLOTS", "60")))
+    scan_hot_anomaly_window: int = field(default_factory=lambda: int(os.environ.get("OOS_SCAN_HOT_WINDOW", "6")))
+    discovery_ttl_days: float = field(default_factory=lambda: float(os.environ.get("OOS_DISCOVERY_TTL_DAYS", "10")))
+    discovery_trends_geo: str = _env("OOS_DISCOVERY_GEO", "US")
 
     # Home base: the operator is in Thailand. Every opportunity is assessed
     # for buy/sell feasibility from Thailand.

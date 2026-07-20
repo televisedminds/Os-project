@@ -30,6 +30,8 @@ class Orchestrator:
     def __init__(self, config: Config, store: Store, world=None):
         self.cfg = config
         self.db = store
+        from . import settings as app_settings
+        app_settings.load_into(config, store)      # keys saved in the dashboard
         self._guard_mode()
         self.world = world if world is not None else self._build_world()
         self.operator = self._load_operator()
@@ -39,6 +41,8 @@ class Orchestrator:
         self.detector = AnomalyDetector(config)
         self.investigator = Investigator(config)
         self.learning = LearningEngine(store)
+        from .ai import AIClassifier
+        self.ai = AIClassifier(config)             # advisory risk desk (needs key)
 
     def _load_operator(self) -> dict:
         """Operator profile from the watchlist (works in both modes)."""
@@ -105,20 +109,27 @@ class Orchestrator:
             if opp:
                 self.db.upsert_opportunity(opp.to_dict())
                 updated_ids.add(opp.id)
+                stored = self.db.get_opportunity(opp.id) or {}
                 published.append({"id": opp.id, "title": opp.title, "score": opp.score.overall,
-                                  "confidence": opp.confidence})
+                                  "confidence": opp.confidence,
+                                  "net_usd": opp.economics.total_net_usd,
+                                  "window_days": opp.window_days,
+                                  # first time this opportunity ever verified (vs a refresh)
+                                  "new": stored.get("tick_created") == tick})
             else:
                 rejected.append({"title": cand["title"], "type": cand["opp_type"].value, "reason": reason})
+
+        self._ai_risk_pass(published)
 
         invalidated, reverified = [], 0
         for stored in self.db.active_opportunities():
             if stored["id"] in updated_ids:
                 continue
-            ok, reason = self._reverify(stored, council, scorer, tick)
+            ok, reason, fail_status = self._reverify(stored, council, scorer, tick)
             if ok:
                 reverified += 1
             else:
-                stored["status"] = OppStatus.INVALIDATED.value
+                stored["status"] = fail_status.value
                 stored["invalidation_reason"] = reason
                 stored["tick_updated"] = tick
                 self.db.upsert_opportunity(stored)
@@ -134,10 +145,38 @@ class Orchestrator:
             "rejected": rejected,
             "reverified": reverified,
             "invalidated": invalidated,
+            "discovered": getattr(self.world, "discovery_report", {}) or {},
         }
         self.db.add_cycle(tick, round((time.time() - t0) * 1000, 1), report)
         self.db.meta_set("tick", tick)
         return report
+
+    def _ai_risk_pass(self, published: list[dict]) -> None:
+        """Advisory AI risk review for FIRST-TIME publications: names the edge
+        (why the mispricing exists) and the concrete risks, appended to the
+        opportunity's investigation timeline. Never blocks, never crashes."""
+
+        new_ids = [p["id"] for p in published if p.get("new")]
+        if not new_ids or not self.ai.configured():
+            return
+        try:
+            opps = [o for oid in new_ids if (o := self.db.get_opportunity(oid))]
+            reviews = self.ai.risk_review(opps)
+            labels = {"proceed": "PROCEED", "proceed_with_caution": "CAUTION",
+                      "high_risk": "HIGH RISK"}
+            for o in opps:
+                r = reviews.get(o["id"])
+                if not r:
+                    continue
+                o["why_chain"].append({
+                    "question": "AI risk review — why does this edge exist, and what could go wrong?",
+                    "finding": f"[{labels.get(r['verdict'], r['verdict'])}] {r['edge']} "
+                               f"Risks: {' · '.join(r['risks'])}",
+                    "data": {"verdict": r["verdict"]},
+                })
+                self.db.upsert_opportunity(o)
+        except Exception:  # noqa: BLE001 - advisory only
+            pass
 
     # ----------------------------------------------------------------- assess
 
@@ -186,7 +225,11 @@ class Orchestrator:
     # --------------------------------------------------------------- reverify
 
     def _reverify(self, stored: dict, council: VerificationCouncil, scorer: ScoringEngine,
-                  tick: int) -> tuple[bool, str]:
+                  tick: int) -> tuple[bool, str, OppStatus | None]:
+        """Returns (still_valid, reason, failure_status). A window that ran out
+        is EXPIRED (natural end of life); a failed re-check is INVALIDATED
+        (the market turned) — the dashboard filters distinguish the two."""
+
         # In demo mode one tick == one simulated day; in live mode ticks are
         # observation passes, so expiry runs on wall-clock age instead.
         if self.cfg.mode == "live":
@@ -194,21 +237,21 @@ class Orchestrator:
         else:
             age_days = tick - stored["tick_created"]
         if age_days > stored["window_days"] * 2 + 4:
-            return False, "window elapsed — original edge has fully played out"
+            return False, "window elapsed — original edge has fully played out", OppStatus.EXPIRED
 
         if stored["type"] == OppType.PRODUCT_ARBITRAGE.value:
             cand = self._fresh_flip(stored)
         else:
             cand = self._fresh_venture(stored)
         if cand is None:
-            return False, "source inventory exhausted or listing no longer observable"
+            return False, "source inventory exhausted or listing no longer observable", OppStatus.INVALIDATED
 
         verification = (council.verify_flip(self.world, cand) if cand["kind"] == "flip"
                         else council.verify_venture(self.world, cand))
         confidence = round(min(0.99, verification.consensus * self.learning.calibration), 3)
         reason = self._gates(verification, confidence, cand["economics"])
         if reason:
-            return False, reason
+            return False, reason, OppStatus.INVALIDATED
 
         automation = build_automation(cand)
         score = scorer.score(cand, automation.coverage_pct)
@@ -221,7 +264,7 @@ class Orchestrator:
         stored["tick_updated"] = tick
         stored["status"] = OppStatus.ACTIVE.value
         self.db.upsert_opportunity(stored)
-        return True, ""
+        return True, "", None
 
     def _fresh_flip(self, stored: dict) -> dict | None:
         pid = stored["entity_id"]
@@ -275,6 +318,41 @@ class Orchestrator:
 
 # --------------------------------------------------------------------- brief
 
+def _key_gaps(store: Store, cfg: Config) -> list[str]:
+    """Loud, specific notes about work that is BLOCKED on a missing key.
+    A silent bottleneck reads as 'the app is broken'; a named one is a
+    15-minute fix. Live mode only — demo needs no keys."""
+
+    if cfg.mode != "live":
+        return []
+    watch = None
+    try:
+        from .market import watchlist as wl
+        if cfg.watchlist_path.exists():
+            watch = wl.load(cfg.watchlist_path)
+    except Exception:  # noqa: BLE001
+        pass
+    discovered = store.list_discovered(active_only=True, limit=100)
+    gaps: list[str] = []
+
+    if not cfg.ebay_client_id:
+        dark = sum(1 for p in (watch.products if watch else []) if "ebay_us" in p.queries)
+        dark += sum(1 for d in discovered if d.get("kind") == "product")
+        if dark:
+            gaps.append(f"🔑 {dark} product{'s are' if dark != 1 else ' is'} WAITING on your free "
+                        f"eBay key — the fleet cannot see US prices without it, so these can never "
+                        f"verify. Fix: ⚙ Keys tab (≈15 min, developer.ebay.com).")
+    if not cfg.reddit_client_id and not cfg.serper_api_key:
+        idle = len(watch.niches) if watch else 0
+        idle += sum(1 for d in discovered if d.get("kind") == "niche")
+        if idle:
+            gaps.append(f"🔑 {idle} niche{'s are' if idle != 1 else ' is'} WAITING on a demand "
+                        f"signal — add your free Reddit key (reddit.com/prefs/apps), or the "
+                        f"instant stand-in: a free Serper key (serper.dev, 2,500 searches, "
+                        f"2-minute signup). Either one in ⚙ Keys.")
+    return gaps
+
+
 def briefing(store: Store, cfg: Config, plan_name: str | None = None) -> dict:
     plan = cfg.plan(plan_name)
     actives = store.list_opportunities(status="active", limit=200)
@@ -301,6 +379,16 @@ def briefing(store: Store, cfg: Config, plan_name: str | None = None) -> dict:
     if last.get("rejected"):
         lines.append(f"{len(last['rejected'])} candidates were investigated and rejected before "
                      f"reaching you — they didn't survive fee/tax/verification checks.")
+    disc = last.get("discovered") or {}
+    if disc.get("promoted"):
+        lines.append(f"Discovery added {disc['promoted']} new candidate"
+                     f"{'s' if disc['promoted'] != 1 else ''} to the watch fleet"
+                     + (f" ({disc['ai']})." if disc.get("ai") else "."))
+    in_progress = [o for o in actives if store.get_progress(o["id"])]
+    if in_progress:
+        lines.append(f"{len(in_progress)} deal{'s' if len(in_progress) != 1 else ''} in progress — "
+                     f"when one finishes, record the outcome so the scoring learns from YOUR results.")
+    lines += _key_gaps(store, cfg)
 
     return {
         "generated_at": now.isoformat(),

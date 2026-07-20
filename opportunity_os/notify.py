@@ -26,6 +26,22 @@ def briefing_text(b: dict, max_items: int = 6) -> str:
     return "\n".join(lines)
 
 
+def alert_text(new_pubs: list[dict]) -> str:
+    """Instant push for freshly verified opportunities — windows are short,
+    so waiting for the 07:00 briefing can cost most of the edge."""
+
+    n = len(new_pubs)
+    lines = [f"🔔 {n} new opportunit{'y' if n == 1 else 'ies'} just verified:"]
+    for p in new_pubs[:5]:
+        est = f" · est ${p['net_usd']:,.0f}" if p.get("net_usd") else ""
+        win = f" · ~{p['window_days']:.0f}d window" if p.get("window_days") else ""
+        lines.append(f"• {p['title']}  (score {p['score']:.0f}{est}{win})")
+    if n > 5:
+        lines.append(f"…and {n - 5} more.")
+    lines.append("Open the dashboard for the playbook and selling kit.")
+    return "\n".join(lines)
+
+
 def send_telegram(cfg: Config, text: str) -> tuple[bool, str]:
     if not (cfg.telegram_bot_token and cfg.telegram_chat_id):
         return False, "TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set"

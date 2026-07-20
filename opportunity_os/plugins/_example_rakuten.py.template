@@ -1,0 +1,36 @@
+# Template: a complete discovery-source plugin. To activate: rename to
+# rakuten.py (drop the leading underscore and .template), fill in the fetch,
+# restart. Nothing else to edit anywhere.
+#
+# Rakuten Ichiba has a real, free API (Rakuten Webservice) — a good first
+# custom plugin for JP-sourced flips.
+
+from opportunity_os.discovery import Candidate, DiscoverySource, clean_query, slug
+from opportunity_os.plugins import discovery_source
+
+
+@discovery_source
+class RakutenDiscovery(DiscoverySource):
+    id = "rakuten"
+    name = "Rakuten Ichiba (JP)"
+
+    def discover(self) -> list[Candidate]:
+        try:
+            # r = self.client.get("https://app.rakuten.co.jp/services/api/...",
+            #                     params={"applicationId": self.cfg.rakuten_app_id, ...})
+            # r.raise_for_status()
+            items = []                          # parse r.json() here
+        except Exception as e:  # noqa: BLE001
+            return self._fail(f"rakuten fetch failed: {e}")
+        out = []
+        for it in items:
+            title = it.get("itemName", "")
+            out.append(Candidate(
+                kind="product", id=slug(title, "disc_p"), name=title[:70],
+                source=self.id, score=0.5,
+                queries={"ebay_us": clean_query(title)},
+                reason="Trending on Rakuten Ichiba."))
+        return out
+
+    def check(self) -> tuple[bool, str]:
+        return True, "template plugin — fill in discover() and rename the file"

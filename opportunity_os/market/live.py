@@ -22,6 +22,7 @@ Every adapter failure degrades that source for the cycle instead of crashing;
 
 from __future__ import annotations
 
+import hashlib
 import time
 from statistics import fmean
 
@@ -40,13 +41,70 @@ class LiveMarket:
     """Real-data implementation of the `DataSource` protocol."""
 
     def __init__(self, config: Config, store: Store,
-                 adapters: dict[str, BaseAdapter] | None = None):
+                 adapters: dict[str, BaseAdapter] | None = None,
+                 discovery=None):
         self.cfg = config
         self.db = store
         self.adapters = adapters if adapters is not None else build_adapters(config)
         self.watch = wl.load(config.watchlist_path)
         self.tick_no = int(store.meta_get("live_tick", 0))
         self.errors: list[str] = []
+        self.discovery = discovery
+        if self.discovery is None and getattr(config, "discovery_enabled", False):
+            from ..discovery import DiscoveryEngine
+            self.discovery = DiscoveryEngine(config, store)
+        self.discovery_report: dict = {}
+
+    # ---- observed set = curated watchlist + live discovery winners ----------
+
+    def _all_products(self) -> list[wl.WatchProduct]:
+        base = list(self.watch.products)
+        if self.discovery:
+            base += self.discovery.extra_products({p.id for p in base})
+        return base
+
+    def _all_niches(self) -> list[wl.WatchNiche]:
+        base = list(self.watch.niches)
+        if self.discovery:
+            base += self.discovery.extra_niches({n.id for n in base})
+        return base
+
+    def _product(self, pid: str) -> wl.WatchProduct | None:
+        return next((p for p in self._all_products() if p.id == pid), None)
+
+    # ---- tiered scan scheduler ----------------------------------------------
+    # Coverage scales by rescanning what MOVES, not everything: hot entities
+    # (your watchlist, live opportunities, fresh anomalies) every cycle; the
+    # best discoveries every warm interval; the long tail on slow rotation,
+    # offset per entity so the per-cycle call load stays flat.
+
+    @staticmethod
+    def _offset(pid: str) -> int:
+        return int(hashlib.sha1(pid.encode()).hexdigest()[:6], 16)
+
+    def _build_scan_tiers(self, t: int) -> dict[str, int]:
+        """product_id -> rescan interval (in ticks) for this pass."""
+
+        hot = {p.id for p in self.watch.products}
+        try:
+            hot |= {o["entity_id"] for o in self.db.active_opportunities()}
+            hot |= {a["entity_id"] for a in self.db.recent_anomalies(100)
+                    if a["tick"] >= t - self.cfg.scan_hot_anomaly_window}
+        except Exception:  # noqa: BLE001
+            pass
+        tiers: dict[str, int] = {pid: 1 for pid in hot}
+        ranked = sorted(self.db.list_discovered(active_only=True, limit=500),
+                        key=lambda r: r.get("score", 0), reverse=True)
+        for i, row in enumerate(ranked):
+            if row["id"] in tiers:
+                continue
+            tiers[row["id"]] = (self.cfg.scan_warm_interval if i < self.cfg.scan_warm_slots
+                                else self.cfg.scan_cold_interval)
+        return tiers
+
+    def _due(self, pid: str, t: int, tiers: dict[str, int]) -> bool:
+        interval = tiers.get(pid, self.cfg.scan_cold_interval)
+        return interval <= 1 or (t + self._offset(pid)) % interval == 0
 
     # ------------------------------------------------------------------ tick
 
@@ -57,6 +115,13 @@ class LiveMarket:
         self.tick_no += 1
         t = self.tick_no
         self.errors = []
+
+        # Discovery sweeps are heavier (many outbound calls) so they run every
+        # Nth cycle. New candidates join the observed set immediately below.
+        if self.discovery and (t % max(1, self.cfg.discover_every_n_ticks) == 1):
+            self.discovery_report = self.discovery.run()
+            for e in self.discovery_report.get("errors", []):
+                self._err(f"discovery/{e}")
 
         fx = self.adapters.get("fx")
         if fx and hasattr(fx, "rates"):
@@ -72,9 +137,13 @@ class LiveMarket:
         news = self.adapters.get("news")
         headlines: list[dict] = []
 
-        for p in self.watch.products:
+        tiers = self._build_scan_tiers(t)
+        for p in self._all_products():
+            due = self._due(p.id, t, tiers)
             fetched: set[str] = set()
             for venue, query in sorted(p.queries.items()):
+                if not due:
+                    continue                       # not this entity's turn — budget goes to movers
                 ad = self.adapters.get(venue)
                 if not ad or not hasattr(ad, "product_snapshot"):
                     self._err(f"{p.id}/{venue}: no adapter for this venue yet")
@@ -107,16 +176,21 @@ class LiveMarket:
                                            "sellers": int(m.get("sellers", 1)),
                                            "sold_7d": int(m.get("sold_7d", 0))},
                                           extra={"manual": True, "note": m.get("note", "")})
-            if reddit and p.reddit_query:
+            if due and reddit and p.reddit_query:
                 n = reddit.mentions_24h(p.reddit_query)
                 if n is not None:
                     self.db.add_live_mention(p.id, "reddit", t, n)
                 else:
                     self._err(f"{p.id}/reddit: {reddit.last_error}")
-            if news and p.news_query:
+            if due and news and p.news_query:
                 headlines += self._fresh_headlines(news, p.id, p.news_query)
 
-        for n in self.watch.niches:
+        serper = self.adapters.get("serper")
+        serper_every = max(1, getattr(serper, "every_n_ticks", 12)) if serper else 12
+        serper_pass = (serper is not None and getattr(serper, "configured", lambda: False)()
+                       and (serper_every == 1 or t % serper_every == 1))
+        serper_budget = 12                         # hard cap per pass — protects free credits
+        for n in self._all_niches():
             count = None
             if reddit and n.reddit_query:
                 count = reddit.mentions_24h(n.reddit_query)
@@ -124,6 +198,15 @@ class LiveMarket:
                     self.db.add_live_mention(n.id, "reddit", t, count)
                 else:
                     self._err(f"{n.id}/reddit: {reddit.last_error}")
+            # Reddit down or key pending? Serper measures the same demand via
+            # Google (site:reddit.com, past week) — coarser, but real.
+            if count is None and serper_pass and serper_budget > 0 and n.reddit_query:
+                wk = serper.reddit_posts_7d(n.reddit_query)
+                serper_budget -= 1
+                if wk is not None:
+                    self.db.add_live_mention(n.id, "serper", t, wk)
+                else:
+                    self._err(f"{n.id}/serper: {serper.last_error}")
             self.db.add_live_niche(n.id, t, self._niche_metrics(n, count))
             if news and n.news_query:
                 headlines += self._fresh_headlines(news, n.id, n.news_query)
@@ -160,6 +243,8 @@ class LiveMarket:
 
     def _niche_metrics(self, n: wl.WatchNiche, mentions_today: int | None) -> dict:
         series = self.db.live_mention_series(n.id, "reddit", 30)
+        if len(series) < 6:                        # Reddit dark → Serper series drives momentum
+            series = self.db.live_mention_series(n.id, "serper", 30)
         momentum, growth = 1.0, 0.0
         if len(series) >= 6:
             recent = fmean(series[-3:])
@@ -178,16 +263,16 @@ class LiveMarket:
     # ------------------------------------------------------- DataSource impl
 
     def product_ids(self) -> list[str]:
-        return sorted(p.id for p in self.watch.products)
+        return sorted(p.id for p in self._all_products())
 
     def venue_ids(self) -> list[str]:
         vids: set[str] = set()
-        for p in self.watch.products:
+        for p in self._all_products():
             vids.update(p.venues())
         return sorted(vids)
 
     def product_public(self, product_id: str) -> dict:
-        p = self.watch.product(product_id)
+        p = self._product(product_id)
         if not p:
             return {"id": product_id, "name": product_id, "category": "collectibles",
                     "weight_kg": 0.5, "venues": []}
@@ -218,11 +303,15 @@ class LiveMarket:
         return self.db.live_mention_series(entity_id, source, HISTORY)
 
     def social_sources(self) -> list[str]:
-        return ["reddit"]
+        out = ["reddit"]
+        serper = self.adapters.get("serper")
+        if serper is not None and getattr(serper, "configured", lambda: False)():
+            out.append("serper")               # council counts it as social corroboration
+        return out
 
     def niches(self) -> list[dict]:
         out = []
-        for n in sorted(self.watch.niches, key=lambda x: x.id):
+        for n in sorted(self._all_niches(), key=lambda x: x.id):
             hist = self.db.live_niche_series(n.id, 1)
             metrics = hist[-1] if hist else self._niche_metrics(n, None)
             out.append({"id": n.id, "name": n.name, "kind": n.kind, "geo": n.geo,

@@ -40,7 +40,7 @@ CLI, for the cron-driven lifestyle:
 python run.py cycle -n 3       # run three research cycles right now
 python run.py brief            # print the morning briefing to the terminal
 python run.py reset            # wipe state and re-seed the demo world
-python -m pytest tests/ -q     # 35 tests
+python -m pytest tests/ -q     # 84 tests
 ```
 
 No database server, no build step, no API keys needed to try it: state is SQLite
@@ -55,14 +55,54 @@ your own buy-side quotes for venues that have no API (Buyee/Shopee/Facebook).
 Observations persist in SQLite so baselines accumulate across days; sources that
 fail degrade gracefully and are reported on `/api/health` and the LIVE badge.
 
+**Discovery engine.** Live mode is no longer limited to the watchlist you type:
+a discovery layer sweeps the open internet each cycle and auto-promotes the best
+candidates into the observed set, where the normal verify → price → gate → learn
+pipeline takes over. Sources: Google Trends (keyless), **Ask HN unmet-need posts**
+(keyless — people literally asking for tools that don't exist), Reddit commerce
+*and* business-gap subreddits (r/Flipping, r/SomebodyMakeThis, r/sweatystartup,
+r/SaaS, …), and an eBay category sweep. It hunts business opportunities — digital
+tools, info products, local services, B2B gaps — not just product flips. The
+eBay + Reddit keys make it most productive; without them the two keyless sources
+still run. See `GET /api/discovery`, the **Discovery** tab in the dashboard, and
+the discovery panel in `run.py live-check`.
+
+**AI brain (optional, recommended).** Set `ANTHROPIC_API_KEY` and Claude judges
+every discovery sweep in one batched call: drops non-commercial noise, corrects
+categories, rescores by real money-making potential for a Thailand-based
+operator, and attaches a one-line reason to each verdict. Without the key,
+keyword heuristics do the filtering. The AI never invents opportunities and
+nothing it keeps skips verification — it only decides what deserves the fleet's
+attention. (`opportunity_os/ai.py`; a few cents/day at the default cadence.)
+
+**AI selling kits — from verified deal to posted listing.** The same key powers
+the execution layer: one tap in an opportunity's detail page writes everything
+needed to act on it — for flips, a ready-to-paste eBay listing (English), a
+Shopee/TikTok Shop listing (Thai), the polite Thai message to send the source
+seller, hashtags and a pricing rule; for ventures, the smallest sellable first
+version, bilingual landing copy, three launch posts and a day-by-day first
+week. Kits are cached in SQLite (regenerate on demand) and grounded only in the
+opportunity's verified data. Because listing well is the actual gap between
+"the robot found a deal" and "money arrived".
+
+**Instant deal alerts.** In live mode with Telegram configured, the server
+pushes a message the moment a *new* opportunity verifies (refreshes stay
+quiet) — windows run in days, so waiting for the 07:00 briefing can cost most
+of the edge.
+
 ```bash
 cp watchlist.example.json watchlist.json   # what to track
-cp .env.example .env                       # eBay/Reddit/Telegram keys
-set -a; source .env; set +a
-python run.py live-check                   # validates keys, adapters, watchlist, FX
 python run.py serve --live                 # observe every 30 min, publish what verifies
-python run.py brief --live --push          # briefing to your Telegram
 ```
+
+**API keys without the terminal:** open the dashboard → **⚙ Keys** tab →
+paste → Save. Keys apply immediately (no restart), are stored only in the
+local SQLite database, and are never sent back to the browser (masked
+previews only). The **🧪 Test connections** button live-checks every key.
+`docs/KEYS.md` is the step-by-step guide for getting each key — including
+the eBay compliance trap and Reddit's 2025 approval rules. Prefer files?
+`cp .env.example .env` still works exactly as before; app-saved keys win
+over `.env`. Validate everything with `python run.py live-check`.
 
 **Full operator guide + DigitalOcean deployment (systemd units, daily Telegram
 briefing at 07:00 Bangkok): [docs/LIVE.md](docs/LIVE.md).** Demo and live keep
@@ -180,9 +220,11 @@ re-verify → learn) is already built and tested. The demo UI carries a permanen
 | `GET /api/briefing?plan=` | the morning briefing |
 | `GET /api/opportunities?status=&category=&min_score=&q=&plan=` | the feed |
 | `GET /api/opportunities/{id}?plan=` | full evidence package |
+| `POST /api/opportunities/{id}/kit` | AI selling kit: ready-to-paste TH/EN listings (flips) or launch kit (ventures) |
 | `POST /api/opportunities/{id}/outcome` | close the learning loop |
 | `POST /api/cycle` | run a research cycle now |
 | `GET /api/agents` · `GET /api/signals` · `GET /api/anomalies` | the fleet's raw work |
+| `GET /api/discovery` | what the discovery engine auto-found and is watching (live) |
 | `GET /api/learning` | weights, calibration, reliabilities, adjustments |
 | `GET /api/stats` · `GET /api/thailand` · `GET /api/plans` · `GET /api/health` | meta |
 
@@ -195,7 +237,11 @@ opportunity_os/
   economics.py       venues, fee tables, shipping rate card, routes, cost waterfalls
   thailand.py        platform access from TH, import VAT/duty, customs, payment rails
   market/world.py    deterministic causal market simulator (demo mode)
-  market/live.py     production extension point (real adapters go here)
+  market/live.py     live data source (watchlist + discovery, real adapters)
+  discovery.py       discovery engine — auto-finds new products/niches to watch
+  plugins/           drop-in scanner plugins (one file = one new source)
+  ai.py              AI brain — discovery judgment, risk desk, selling kits
+  (docs/ARCHITECTURE.md — the audit, scaling design and source roadmap)
   agents/scanners.py 13 scanner agents (venues, social, trends, news)
   agents/anomaly.py  z-scores, stock crashes, spreads, gaps, imbalances
   agents/investigator.py   the why-chain + candidate builder
@@ -213,13 +259,19 @@ run.py               serve · cycle · brief · reset
 
 ## Roadmap to production
 
-1. **Live connectors** (`market/live.py`) — start with eBay Browse + sold-history,
-   Mercari/Yahoo JP via proxy-service accounts, pytrends; one venue pair is enough to
-   go live for product arbitrage.
-2. **Real fee/tariff sync** — marketplace fee schedules, Thai Customs tariff codes,
-   carrier rate APIs, live FX.
-3. **Execution integrations** — proxy-service auto-bid, listing APIs, label printing
+1. ~~**Live connectors**~~ — ✅ shipped: eBay Browse (sell side), Reddit, Google
+   News RSS, live FX, ScrapingDog/Shopee TH, manual buy-side quotes
+   (`market/adapters.py`, `market/live.py`).
+2. ~~**Discovery + AI judgment**~~ — ✅ shipped: Google Trends / Reddit / eBay
+   discovery sweeps with an optional Claude classification layer
+   (`discovery.py`, `ai.py`).
+3. ~~**Notifications**~~ — ✅ shipped: Telegram briefing push + daily systemd timer.
+4. **Buy-side automation** — Buyee/ZenMarket quote fetching for JP auctions and an
+   AliExpress price watcher, so cross-border flips price themselves end to end
+   (today the buy side is your manual quotes).
+5. **Real fee/tariff sync** — marketplace fee schedules, Thai Customs tariff codes,
+   carrier rate APIs (fees/duties are curated reference values today).
+6. **Execution integrations** — proxy-service auto-bid, listing APIs, label printing
    (the automation plans already mark what to wire).
-4. **Accounts & billing** on top of the plan gates that already exist.
-5. **Notifications** — LINE/Telegram push of the morning briefing (the briefing
-   endpoint is already the payload).
+7. **Accounts & billing** on top of the plan gates that already exist (today the
+   plan switch is client-side — fine for a personal tool, not for paying users).

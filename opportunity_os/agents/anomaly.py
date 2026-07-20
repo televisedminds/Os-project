@@ -93,6 +93,51 @@ class AnomalyDetector:
                                        "buy_stock": buyable[bv]["stock"],
                                        "sell_venue": sv, "sell_price": sellable[sv]["price"],
                                        "sell_velocity_7d": sellable[sv]["sold_7d"]}]))
+                    # Margin expansion: the gap itself is WIDENING — catching
+                    # a spread while it grows beats finding it at the top.
+                    bh, sh = ds.product_history(pid, bv), ds.product_history(pid, sv)
+                    n = min(len(bh), len(sh))
+                    if n >= 6:
+                        spreads = [(sh[i]["price"] - bh[i]["price"]) / max(0.01, bh[i]["price"])
+                                   for i in range(-n, 0)]
+                        then = fmean(spreads[:-3]) if len(spreads) > 3 else spreads[0]
+                        if spreads[-1] >= then + 0.10 and spreads[-1] >= self.cfg.cross_venue_spread_pct:
+                            anomalies.append(Anomaly(
+                                kind=AnomalyKind.MARGIN_EXPANSION, entity_id=pid, tick=t,
+                                severity=min(1.0, spreads[-1] - then),
+                                summary=f"{product['name']}: spread widening — "
+                                        f"{then * 100:.0f}% → {spreads[-1] * 100:.0f}% "
+                                        f"({economics.VENUES[bv]['name']} → {economics.VENUES[sv]['name']}).",
+                                evidence=[{"buy_venue": bv, "sell_venue": sv,
+                                           "spread_then": round(then, 3),
+                                           "spread_now": round(spreads[-1], 3)}]))
+
+            for vid in product["venues"]:
+                hist = ds.product_history(pid, vid)
+                if len(hist) < 6:
+                    continue
+                # Seller exodus: competitors leaving = pricing power arriving.
+                sellers = [h["sellers"] for h in hist]
+                base_sellers = fmean(sellers[-self.cfg.history_window - 1:-1])
+                if base_sellers >= 5 and sellers[-1] <= base_sellers * 0.7:
+                    anomalies.append(Anomaly(
+                        kind=AnomalyKind.SELLER_EXODUS, entity_id=pid, tick=t,
+                        severity=min(1.0, 1 - sellers[-1] / base_sellers),
+                        summary=f"{product['name']}: active sellers on {economics.VENUES[vid]['name']} "
+                                f"fell {sellers[-1]}/{base_sellers:.0f} vs baseline — competitors leaving.",
+                        evidence=[{"venue": vid, "sellers_now": sellers[-1],
+                                   "sellers_baseline": round(base_sellers, 1)}]))
+                # Demand acceleration: the market is speeding up under the listings.
+                vels = [h["sold_7d"] / 7.0 for h in hist]
+                base_vel = fmean(vels[-self.cfg.history_window - 1:-1])
+                if vels[-1] >= 1.0 and base_vel > 0.2 and vels[-1] >= 1.5 * base_vel:
+                    anomalies.append(Anomaly(
+                        kind=AnomalyKind.DEMAND_ACCELERATION, entity_id=pid, tick=t,
+                        severity=min(1.0, vels[-1] / (base_vel * 3)),
+                        summary=f"{product['name']}: sell-through on {economics.VENUES[vid]['name']} "
+                                f"accelerated to {vels[-1]:.1f}/day (baseline {base_vel:.1f}/day).",
+                        evidence=[{"venue": vid, "velocity_now": round(vels[-1], 2),
+                                   "velocity_baseline": round(base_vel, 2)}]))
 
             totals = []
             for src in ds.social_sources():
@@ -134,5 +179,20 @@ class AnomalyDetector:
                     summary=f"{niche['name']}: demand growing {growth:.0f}%/mo against "
                             f"{m['providers']:.0f} qualified providers.",
                     evidence=[{"volume": m["volume"], "growth_pct": growth, "providers": m["providers"]}]))
+
+            # Trend reversal: a niche that was flat/declining just turned up —
+            # the earliest (and least crowded) moment to enter.
+            nh = ds.niche_history(nid)
+            if len(nh) >= 9:
+                vols = [x["volume"] for x in nh]
+                older, recent = fmean(vols[-9:-3]), fmean(vols[-3:])
+                was_flat = fmean(vols[-9:-3]) <= fmean(vols[:-8] or vols[-9:-3]) * 1.02
+                if was_flat and older > 0 and recent >= older * 1.2:
+                    anomalies.append(Anomaly(
+                        kind=AnomalyKind.TREND_REVERSAL, entity_id=nid, tick=t,
+                        severity=min(1.0, recent / older - 1),
+                        summary=f"{niche['name']}: demand turned upward — "
+                                f"{older:,.0f} → {recent:,.0f}/mo after a flat stretch.",
+                        evidence=[{"volume_before": round(older, 1), "volume_recent": round(recent, 1)}]))
 
         return anomalies

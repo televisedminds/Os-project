@@ -137,7 +137,9 @@ class EbayAdapter(BaseAdapter):
             return False, "needs EBAY_CLIENT_ID + EBAY_CLIENT_SECRET (free at developer.ebay.com)"
         if self._get_token():
             return True, f"OAuth OK against {self.base}"
-        return False, self.last_error
+        return False, (self.last_error + " — if eBay's Application Keys page says 'Your Keyset "
+                       "is currently disabled', click its 'exemption' link, switch ON 'Not "
+                       "persisting eBay data', Confirm, pick a reason, Submit. Instant fix.")
 
 
 # ------------------------------------------------------------------- Reddit
@@ -256,6 +258,56 @@ class FxAdapter(BaseAdapter):
         return (True, f"OK — USD/THB {r['THB']:.2f}, USD/JPY {r['JPY']:.1f}") if r else (False, self.last_error)
 
 
+# ------------------------------------------------------------------- Serper
+
+class SerperAdapter(BaseAdapter):
+    """google.serper.dev — Google results as an API. Used here as a demand
+    signal for niches: how many Reddit discussions Google saw this week for a
+    query (site:reddit.com …, past-week filter). It measures the same thing
+    the Reddit API does, more coarsely — which makes it the working stand-in
+    while a Reddit key is pending approval. 2,500 free credits at signup;
+    1 credit per call at num<=10."""
+
+    id = "serper"
+    name = "Serper (Google search)"
+    URL = "https://google.serper.dev/search"
+
+    def __init__(self, cfg, client: httpx.Client | None = None):
+        super().__init__(cfg, client)
+        self.every_n_ticks = max(1, getattr(cfg, "serper_every_n_ticks", 12))
+
+    def configured(self) -> bool:
+        return bool(self.cfg.serper_api_key)
+
+    def reddit_posts_7d(self, query: str) -> int | None:
+        """Count of Reddit results Google indexed in the past week (0-10)."""
+
+        if not self.configured():
+            return self._fail("SERPER_API_KEY not set")
+        try:
+            r = self.client.post(
+                self.URL,
+                headers={"X-API-KEY": self.cfg.serper_api_key,
+                         "Content-Type": "application/json"},
+                json={"q": f"site:reddit.com {query}", "num": 10, "tbs": "qdr:w"})
+            r.raise_for_status()
+            organic = r.json().get("organic", []) or []
+            self.last_error = ""
+            return len(organic)
+        except Exception as e:  # noqa: BLE001
+            return self._fail(f"Serper search failed: {e}")
+
+    def check(self) -> tuple[bool, str]:
+        if not self.configured():
+            return False, ("optional — set SERPER_API_KEY (serper.dev, 2,500 free searches, "
+                           "no card) to measure niche demand while your Reddit key is pending")
+        n = self.reddit_posts_7d("thailand")
+        if n is None:
+            return False, self.last_error
+        return True, (f"OK ({n} Reddit results this week for test query); throttled to every "
+                      f"{self.every_n_ticks} cycles to protect your free credits")
+
+
 # -------------------------------------------------------------- ScrapingDog
 
 class ScrapingDogShopeeAdapter(BaseAdapter):
@@ -333,10 +385,19 @@ class ScrapingDogShopeeAdapter(BaseAdapter):
 def build_adapters(cfg, client: httpx.Client | None = None) -> dict[str, BaseAdapter]:
     """The default live adapter set, keyed by venue/source id."""
 
-    return {
+    out: dict[str, BaseAdapter] = {
         "ebay_us": EbayAdapter(cfg, client),
         "shopee_th": ScrapingDogShopeeAdapter(cfg, client),
         "reddit": RedditAdapter(cfg, client),
+        "serper": SerperAdapter(cfg, client),
         "news": NewsAdapter(cfg, client),
         "fx": FxAdapter(cfg, client),
     }
+    from ..plugins import VENUE_ADAPTERS, load_plugins
+    load_plugins()
+    for venue_id, cls in VENUE_ADAPTERS.items():  # drop-in venues, zero core edits
+        try:
+            out[venue_id] = cls(cfg, client)
+        except Exception:  # noqa: BLE001
+            pass
+    return out

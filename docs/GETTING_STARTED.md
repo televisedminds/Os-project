@@ -29,6 +29,8 @@ demand in Bangkok), **info products** (guides Thai people are searching for),
 | News context ("why is this trending?") | ❌ no | fetched automatically |
 | Watching **eBay US** prices automatically (sell-to-America deals) | ✅ free key | eBay developer account (guide below) |
 | Demand signal from **Reddit** (for niches) | ✅ free key | Reddit app (guide below) |
+| **Discovery** — the fleet finds NEW things to watch by itself (products AND business ideas: tools, info products, services) | partly | Google Trends + Hacker News are keyless; eBay + Reddit keys make it much more productive |
+| **AI brain** — Claude judges every discovered candidate | ✅ paid key (~$5 lasts months) | console.anthropic.com (guide below) |
 | Telegram morning message | ✅ free bot | @BotFather (guide below) |
 
 So: **you can start today with zero keys.** Keys only make more of it automatic.
@@ -105,7 +107,13 @@ automatically; the robot then models revenue, startup cost, payback months.
 Edit numbers → save → the next cycle picks it up automatically. Update your
 quotes about twice a week (it takes ~2 minutes).
 
-## Part C — the free keys (only when you want them)
+## Part C — the keys (only when you want them)
+
+**Easiest way — no terminal:** open your dashboard → **⚙ Keys** tab → paste
+each key → **Save** → **🧪 Test connections**. Done; no restart needed. The
+full step-by-step guide for getting every key (with screenshots-level detail,
+costs, and the traps) is **[docs/KEYS.md](KEYS.md)**. The sections below stay
+here for the `.env` way — both work; a key saved in the app wins.
 
 **eBay (15 minutes, unlocks automatic USA sell-side watching):**
 1. Go to **developer.ebay.com** → *Register* (normal eBay login works).
@@ -119,14 +127,38 @@ quotes about twice a week (it takes ~2 minutes).
 2. *Create another app* → choose **script** → any name, redirect `http://localhost`.
 3. The id is under the app name; the secret is labeled. Put both in `.env`.
 
-**Telegram (5 minutes, morning briefing on your phone):**
+**Telegram (5 minutes — morning briefing PLUS an instant push the moment a new
+deal verifies, so you don't lose a short window waiting for 07:00):**
 1. In Telegram, message **@BotFather** → send `/newbot` → copy the token.
 2. Send any message to your new bot.
 3. Open `https://api.telegram.org/bot<YOUR-TOKEN>/getUpdates` in a browser —
    find `"chat":{"id":123456789}` → that number is your chat id. Both go in `.env`.
 
+**Claude / Anthropic (10 minutes, ~$5 — the "AI brain", biggest quality upgrade):**
+
+Without this key, the discovery engine filters candidates by keyword matching
+(dumb but free). With it, Claude reads every candidate the fleet finds and
+judges it like an analyst would: *"sports news, nothing to sell — drop"* /
+*"sealed collectible with resale demand — keep, raise score"*. Every verdict
+comes with a reason you can read in the Discovery tab.
+
+The same key unlocks the **✨ AI selling kit** button on every opportunity:
+one tap writes the ready-to-paste eBay listing (English), the Shopee/TikTok
+Shop listing (Thai), and the polite Thai message to send the seller — or, for
+business niches, the product outline, landing copy and launch posts. This is
+the step where a found deal becomes a posted listing, which is where money
+actually happens. Each kit costs a few cents and is saved so you only pay once.
+
+1. Go to **console.anthropic.com** → sign up → **API keys** → *Create key*.
+2. Add ~$5 of credit (Billing). At the default cadence the AI runs about 8
+   batched calls per day ≈ a few **cents** per day, so $5 lasts months.
+3. Put the key in `.env` as `ANTHROPIC_API_KEY=sk-ant-...`.
+4. Optional: `OOS_AI_MODEL=claude-haiku-4-5` makes it several times cheaper
+   (slightly less careful judgment). The default model gives the best verdicts.
+
 Then check everything: `set -a; source .env; set +a; python run.py live-check`
-— you want ✓ on every line.
+— you want ✓ on every line, including the discovery panel at the bottom
+(`google_trends`, `reddit_discovery`, `ebay_discovery`, `ai_brain`).
 
 ## Optional: ScrapingDog — automatic Shopee TH prices
 

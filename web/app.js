@@ -87,7 +87,17 @@ async function loadBriefing() {
     : `tick ${s.tick} · 1 cycle ≈ 1 market day`;
   $("#hero-money").textContent = fmtUSD(s.profit_pool_usd, 0);
   $("#briefing-headline").textContent = b.headline;
-  $("#briefing-notes").textContent = b.notes.join("  ");
+  // Key-gap notes (🔑) are blockers, not commentary — render them loud.
+  const gaps = b.notes.filter((n) => n.startsWith("🔑"));
+  const rest = b.notes.filter((n) => !n.startsWith("🔑"));
+  $("#briefing-notes").innerHTML = esc(rest.join("  ")) + gaps.map((n) => `
+    <div class="key-gap-note">${esc(n)}
+      <button class="btn key-gap-cta" type="button">Open ⚙ Keys</button></div>`).join("");
+  document.querySelectorAll(".key-gap-cta").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      document.querySelector('.ops-tab[data-tab="keys"]')?.click();
+      document.querySelector(".ops")?.scrollIntoView({ behavior: "smooth" });
+    }));
 
   const mc = $("#mission-chip");
   if (g.mission) {
@@ -119,13 +129,19 @@ async function loadBriefing() {
       in the operator section of watchlist.json and the whole product starts working toward your number.</div>`;
   }
 
+  const watching = s.watching && s.watching.total
+    ? `<span class="fn-step"><b>${s.watching.total.toLocaleString()}</b> markets watched${
+        s.watching.discovered ? ` <span class="fn-sub">(${s.watching.discovered} auto-found)</span>` : ""}</span><span class="fn-a">→</span>`
+    : "";
   $("#funnel-strip").innerHTML = `
     <span class="fn-label">RESEARCH FUNNEL · last 24h</span>
+    ${watching}
     <span class="fn-step"><b>${fu.observations.toLocaleString()}</b> observations</span><span class="fn-a">→</span>
     <span class="fn-step"><b>${fu.anomalies.toLocaleString()}</b> anomalies</span><span class="fn-a">→</span>
     <span class="fn-step"><b>${fu.investigations.toLocaleString()}</b> investigated</span><span class="fn-a">→</span>
     <span class="fn-step"><b>${fu.rejected.toLocaleString()}</b> rejected</span><span class="fn-a">→</span>
-    <span class="fn-step"><b>${fu.verified.toLocaleString()}</b> verified</span><span class="fn-a">→</span>
+    <span class="fn-step"><b>${fu.verified.toLocaleString()}</b> newly verified</span><span class="fn-a">→</span>
+    <span class="fn-step"><b>${(fu.rechecked || 0).toLocaleString()}</b> re-checks held</span><span class="fn-a">→</span>
     <span class="fn-step fn-final"><b>${fu.recommended_now}</b> live for you now</span>`;
 
   const conf = s.avg_confidence || 0;
@@ -251,6 +267,7 @@ function renderDetail(o) {
     </div>
 
     ${actionCard(o)}
+    ${sellingKit(o)}
     ${discoveryReport(o)}
 
     <div class="d-section"><h3>Step-by-step instructions</h3>${missionBar(o)}${playbook(o)}</div>
@@ -354,6 +371,94 @@ function renderDetail(o) {
 const kpi = (l, v, s) => `<div class="kpi"><div class="kpi-l">${esc(l)}</div>
   <div class="kpi-v">${v}</div><div class="kpi-s">${s}</div></div>`;
 
+/* AI selling kit — the execution layer: one tap turns a verified opportunity
+   into ready-to-paste listings (flips) or a launch kit (ventures). */
+const KIT_FIELDS = {
+  flip: [
+    ["listing_title_en", "eBay title (EN)"],
+    ["listing_title_th", "Shopee / TikTok Shop title (TH)"],
+    ["bullets_en", "Selling points (EN)"],
+    ["description_en", "Listing description (EN)"],
+    ["description_th", "Listing description (TH)"],
+    ["seller_message_th", "Message to send the source seller (TH)"],
+    ["hashtags", "Hashtags"],
+    ["pricing_strategy", "Pricing strategy"],
+  ],
+  venture: [
+    ["product_name", "Product name"],
+    ["one_liner_en", "One-liner (EN)"],
+    ["one_liner_th", "One-liner (TH)"],
+    ["outline", "Smallest sellable version — outline"],
+    ["landing_headline_en", "Landing headline (EN)"],
+    ["landing_headline_th", "Landing headline (TH)"],
+    ["landing_copy_en", "Landing copy (EN)"],
+    ["landing_copy_th", "Landing copy (TH)"],
+    ["first_posts", "First 3 launch posts"],
+    ["pricing_advice", "Pricing"],
+    ["first_week_plan", "Your first week, day by day"],
+  ],
+};
+
+function kitValue(key, v) {
+  if (v == null) return "";
+  if (key === "hashtags" && Array.isArray(v)) return v.map((h) => "#" + String(h).replace(/^#/, "")).join(" ");
+  if (key === "first_posts" && Array.isArray(v))
+    return v.map((p) => `[${p.platform}]\n${p.text}`).join("\n\n");
+  if (Array.isArray(v)) return v.map((x) => "• " + x).join("\n");
+  return String(v);
+}
+
+function sellingKit(o) {
+  if (o.locked) return "";
+  let inner;
+  if (o.kit && o.kit.kit) {
+    const k = o.kit.kit;
+    const fields = KIT_FIELDS[k._kind === "venture" ? "venture" : "flip"];
+    inner = fields.filter(([key]) => k[key] != null && String(k[key]).length).map(([key, label]) => `
+      <div class="kit-field">
+        <div class="kit-label">${esc(label)}<button class="copy-btn" type="button">copy</button></div>
+        <div class="kit-text">${esc(kitValue(key, k[key]))}</div>
+      </div>`).join("") + `
+      <div class="wf-note" style="margin-top:8px">Written ${new Date(o.kit.generated_at * 1000).toLocaleString()}
+        by ${esc(o.kit.model)} from this opportunity's verified data — read before posting; you are the final check.
+        <button class="btn kit-gen" data-force="1" type="button" style="margin-left:8px">↻ Regenerate</button></div>`;
+  } else if (o.kit_available) {
+    inner = `<p class="wf-note" style="margin:0 0 8px">One tap writes everything you need to act:
+      ${o.type === "product_arbitrage"
+        ? "a ready-to-paste eBay listing (English), a Shopee/TikTok Shop listing (Thai), and the message to send the source seller."
+        : "the smallest sellable version, bilingual landing copy, launch posts, and a first-week plan."}</p>
+      <button class="btn btn-primary kit-gen" data-force="0" type="button">✨ Generate selling kit</button>`;
+  } else {
+    inner = `<p class="wf-note" style="margin:0">Add <code>ANTHROPIC_API_KEY</code> to your .env
+      (console.anthropic.com — a few cents per kit) to unlock one-tap selling kits:
+      ready-to-paste bilingual listings and launch plans, written from this opportunity's verified data.</p>`;
+  }
+  return `<div class="d-section" id="kit-section"><h3>✨ AI selling kit — from verified deal to posted listing</h3>${inner}</div>`;
+}
+
+function copyText(text, btn) {
+  const done = () => {
+    const old = btn.textContent;
+    btn.textContent = "✓ copied";
+    setTimeout(() => { btn.textContent = old; }, 1400);
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+  } else {
+    fallbackCopy(text, done);            // http:// droplet — no Clipboard API
+  }
+}
+
+function fallbackCopy(text, done) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.cssText = "position:fixed;opacity:0";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); done(); } catch { toast("Copy failed — select the text manually."); }
+  document.body.removeChild(ta);
+}
+
 /* The do-this-deal card: where to buy, where to sell, at which prices,
    what to invest and what you keep. */
 function actionCard(o) {
@@ -366,6 +471,16 @@ function actionCard(o) {
 
   const linkBtn = (url, label) => url
     ? `<a class="ac-link" href="${esc(url)}" target="_blank" rel="noopener">${esc(label)} ↗</a>` : "";
+  // Prefer the exact listing when we have one, and still offer the full search.
+  const sideLinks = (side, exactLabel, searchLabel) => {
+    if (!side || !side.url) return "";
+    if (side.exact) {
+      const seeAll = (side.search_url && side.search_url !== side.url)
+        ? linkBtn(side.search_url, searchLabel) : "";
+      return linkBtn(side.url, "🎯 " + exactLabel) + seeAll;
+    }
+    return linkBtn(side.url, searchLabel);
+  };
   const moneyTimeline = (tl) => !tl ? "" : `
     <div class="mt-strip">${tl.map((ev) => `
       <span class="mt-ev"><b>Day ${ev.day}</b> ${esc(ev.label)}${ev.amount_usd == null ? "" :
@@ -389,7 +504,7 @@ function actionCard(o) {
           <div class="ac-v">${esc(a.buy.venue)}</div>
           <div class="ac-p">${fmtTHB(a.buy.price_thb)} <span class="ac-sub">(${fmtUSD(a.buy.price_usd)})</span>/unit</div>
           <div class="ac-note">Never pay above ${fmtUSD(a.buy.max_price_usd)}. ${esc(a.buy.how)}</div>
-          ${linkBtn(a.buy.url, "Open live listings")}
+          ${sideLinks(a.buy, "Open the exact listing", "Open live listings")}
         </div>
         <div class="ac-arrow">→</div>
         <div class="ac-box">
@@ -397,7 +512,7 @@ function actionCard(o) {
           <div class="ac-v">${esc(a.sell.venue)}${a.sell.registered ? ' <span class="pos">✓</span>' : ""}</div>
           <div class="ac-p">${fmtTHB(a.sell.price_thb)} <span class="ac-sub">(${fmtUSD(a.sell.price_usd)})</span>/unit</div>
           <div class="ac-note">${esc(a.sell.how)}</div>
-          ${linkBtn(a.sell.url, "See competing listings")}
+          ${sideLinks(a.sell, "Open the exact listing", "See competing listings")}
           ${!a.sell.registered ? linkBtn(a.sell.signup_url, "Create seller account") : ""}
         </div>
       </div>
@@ -505,6 +620,28 @@ function playbook(o) {
 }
 
 function wireDetail(el, o) {
+  el.querySelectorAll(".kit-gen").forEach((b) =>
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      const old = b.textContent;
+      b.textContent = "✍️ Writing your kit…";
+      try {
+        await api(`/api/opportunities/${o.id}/kit?force=${b.dataset.force}&plan=${state.plan}`,
+          { method: "POST" });
+        await selectOpportunity(o.id);
+        toast("✨ Selling kit ready — copy, check, and post.");
+      } catch (err) {
+        b.disabled = false;
+        b.textContent = old;
+        toast("Kit failed: " + err.message, 8000);
+      }
+    }));
+  el.querySelectorAll(".copy-btn").forEach((b) =>
+    b.addEventListener("click", () => {
+      const txt = b.closest(".kit-field")?.querySelector(".kit-text")?.textContent || "";
+      copyText(txt, b);
+    }));
+
   el.querySelectorAll(".pb-check").forEach((cb) =>
     cb.addEventListener("change", async () => {
       try {
@@ -604,6 +741,41 @@ async function loadOps() {
         <span class="act-actor">${esc(it.actor)}</span>
         <span class="act-text">${esc(it.text)}</span></div>`;
     }).join("")}</div>`;
+  } else if (state.opsTab === "discovery") {
+    const d = await api("/api/discovery");
+    if (!d.enabled) {
+      body.innerHTML = `<p class="wf-note">The discovery engine runs in <b>live mode</b>: it sweeps
+        Google Trends, Reddit commerce communities and eBay categories on a schedule, auto-promotes
+        the best finds into the watched fleet, and (with an Anthropic key) has Claude judge every
+        candidate. Demo mode uses a fixed simulated catalog, so there is nothing to discover here —
+        run <code>python run.py serve --live</code> to turn it on.</p>`;
+      return;
+    }
+    const srcRows = (d.sources || []).map((s) => `
+      <div class="access-row"><span>${esc(s.name)}</span>
+        <span class="yn ${s.ok ? "y" : "n"}">${s.ok ? "on" : "off"}</span></div>
+      ${s.ok ? "" : `<div class="wf-note" style="margin:2px 0 8px">${esc(s.note)}</div>`}`).join("");
+    const items = (d.found || []).map((c) => `
+      <div class="pipe-item ${c.status === "active" ? "pub" : ""}">
+        <b style="color:var(--ink)">${esc(c.name)}</b>
+        <span class="r"> ${esc(c.kind)} · score ${Number(c.score).toFixed(2)} · via ${esc(c.source)}</span>
+        <div class="r">${esc(c.reason || "")}</div>
+        ${c.kind === "product"
+          ? '<div class="r">➜ watching its sell side; add your buy quote (Buyee/Shopee/AliExpress price) in watchlist.json to price the flip</div>'
+          : ""}
+      </div>`).join("");
+    const lr = d.last_run || {};
+    body.innerHTML = `<div class="learn-cols">
+      <div><h4>Discovery sources</h4>${srcRows}
+        <div class="kv" style="margin-top:10px"><span>auto-found, being watched</span><b>${d.counts.active}</b></div>
+        <div class="kv"><span>found all-time</span><b>${d.counts.total}</b></div>
+        ${lr.found != null ? `<div class="kv"><span>last sweep</span><b>${lr.found} found · ${lr.promoted} promoted</b></div>` : ""}
+        ${lr.ai ? `<div class="kv"><span>AI brain</span><b>${esc(lr.ai)}</b></div>` : ""}
+      </div>
+      <div style="grid-column: span 2"><h4>What the fleet found on its own</h4>
+        ${items || '<div class="wf-note">Nothing yet — sweeps run every few cycles; candidates appear here, then must verify like everything else before reaching your feed.</div>'}
+      </div>
+    </div>`;
   } else if (state.opsTab === "agents") {
     const r = await api("/api/agents");
     body.innerHTML = `<div class="agents-grid">${r.agents.map((a) => `
@@ -663,6 +835,80 @@ async function loadOps() {
             ${c.note ? `<div class="r">${esc(c.note)}</div>` : ""}
             ${c.related ? `<div class="r">related: ${esc(c.related)}</div>` : ""}
           </div>`).join("")}</div>`;
+  } else if (state.opsTab === "keys") {
+    const s = await api("/api/settings");
+    const insecure = !window.isSecureContext &&
+      !["localhost", "127.0.0.1"].includes(location.hostname);
+    const groups = {};
+    s.keys.forEach((k) => (groups[k.group] = groups[k.group] || []).push(k));
+    body.innerHTML = `
+      ${insecure ? `<div class="locked-note" style="margin:0 0 12px;border-color:color-mix(in srgb,var(--critical) 55%,transparent);color:var(--critical)">
+        ⚠ This dashboard is on plain HTTP — anyone on the network path can read what you type,
+        and anyone who finds this page can change your keys. Before pasting real keys, protect it:
+        run <code>bash deploy/setup_https_dashboard.sh</code> on your server (adds HTTPS + a password).</div>` : ""}
+      <p class="wf-note" style="margin:0 0 12px">${esc(s.note)} Paste a value and press Save —
+        leave a field empty to keep what's already there. Full step-by-step guide for every key:
+        <b>docs/KEYS.md</b> in the repository.</p>
+      ${Object.entries(groups).map(([g, keys]) => `
+        <h4 style="margin:14px 0 6px">${esc(g)}</h4>
+        ${keys.map((k) => `
+          <div class="key-row" data-name="${esc(k.name)}">
+            <div class="key-info">
+              <div class="key-label">${esc(k.label)}
+                <a class="key-link" href="${esc(k.url)}" target="_blank" rel="noopener">get it ↗</a></div>
+              <div class="wf-note">${esc(k.help)}</div>
+            </div>
+            <div class="key-state">
+              ${k.set ? `<span class="yn y">set</span> <span class="key-masked">${esc(k.masked)}</span>
+                         <span class="key-src">${k.source === "app" ? "saved in app" : "from .env"}</span>
+                         ${k.source === "app" ? '<button class="copy-btn key-clear" type="button">clear</button>' : ""}`
+                      : '<span class="yn n">not set</span>'}
+            </div>
+            <input class="key-input" type="${k.secret ? "password" : "text"}"
+                   placeholder="${k.set ? "paste new value to replace…" : "paste value…"}"
+                   autocomplete="off" spellcheck="false">
+          </div>`).join("")}`).join("")}
+      <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+        <button id="keys-save" class="btn btn-primary" type="button">💾 Save keys</button>
+        <button id="keys-test" class="btn" type="button">🧪 Test connections</button>
+      </div>
+      <div id="keys-test-out" style="margin-top:10px"></div>`;
+
+    $("#keys-save").addEventListener("click", async () => {
+      const updates = {};
+      body.querySelectorAll(".key-row").forEach((row) => {
+        const v = row.querySelector(".key-input").value.trim();
+        if (v) updates[row.dataset.name] = v;
+      });
+      if (!Object.keys(updates).length) { toast("Nothing to save — paste a key first."); return; }
+      try {
+        await api("/api/settings", { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) });
+        toast("✅ Keys saved and applied — no restart needed.");
+        loadOps().catch(() => {});
+      } catch (err) { toast("Save failed: " + err.message, 8000); }
+    });
+    $("#keys-test").addEventListener("click", async () => {
+      const out = $("#keys-test-out");
+      out.innerHTML = '<p class="wf-note">Testing every configured service…</p>';
+      try {
+        const r = await api("/api/settings/test", { method: "POST" });
+        out.innerHTML = r.results.length
+          ? r.results.map((t) => `<div class="pipe-item ${t.ok ? "pub" : "rej"}">
+              ${t.ok ? "✓" : "✗"} <b>${esc(t.label)}</b> <div class="r">${esc(t.note)}</div></div>`).join("")
+          : '<p class="wf-note">No keys configured yet — save at least one, then test.</p>';
+      } catch (err) { out.innerHTML = `<p class="wf-note">Test failed: ${esc(err.message)}</p>`; }
+    });
+    body.querySelectorAll(".key-clear").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const name = b.closest(".key-row").dataset.name;
+        try {
+          await api("/api/settings", { method: "POST",
+            headers: { "Content-Type": "application/json" }, body: JSON.stringify({ [name]: "" }) });
+          toast(`Cleared ${name} — falling back to .env if set there.`);
+          loadOps().catch(() => {});
+        } catch (err) { toast("Clear failed: " + err.message); }
+      }));
   } else if (state.opsTab === "thailand") {
     const t = await api("/api/thailand");
     body.innerHTML = `<div class="th-grid">

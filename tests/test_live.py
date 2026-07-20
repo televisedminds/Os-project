@@ -42,7 +42,8 @@ NICHE = {
 @pytest.fixture
 def live_cfg(tmp_path):
     path = write_watchlist(tmp_path, [PRODUCT], [NICHE])
-    return Config(db_path=tmp_path / "live.db", mode="live", watchlist_path=path)
+    return Config(db_path=tmp_path / "live.db", mode="live", watchlist_path=path,
+                  discovery_enabled=False)   # discovery is exercised in test_discovery.py
 
 
 class FakeEbay:
@@ -111,6 +112,116 @@ def stub_adapters(reddit_series=(5, 5, 5, 5, 6, 18, 24, 30, 34, 36)):
 
 
 # ----------------------------------------------------------------- watchlist
+
+
+def test_serper_adapter_counts_and_degrades():
+    from opportunity_os.market.adapters import SerperAdapter
+    cfg = Config(mode="live", serper_api_key="sk-serper")
+
+    def handler(req):
+        assert "google.serper.dev" in str(req.url)
+        assert req.headers["X-API-KEY"] == "sk-serper"
+        body = json.loads(req.content)
+        assert body["q"].startswith("site:reddit.com ") and body["tbs"] == "qdr:w"
+        return httpx.Response(200, json={"organic": [{"title": "a"}, {"title": "b"}]})
+
+    ad = SerperAdapter(cfg, _client(handler))
+    assert ad.reddit_posts_7d("thai freelance tax") == 2
+
+    dead = SerperAdapter(cfg, _client(lambda req: httpx.Response(500)))
+    assert dead.reddit_posts_7d("x") is None and "Serper" in dead.last_error
+    assert not SerperAdapter(Config(mode="live")).configured()
+
+
+def test_serper_feeds_niche_demand_when_reddit_dark(live_cfg):
+    """No Reddit key → the Serper series drives niche momentum instead."""
+
+    from opportunity_os.market.adapters import SerperAdapter
+    store = Store(live_cfg.db_path)
+    live_cfg.serper_api_key = "sk-serper"
+    counts = iter([2, 2, 2, 3, 6, 9, 10, 10, 10, 10])
+
+    def handler(req):
+        return httpx.Response(200, json={"organic": [{}] * next(counts)})
+
+    adapters = stub_adapters()
+    del adapters["reddit"]                                   # reddit fully dark
+    serper = SerperAdapter(live_cfg, _client(handler))
+    serper.every_n_ticks = 1                                 # no throttle in test
+    adapters["serper"] = serper
+    lm = LiveMarket(live_cfg, store, adapters=adapters)
+    for _ in range(10):
+        lm.tick()
+    assert len(store.live_mention_series("th_tax", "serper", 30)) == 10
+    metrics = lm.niches()[0]["metrics"]
+    assert metrics["growth_pct"] > 0                         # momentum from the serper series
+    assert "serper" in lm.social_sources()                   # council sees it as corroboration
+    assert lm.mentions("th_tax", "serper")[-1] == 10
+
+
+def test_tiered_scheduler_budgets_scans_by_priority(tmp_path):
+    """Watchlist entities rescan every cycle; warm discoveries every 4th;
+    the cold tail every 12th — same API budget, several times the coverage."""
+
+    from opportunity_os.discovery import Candidate
+    from dataclasses import asdict
+    path = write_watchlist(tmp_path, [PRODUCT], [])
+    cfg = Config(db_path=tmp_path / "tier.db", mode="live", watchlist_path=path,
+                 discovery_enabled=False, scan_warm_slots=1,
+                 scan_warm_interval=4, scan_cold_interval=12)
+    store = Store(cfg.db_path)
+    for i, score in enumerate([2.0, 1.0]):
+        store.upsert_discovered(asdict(Candidate(
+            kind="product", id=f"disc_p_t{i}", name=f"T{i}", source="stub",
+            score=score, queries={"ebay_us": f"tier query {i}"})))
+
+    calls: dict[str, int] = {}
+
+    class CountingEbay:
+        name, last_error = "fake eBay", ""
+
+        def configured(self):
+            return True
+
+        def product_snapshot(self, query):
+            calls[query] = calls.get(query, 0) + 1
+            return {"price": 100.0, "min_price": 90.0, "stock": 30, "sellers": 9,
+                    "item_ids": ["a"]}
+
+        def check(self):
+            return True, "ok"
+
+    adapters = stub_adapters()
+    adapters["ebay_us"] = CountingEbay()
+    lm = LiveMarket(cfg, store, adapters=adapters)
+    # discovered entities must be observed even with the engine off in tests
+    lm.discovery = type("D", (), {"extra_products": lambda s, ids: [
+        wl.WatchProduct(id=f"disc_p_t{i}", name=f"T{i}", category="collectibles",
+                        weight_kg=0.5, queries={"ebay_us": f"tier query {i}"})
+        for i in range(2)], "extra_niches": lambda s, ids: [],
+        "run": lambda s: {}, "status": lambda s: [], "ai": None})()
+    for _ in range(24):
+        lm.tick()
+
+    assert calls["gba sp ags-101"] == 24                    # watchlist = hot, every cycle
+    assert calls["tier query 0"] == 6                       # warm: every 4th
+    assert calls["tier query 1"] == 2                       # cold: every 12th
+
+
+def test_briefing_names_the_missing_keys(live_cfg):
+    """A blocked pipeline must say WHICH key it is waiting for — silence about
+    a missing key reads as 'the app is broken'."""
+
+    store = Store(live_cfg.db_path)
+    orch = Orchestrator(live_cfg, store, world=LiveMarket(live_cfg, store, adapters=stub_adapters()))
+    orch.run_cycle()
+    notes = " ".join(briefing(store, live_cfg)["notes"])
+    assert "eBay key" in notes and "Reddit key" in notes       # no keys set in live_cfg
+
+    live_cfg.ebay_client_id = "id"
+    live_cfg.reddit_client_id = "rid"
+    notes2 = " ".join(briefing(store, live_cfg)["notes"])
+    assert "eBay key" not in notes2 and "Reddit key" not in notes2
 
 
 def test_watchlist_validation(tmp_path):
