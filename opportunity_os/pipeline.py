@@ -394,7 +394,9 @@ class Orchestrator:
             cand = self._fresh_dislocation(stored)
         elif stored["type"] == OppType.REFURBISHMENT.value or route_kind == "refurbish":
             cand = self._fresh_dislocation(stored)
-        elif stored["type"] == OppType.PRODUCT_ARBITRAGE.value:
+        elif stored["type"] == OppType.WHOLESALE.value or route_kind == "wholesale":
+            cand = self._fresh_wholesale(stored)
+        elif stored["type"] in (OppType.PRODUCT_ARBITRAGE.value, OppType.IMPORT_EXPORT.value):
             cand = self._fresh_flip(stored)
         else:
             cand = self._fresh_venture(stored)
@@ -439,8 +441,12 @@ class Orchestrator:
         qty = max(1, min(stored["economics"]["qty"], buy["stock"]))
         econ = economics.compute_flip(product, bv, sv, buy["price"], sell["price"], qty=qty)
         velocity = max(sell["sold_7d"] / 7.0, 0.1)
+        # Preserve the stored type (a product_arbitrage flip and an import_export
+        # route both re-verify through here; the type must not silently change).
+        opp_type = OppType(stored["type"]) if stored["type"] in (
+            OppType.PRODUCT_ARBITRAGE.value, OppType.IMPORT_EXPORT.value) else OppType.PRODUCT_ARBITRAGE
         return {
-            "kind": "flip", "opp_type": OppType.PRODUCT_ARBITRAGE, "entity_id": pid,
+            "kind": "flip", "opp_type": opp_type, "entity_id": pid,
             "title": stored["title"],
             "subtitle": f"Buy {economics.VENUES[bv]['name']} ${buy['price']:.2f} → "
                         f"sell {economics.VENUES[sv]['name']} ${sell['price']:.2f}",
@@ -506,6 +512,45 @@ class Orchestrator:
                             "ask_usd": ask, "fair_usd": fair,
                             "min_edge": self.cfg.dislocation_min_edge,
                             "refurbish": refurbish, "repair_cost": repair},
+            "route": stored["route"],
+        }
+
+    def _fresh_wholesale(self, stored: dict) -> dict | None:
+        pid = stored["entity_id"]
+        venue = stored["route"]["buy_venue"]
+        item_id = stored["route"].get("item_id", "")
+        if not hasattr(self.world, "listing_sample"):
+            return None
+        sample = self.world.listing_sample(pid, venue)
+        row = next((s for s in sample if s.get("item_id") == item_id), None)
+        if not row:
+            return None                    # the lot is gone — edge taken or pulled
+        n = research.parse_lot_size(row.get("title", "")) or int(stored["route"].get("lot_size", 1))
+        per_unit = float(row["price"]) / max(1, n)
+        singles = [s for s in sample
+                   if research.parse_lot_size(s.get("title", "")) is None
+                   and float(s.get("price", 0)) > 0
+                   and not research.looks_junk(s.get("title", ""), s.get("condition", ""))]
+        stats = research.market_stats(singles)
+        product = self.world.product_public(pid)
+        fair = stats["fair_usd"] or float(stored.get("wholesale", {}).get("single_fair_usd", per_unit * 1.4))
+        econ = economics.compute_flip(product, venue, venue, per_unit, fair, qty=n)
+        agg = self.world.listing(pid, venue) or {}
+        velocity = max(agg.get("sold_7d", 0) / 7.0, 0.2)
+        vname = economics.VENUES[venue]["name"]
+        return {
+            "kind": "flip", "opp_type": OppType.WHOLESALE, "entity_id": pid,
+            "title": stored["title"],
+            "subtitle": f"Lot of {n} @ ${per_unit:.2f}/unit on {vname} → resell singles ${fair:.2f}",
+            "category": stored["category"], "item": product,
+            "buy_venue": venue, "sell_venue": venue, "buy_usd": per_unit, "sell_usd": fair,
+            "qty": n, "buy_stock": n, "velocity": velocity, "sellers": stats["sellers"],
+            "window_days": round(min(30.0, max(5.0, n / max(0.5, velocity))), 1),
+            "economics": econ,
+            "feasibility": thailand.feasibility("wholesale", stored["category"], venue, venue),
+            "wholesale": {"item_id": item_id, "url": stored["route"].get("buy_url", ""),
+                          "lot_size": n, "per_unit_usd": per_unit, "single_fair_usd": fair,
+                          "min_edge": stored.get("wholesale", {}).get("min_edge", 0.25)},
             "route": stored["route"],
         }
 

@@ -21,10 +21,11 @@ and post-2025 US de-minimis duty risk priced into the pessimistic case).
 
 **v1.0** is the full research-to-execution system:
 
-* **Research** — 8 opportunity generators (cross-market flips, listing dislocations,
-  refurbishment, local-service/B2B gaps, digital/info products, micro-SaaS) over a
-  product knowledge graph with bounded, EV-ranked expansion; one API response is
-  strip-mined for many candidates.
+* **Research** — 10 opportunity generators (cross-market flips, listing dislocations,
+  refurbishment, **import/export** into or out of Thailand, **wholesale** lot break-ups,
+  local-service/B2B gaps, digital/info products, micro-SaaS) over a product knowledge
+  graph with bounded, EV-ranked expansion; one API response is strip-mined for many
+  candidates.
 * **Honesty** — every claim sits in an evidence ledger (observed/estimated/calculated/
   assumption/**unknown**); verification levels cap single-source, asking-price-only work
   below "execution ready"; duplicate listings cluster into one market thesis; rejections
@@ -64,7 +65,7 @@ CLI, for the cron-driven lifestyle:
 python run.py cycle -n 3       # run three research cycles right now
 python run.py brief            # print the morning briefing to the terminal
 python run.py reset            # wipe state and re-seed the demo world
-python -m pytest tests/ -q     # 210 tests
+python -m pytest tests/ -q     # 236 tests
 ```
 
 No database server, no build step, no API keys needed to try it: state is SQLite

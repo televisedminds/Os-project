@@ -34,6 +34,10 @@ const TYPE_COLOR = {
   local_service: "var(--violet)",
   b2b_service: "var(--orange)",
   info_product: "var(--magenta)",
+  micro_saas: "var(--aqua)",
+  refurbishment: "var(--accent)",
+  import_export: "var(--orange)",
+  wholesale: "var(--violet)",
 };
 const TYPE_LABEL = {
   product_arbitrage: "flip",
@@ -41,6 +45,10 @@ const TYPE_LABEL = {
   local_service: "local service",
   b2b_service: "B2B",
   info_product: "info product",
+  micro_saas: "micro-SaaS",
+  refurbishment: "refurbish",
+  import_export: "import/export",
+  wholesale: "wholesale",
 };
 
 const fmtUSD = (v, dp) => {

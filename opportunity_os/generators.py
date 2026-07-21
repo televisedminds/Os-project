@@ -177,7 +177,8 @@ def build_generators(cfg=None) -> list[OpportunityGenerator]:
     """Default generator set + drop-in plugins. Import side-effects register
     the built-ins below (bundle/repair, micro-SaaS) before we instantiate."""
 
-    from . import generators_extra  # noqa: F401 - registers extra generators
+    from . import generators_extra  # noqa: F401 - registers micro-SaaS + refurbishment
+    from . import generators_trade  # noqa: F401 - registers import/export + wholesale
     out: list[OpportunityGenerator] = []
     seen = set()
     for cls in GENERATORS:

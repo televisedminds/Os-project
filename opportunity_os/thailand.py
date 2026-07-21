@@ -88,6 +88,43 @@ VENUE_ACCESS: dict[str, dict] = {
 }
 
 
+# Import/export legal screen. Categories needing a licence/registration before
+# they can be lawfully imported for resale (reference-level, early 2026), and
+# product-name keywords that are outright PROHIBITED to import into Thailand —
+# the latter is the gotcha that turns a "great margin" into a seized parcel.
+IMPORT_LICENCE_CATEGORIES = {
+    "food": "Thai FDA (อย.) import licence + product registration required before resale; "
+            "customs holds unregistered food/supplements.",
+    "electronics": "Wireless/radio devices (Bluetooth, Wi-Fi, RF remotes) need NBTC type-approval; "
+                   "non-wireless electronics are fine.",
+    "audio": "Bluetooth/wireless audio needs NBTC type-approval; wired audio is unrestricted.",
+    "watches": "Smartwatches with cellular/Wi-Fi fall under NBTC; mechanical/quartz watches are fine.",
+}
+IMPORT_PROHIBITED_KEYWORDS = (
+    "vape", "e-cigarette", "e cigarette", "e-cig", "vaporizer", "vaporiser", "pod system",
+    "baraku", "kratom", "cbd", "cannabis oil", "e-liquid", "vape juice", "nicotine pouch",
+)
+
+
+def import_restriction(category: str, product_name: str = "") -> dict:
+    """Legal screen for importing a product into Thailand for resale.
+
+    Returns {allowed, level, note}. `level` is 'prohibited' (illegal — never
+    publish), 'licensed' (legal but needs a permit/registration — surface it as
+    a real cost/risk, don't hide it) or 'clear'."""
+
+    low = product_name.lower()
+    hit = next((k for k in IMPORT_PROHIBITED_KEYWORDS if k in low), None)
+    if hit:
+        return {"allowed": False, "level": "prohibited",
+                "note": f"Prohibited import to Thailand ('{hit}'): e-cigarettes/vapes and "
+                        f"related products are illegal to import — do not attempt."}
+    if category in IMPORT_LICENCE_CATEGORIES:
+        return {"allowed": True, "level": "licensed", "note": IMPORT_LICENCE_CATEGORIES[category]}
+    return {"allowed": True, "level": "clear",
+            "note": "No special import licence for this category (general goods)."}
+
+
 def import_charges(cif_usd: float, category: str, usd_thb: float,
                    parcel_cif_usd: float | None = None) -> tuple[float, float, dict]:
     """Thai import duty + VAT for goods entering Thailand, per unit (USD).
@@ -111,7 +148,7 @@ def import_charges(cif_usd: float, category: str, usd_thb: float,
 def feasibility(opp_type: str, category: str, buy_venue: str | None, sell_venue: str | None) -> Feasibility:
     """Screen an opportunity for executability from Thailand."""
 
-    if opp_type != "product_arbitrage":
+    if opp_type not in ("product_arbitrage", "import_export", "wholesale"):
         geo_note = {
             "local_service":  "Runs on the ground in Thailand (Bangkok metro assumed) — fully local.",
             "digital_product": "Built and operated remotely from Thailand; global distribution.",

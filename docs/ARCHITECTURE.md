@@ -409,3 +409,46 @@ fictional. Without a Serper key, the diagnostics now say exactly that
 (`no SERPER_API_KEY — niche demand/supply stays UNOBSERVED (ventures cannot
 verify)`), which is the honest description of the old behaviour too — it just
 never admitted it.
+
+## 8. v1.2.0 — import/export + wholesale generators (2 of the 4 missing types)
+
+Two of the generators the mandate named (8: import/export, 10: wholesale) did
+not exist. Both now do, as **strictly additive** generators with their own
+`OppType`s — no existing flip is relabelled, and clustering keeps every thesis
+distinct (`test_import_export_is_not_a_duplicate_of_a_flip` proves it).
+
+**`ImportExportGenerator`** (`generators_trade.py`). The profit-max flip picks
+one route: global cheapest-buy → dearest-sell. For a Thai operator the most
+*executable* route is often a different one, which the greedy flip hides:
+- **import** — buy foreign, sell **domestically in Thailand** (PromptPay, no
+  export paperwork). Emitted only when the headline flip ships abroad, so it's
+  never the same card.
+- **export** — source locally in Thailand, sell abroad. Emitted only when the
+  headline flip sources abroad.
+It gates on **observed destination demand** (a price gap with no sales isn't a
+trade) and runs a **Thailand import legal screen** (`thailand.import_restriction`):
+a prohibited product — vapes/e-cigs, etc. — is dropped and never suggested; a
+licensed one (food → FDA, wireless electronics → NBTC) is surfaced *with* its
+permit as a named cost, not hidden. Prices the full customs/VAT/duty waterfall
+via the existing `compute_flip`.
+
+**`WholesaleGenerator`** (`generators_trade.py`). Bulk **lots** inside a
+venue's own listing sample — "lot of 12", "x20", "case of 24" — whose per-unit
+price (`research.parse_lot_size` → price ÷ count) sits below the single-unit
+market *on that same venue*, measured from the non-lot singles so a page of
+lots can't flatter itself. Buy the lot, break it, resell as singles. A quantity
+thesis with its own council check (`verify_wholesale`): the exact lot must
+still be live, still below the single-unit fair, into a deep-enough singles
+market, clearing pessimistic per-unit fees.
+
+Both re-verify correctly (`_fresh_flip` preserves the stored type for
+import/export; `_fresh_wholesale` re-reads the lot from the sample) and face
+the same pessimistic-economics gate as everything else. Demo coverage: one JP
+product shaped like a real hidden-import market (`casio_fx_jp`) and an
+occasional synthetic bulk lot in `listing_sample`, so the two types appear in
+the demo feed and the type funnel — clearly labelled synthetic, exactly like
+the dislocation/refurbishment demo evidence.
+
+**Still missing from Phase 9** (honest): lead-generation and seasonal/event
+generators, the adaptive type-diversity discovery budget (Phase 10), and
+ScrapingDog as a general evidence collector (Phase 7). Those remain real gaps.

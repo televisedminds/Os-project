@@ -214,6 +214,96 @@ def find_liquidation(sample: list[dict], *, min_listings: int = 3,
 
 
 # --------------------------------------------------------------------------
+# Wholesale / bulk-lot detection — the quantity alpha inside a response
+# --------------------------------------------------------------------------
+
+# Explicit-count lot patterns. We only price a lot when the count is stated —
+# "wholesale" or "joblot" with no number can't yield an honest per-unit price,
+# so it's skipped rather than guessed. Ordered most-specific first.
+_LOT_PATTERNS = (
+    re.compile(r"\blot\s+of\s+(\d{1,3})\b", re.I),
+    re.compile(r"\b(?:job\s?lot|bundle|set|pack|box|case|bulk)\s+of\s+(\d{1,3})\b", re.I),
+    re.compile(r"\b(\d{1,3})\s*(?:x|pcs?|pieces?|pack|count|ct|units?)\b", re.I),
+    re.compile(r"\bx\s*(\d{1,3})\b", re.I),
+)
+LOT_MIN_SIZE = 3            # below this it isn't a wholesale thesis
+LOT_MAX_SIZE = 500         # above this it's noise (a model number, a year)
+
+
+def parse_lot_size(title: str) -> int | None:
+    """Extract an explicit unit count from a listing title, or None.
+
+    Deliberately conservative: requires an explicit quantity word/pattern, and
+    rejects counts outside [LOT_MIN_SIZE, LOT_MAX_SIZE] (a bare '2002' is a
+    model, not a lot of 2002)."""
+
+    for rx in _LOT_PATTERNS:
+        m = rx.search(title or "")
+        if not m:
+            continue
+        try:
+            n = int(m.group(1))
+        except (ValueError, IndexError):
+            continue
+        if LOT_MIN_SIZE <= n <= LOT_MAX_SIZE:
+            return n
+    return None
+
+
+def find_wholesale_lots(sample: list[dict], query: str, *,
+                        min_edge: float = 0.25, max_hits: int = 3) -> list[dict]:
+    """Bulk-lot listings whose PER-UNIT price sits below the single-unit market.
+
+    A lot of 20 at $300 is $15/unit; if single units clear at $25, that's a
+    40% per-unit discount you capture by buying the lot and breaking it up.
+    Returns the best such lots (deepest per-unit discount first), each with the
+    exact listing, the parsed lot size and the single-unit fair it beats.
+
+    The single-unit fair is measured from the NON-lot listings in the same
+    response, so a page full of lots can't flatter itself."""
+
+    singles = [s for s in sample
+               if float(s.get("price", 0)) > 0 and parse_lot_size(s.get("title", "")) is None
+               and not looks_junk(s.get("title", ""), s.get("condition", ""))]
+    if len(singles) < MIN_MARKET_DEPTH:
+        return []
+    stats = market_stats(singles)
+    single_fair = stats["fair_usd"]
+    if single_fair < MIN_PRICE_USD or stats["sellers"] < MIN_MARKET_SELLERS:
+        return []
+
+    hits = []
+    for s in sample:
+        title = s.get("title", "")
+        n = parse_lot_size(title)
+        price = float(s.get("price", 0))
+        if not n or price <= 0 or looks_junk(title, s.get("condition", "")):
+            continue
+        if not title_matches_query(title, query):
+            continue
+        per_unit = price / n
+        if per_unit >= single_fair * (1 - min_edge):
+            continue                                  # not enough per-unit edge
+        if per_unit < single_fair * (1 - MAX_DISCOUNT):
+            continue                                  # implausibly cheap ⇒ not real
+        hits.append({
+            "item_id": s.get("item_id", ""),
+            "title": title,
+            "url": s.get("url", ""),
+            "seller": s.get("seller", "?"),
+            "lot_size": n,
+            "lot_price_usd": round(price, 2),
+            "per_unit_usd": round(per_unit, 2),
+            "single_fair_usd": single_fair,
+            "edge_pct": round(100 * (1 - per_unit / single_fair), 1),
+            "market_n": stats["n"],
+            "market_sellers": stats["sellers"],
+        })
+    hits.sort(key=lambda h: h["per_unit_usd"] / max(0.01, h["single_fair_usd"]))
+    return hits[:max_hits]
+
+
+# --------------------------------------------------------------------------
 # Title mining — the free candidate graph inside every response
 # --------------------------------------------------------------------------
 

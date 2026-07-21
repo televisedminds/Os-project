@@ -35,6 +35,8 @@ class VerificationCouncil:
     # ------------------------------------------------------------------ flips
 
     def verify_flip(self, ds, cand: dict) -> Verification:
+        if cand.get("wholesale"):
+            return self.verify_wholesale(ds, cand)
         if cand.get("dislocation"):
             return self.verify_dislocation(ds, cand)
         econ, feas = cand["economics"], cand["feasibility"]
@@ -167,6 +169,74 @@ class VerificationCouncil:
         tax_ok = feas.can_buy and feas.can_sell
         checks.append(Check("tax_auditor", "Thailand execution path", tax_ok, 0.9,
                             "Executable from TH via a US prep/reship address." if tax_ok
+                            else "Not executable from TH.", critical=True))
+
+        v = self._consensus(checks)
+        v.tick = ds.tick_no
+        return v
+
+    # -------------------------------------------------------------- wholesale
+
+    def verify_wholesale(self, ds, cand: dict) -> Verification:
+        """Independently re-check a bulk-lot thesis: the exact lot still exists,
+        its per-unit price is still below the single-unit market, the singles
+        market is deep enough to absorb the units you'll relist, and the
+        round-trip clears pessimistic fees. Buying and reselling both happen on
+        the same venue, so this is a same-venue break-up flip."""
+
+        from .. import research
+        econ, feas = cand["economics"], cand["feasibility"]
+        pid, venue = cand["entity_id"], cand["buy_venue"]
+        w = cand["wholesale"]
+        checks: list[Check] = []
+
+        sample = ds.listing_sample(pid, venue) if hasattr(ds, "listing_sample") else []
+        row = next((s for s in sample if s.get("item_id") == w["item_id"]), None)
+        present = row is not None
+        checks.append(Check("listing_verifier", "Exact lot still live", present, 0.95,
+                            (f"Lot {w['item_id']} present at ${float(row['price']):.2f}."
+                             if present else f"Lot {w['item_id']} gone from the page — sold or pulled."),
+                            critical=True))
+        if not present:
+            return self._consensus(checks)
+
+        n = research.parse_lot_size(row.get("title", "")) or w["lot_size"]
+        per_unit = float(row["price"]) / max(1, n)
+        # Fair value measured from the venue's CURRENT non-lot singles.
+        singles = [s for s in sample
+                   if research.parse_lot_size(s.get("title", "")) is None
+                   and float(s.get("price", 0)) > 0
+                   and not research.looks_junk(s.get("title", ""), s.get("condition", ""))]
+        stats = research.market_stats(singles)
+        fair_now = stats["fair_usd"] or w["single_fair_usd"]
+        edge_now = 1 - per_unit / fair_now if fair_now else 0.0
+        edge_ok = edge_now >= 0.6 * w["min_edge"] and per_unit <= w["per_unit_usd"] * 1.1
+        checks.append(Check("price_verifier", "Per-unit still below singles", edge_ok, 0.9,
+                            f"Lot is now ${per_unit:.2f}/unit vs ${fair_now:.2f} single "
+                            f"({edge_now * 100:.0f}% under).", critical=True))
+
+        depth_ok = (stats["n"] >= research.MIN_MARKET_DEPTH
+                    and stats["sellers"] >= research.MIN_MARKET_SELLERS)
+        checks.append(Check("supply_verifier", "Singles market deep enough to absorb the lot",
+                            depth_ok, 0.85,
+                            f"{stats['n']} single-unit asks from {stats['sellers']} sellers to resell into.",
+                            critical=True))
+
+        matches = research.title_matches_query(row.get("title", ""), cand["item"]["name"])
+        real_ok = matches and not research.looks_junk(row.get("title", ""), row.get("condition", ""))
+        checks.append(Check("authenticity_check", "Lot is the intended product", real_ok, 0.8,
+                            "Lot title matches the product and isn't junk." if real_ok
+                            else "Lot title looks like a variant/junk on re-read.", critical=True))
+
+        fee_ok = econ.pessimistic.net_usd > 0
+        checks.append(Check("fee_auditor", "Per-unit survives resale fees", fee_ok, 0.9,
+                            f"Pessimistic ${econ.pessimistic.net_usd:.2f}/unit after "
+                            f"{economics.VENUES[venue]['name']} fees on every single you relist.",
+                            critical=True))
+
+        tax_ok = feas.can_buy and feas.can_sell
+        checks.append(Check("tax_auditor", "Thailand execution path", tax_ok, 0.9,
+                            "Executable from TH (buy lot to a prep address, relist singles)." if tax_ok
                             else "Not executable from TH.", critical=True))
 
         v = self._consensus(checks)

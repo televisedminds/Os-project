@@ -24,6 +24,8 @@ class OppType(str, Enum):
     INFO_PRODUCT = "info_product"
     MICRO_SAAS = "micro_saas"
     REFURBISHMENT = "refurbishment"
+    IMPORT_EXPORT = "import_export"      # cross-border route into/out of Thailand
+    WHOLESALE = "wholesale"             # buy a bulk lot, break it, resell per-unit
 
 
 class OppStatus(str, Enum):

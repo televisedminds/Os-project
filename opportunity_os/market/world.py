@@ -12,6 +12,7 @@ Seeded RNG + sorted iteration ⇒ fully reproducible replays.
 
 from __future__ import annotations
 
+import hashlib
 import random
 from dataclasses import dataclass, field
 
@@ -102,6 +103,10 @@ class SimulatedMarket:
         self._niches: dict[str, Niche] = {}
         self.scheduled: list[MarketEvent] = []
         self._headlines: list[dict] = []
+        # Products added to demonstrate a specific generator are evolved on their
+        # own RNG so they never perturb the original catalogue's deterministic
+        # trajectories (keeps existing demo-dependent tests byte-stable).
+        self._isolated: set[str] = {"casio_fx_jp"}
         self._build_catalog(event_base=warmup)
         for _ in range(warmup):
             self.tick()
@@ -177,6 +182,13 @@ class SimulatedMarket:
                     {"facebook_mp_th": _p(310.00, 6, 5, 2), "kaidee_th": _p(318.00, 4, 4, 1),
                      "shopee_th": _p(395.00, 14, 20, 6)},
                     {"reddit": 2, "tiktok": 3, "x": 1}))
+        # Cheap in Japan, dear in the US (the profit-max flip ships it to the
+        # US), but ALSO profitably importable to sell to Thai buyers — the
+        # hidden domestic route the import/export generator surfaces.
+        add(Product("casio_fx_jp", "Casio fx-JP900 scientific calculator (JP market)", "electronics", 0.30,
+                    {"yahoo_auctions_jp": _p(34.00, 250, 22, 5), "shopee_th": _p(98.00, 45, 15, 11),
+                     "ebay_us": _p(152.00, 24, 12, 8)},
+                    {"reddit": 4, "tiktok": 3, "x": 2}))
 
         def addn(n: Niche):
             N[n.id] = n
@@ -266,33 +278,12 @@ class SimulatedMarket:
         for ev in [e for e in self.scheduled if e.tick == t]:
             self._apply_event(ev)
 
-        for pid in sorted(self.products):
-            p = self.products[pid]
-            p.temp_effects = [e for e in p.temp_effects if e["until"] >= t]
-            dmult = p.demand_mult(t)
-            for vid in sorted(p.venues):
-                l = p.venues[vid]
-                mean_sold = max(0.0, l.velocity * dmult)
-                sold = max(0, round(self.rng.gauss(mean_sold, max(0.4, mean_sold * 0.35)))) if l.stock > 0 else 0
-                sold = min(sold, l.stock)
-                l.stock -= sold
-                l.velocity = 0.8 * l.velocity + 0.2 * sold
-                drift = self.rng.gauss(0, 0.012)
-                pressure = 0.02 if (l.stock < max(3, l.initial_stock * 0.12) and dmult >= 1) else \
-                           (-0.005 if l.stock > l.initial_stock * 0.9 else 0.0)
-                l.price = max(0.5, l.price * (1 + drift + pressure))
-                if l.stock < l.initial_stock * 0.2 and t >= l.no_restock_until and self.rng.random() < 0.20:
-                    l.stock += self.rng.randint(2, max(3, l.initial_stock // 8))
-                if self.rng.random() < 0.06:
-                    l.sellers = max(1, l.sellers + self.rng.choice([-1, 1]))
-                p.history.setdefault(vid, []).append(l.snapshot())
-                p.history[vid] = p.history[vid][-HISTORY_CAP:]
-            bmult = p.buzz_mult(t)
-            for src in SOCIAL_SOURCES:
-                mu = p.buzz.get(src, 0) * bmult
-                m = max(0, round(self.rng.gauss(mu, max(0.6, mu ** 0.5))))
-                p.mentions_history.setdefault(src, []).append(m)
-                p.mentions_history[src] = p.mentions_history[src][-HISTORY_CAP:]
+        # Products added purely to demonstrate a generator (see _isolated) are
+        # evolved on their OWN deterministic RNG, AFTER the shared-stream loops,
+        # so introducing one does not perturb the trajectories of the original
+        # catalogue or the niches (which draw from self.rng in a fixed order).
+        for pid in sorted(p for p in self.products if p not in self._isolated):
+            self._evolve_product(self.products[pid], t, self.rng)
 
         for nid in sorted(self._niches):
             n = self._niches[nid]
@@ -310,6 +301,45 @@ class SimulatedMarket:
                 mm = max(0, round(self.rng.gauss(mu, max(0.6, mu ** 0.5))))
                 n.mentions_history.setdefault(src, []).append(mm)
                 n.mentions_history[src] = n.mentions_history[src][-HISTORY_CAP:]
+
+        # Isolated demo products, evolved deterministically off the shared stream.
+        for pid in sorted(self._isolated):
+            p = self.products.get(pid)
+            if not p:
+                continue
+            seed = int(hashlib.sha1(f"iso|{pid}|{t}".encode()).hexdigest()[:8], 16)
+            self._evolve_product(p, t, random.Random(seed))
+
+    def _evolve_product(self, p, t: int, rng) -> None:
+        """One tick of price/stock/seller/mention evolution for a product,
+        drawing all randomness from `rng` (the shared world RNG for the base
+        catalogue, a per-entity RNG for isolated demo products)."""
+
+        p.temp_effects = [e for e in p.temp_effects if e["until"] >= t]
+        dmult = p.demand_mult(t)
+        for vid in sorted(p.venues):
+            l = p.venues[vid]
+            mean_sold = max(0.0, l.velocity * dmult)
+            sold = max(0, round(rng.gauss(mean_sold, max(0.4, mean_sold * 0.35)))) if l.stock > 0 else 0
+            sold = min(sold, l.stock)
+            l.stock -= sold
+            l.velocity = 0.8 * l.velocity + 0.2 * sold
+            drift = rng.gauss(0, 0.012)
+            pressure = 0.02 if (l.stock < max(3, l.initial_stock * 0.12) and dmult >= 1) else \
+                       (-0.005 if l.stock > l.initial_stock * 0.9 else 0.0)
+            l.price = max(0.5, l.price * (1 + drift + pressure))
+            if l.stock < l.initial_stock * 0.2 and t >= l.no_restock_until and rng.random() < 0.20:
+                l.stock += rng.randint(2, max(3, l.initial_stock // 8))
+            if rng.random() < 0.06:
+                l.sellers = max(1, l.sellers + rng.choice([-1, 1]))
+            p.history.setdefault(vid, []).append(l.snapshot())
+            p.history[vid] = p.history[vid][-HISTORY_CAP:]
+        bmult = p.buzz_mult(t)
+        for src in SOCIAL_SOURCES:
+            mu = p.buzz.get(src, 0) * bmult
+            m = max(0, round(rng.gauss(mu, max(0.6, mu ** 0.5))))
+            p.mentions_history.setdefault(src, []).append(m)
+            p.mentions_history[src] = p.mentions_history[src][-HISTORY_CAP:]
 
     def _apply_event(self, ev: MarketEvent) -> None:
         t = self.tick_no
@@ -440,6 +470,19 @@ class SimulatedMarket:
                 "price": round(lst.price * rng.uniform(0.28, 0.42), 2),
                 "url": f"https://www.ebay.com/itm/sim{seed}P",
                 "seller": rng.choice(sellers), "condition": "FOR_PARTS_OR_NOT_WORKING"})
+        # A bulk LOT priced per-unit below the singles — the raw material for a
+        # wholesale break-up thesis (buy the lot, resell singles). Guaranteed on
+        # isolated demo products so the type is always demonstrable; occasional
+        # on the rest, exactly like the dislocation/for-parts injections.
+        if ((product_id in self._isolated or rng.random() < 0.30)
+                and n >= 8 and 12 <= lst.price <= 140):
+            lot_n = rng.choice([6, 8, 10, 12])
+            per_unit = lst.price * rng.uniform(0.5, 0.62)
+            sample.append({
+                "item_id": f"sim{seed}L", "title": f"{p.name} lot of {lot_n} (bulk wholesale)",
+                "price": round(per_unit * lot_n, 2),
+                "url": f"https://www.ebay.com/itm/sim{seed}L",
+                "seller": rng.choice(sellers), "condition": "USED_GOOD"})
         return sample
 
     def product_history(self, product_id: str, venue: str) -> list[dict]:
