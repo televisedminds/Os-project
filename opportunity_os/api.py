@@ -373,11 +373,29 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
     @app.get("/api/opportunities")
     def list_opportunities(status: str | None = None, category: str | None = None,
                            min_score: float = 0.0, q: str | None = None,
-                           plan: str | None = None,
+                           plan: str | None = None, cluster: bool = True,
                            limit: int = Query(default=100, le=500)):
         p = plan_of(plan)
-        rows = [_row(o, orch.learning.category_affinity(o["category"]))
-                for o in store.list_opportunities(status, category, min_score, q, limit)]
+        from . import clustering
+        raw = store.list_opportunities(status, category, min_score, q, limit)
+        metrics = clustering.cluster_metrics(len(raw), [o for o in raw if o["status"] == "active"])
+
+        if cluster:
+            # Phase 6: collapse duplicate theses (e.g. 20 underpriced listings of
+            # one model) into ONE row that carries the depth, instead of 20 rows.
+            clusters = {c["representative_id"]: c
+                        for c in clustering.cluster([o for o in raw if o["status"] == "active"])}
+            kept = [o for o in raw if o["status"] != "active" or o["id"] in clusters]
+            rows = []
+            for o in kept:
+                r = _row(o, orch.learning.category_affinity(o["category"]))
+                c = clusters.get(o["id"])
+                if c and c["qualifying_listings"] > 1:
+                    r["cluster"] = c
+                rows.append(r)
+        else:
+            rows = [_row(o, orch.learning.category_affinity(o["category"])) for o in raw]
+
         rows.sort(key=lambda r: (r["status"] != "active",
                                  -(r["score"] + 2 * ((r.get("personal") or {}).get("boost", 0)))))
         locked = 0
@@ -386,7 +404,8 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
             keep_ids = {r["id"] for r in keep}
             locked = len([r for r in rows if r["status"] == "active"]) - len(keep)
             rows = [r for r in rows if r["id"] in keep_ids or r["status"] != "active"]
-        return {"plan": p["label"], "count": len(rows), "locked": max(0, locked), "opportunities": rows}
+        return {"plan": p["label"], "count": len(rows), "locked": max(0, locked),
+                "metrics": metrics, "opportunities": rows}
 
     @app.get("/api/opportunities/{opp_id}")
     def get_opportunity(opp_id: str, plan: str | None = None):

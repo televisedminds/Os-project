@@ -216,6 +216,8 @@ class Opportunity:
     evidence: list[dict[str, Any]] = field(default_factory=list)
     verification_level: str = "discovered"
     single_source: bool = True
+    # Phase 10: the Thailand executability report.
+    executability: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

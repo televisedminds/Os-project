@@ -23,7 +23,7 @@ from .config import Config
 from .db import Store
 from .market import SimulatedMarket
 from .models import Opportunity, OppStatus, OppType, opportunity_id
-from . import economics, evidence, research, thailand
+from . import economics, evidence, executability, research, thailand
 
 
 class Orchestrator:
@@ -320,7 +320,9 @@ class Orchestrator:
         # grade reflects the QUALITY of evidence, not just that it passed —
         # single-source, asking-price-only work is honestly capped.
         ledger = evidence.build_ledger(cand, verification, self.cfg.mode, self._latest_ts(cand))
-        level = evidence.compute_level(ledger, verification, cand["feasibility"], passed_gates=True)
+        exec_report = executability.assess(self._exec_input(cand))
+        level = evidence.compute_level(ledger, verification, cand["feasibility"],
+                                       passed_gates=True, executable=exec_report["execution_ready"])
         single = evidence.is_single_source(ledger)
         # A dislocation is identified by its specific listing, so two under-
         # priced listings of the same product get distinct, stable identities.
@@ -339,8 +341,22 @@ class Orchestrator:
             feasibility=cand["feasibility"], why_chain=cand["why"],
             playbook=playbook, automation=automation, sources=cand["sources"],
             evidence=ledger, verification_level=level.value, single_source=single,
+            executability=exec_report,
         )
         return opp, ""
+
+    def _exec_input(self, cand: dict) -> dict:
+        """Normalize a candidate into the plain dict the executability engine
+        reads (its economics/feasibility may be dataclasses at this stage)."""
+
+        return {
+            "type": cand["opp_type"].value, "kind": cand["kind"],
+            "category": cand["category"], "route": cand.get("route", {}),
+            "economics": asdict(cand["economics"]) if not isinstance(cand["economics"], dict)
+            else cand["economics"],
+            "feasibility": asdict(cand["feasibility"]) if not isinstance(cand["feasibility"], dict)
+            else cand["feasibility"],
+        }
 
     def _latest_ts(self, cand: dict) -> float:
         """Timestamp of the freshest observation behind a candidate (live mode);
@@ -395,6 +411,7 @@ class Orchestrator:
         automation = build_automation(cand)
         score = scorer.score(cand, automation.coverage_pct)
         ledger = evidence.build_ledger(cand, verification, self.cfg.mode, self._latest_ts(cand))
+        exec_report = executability.assess(self._exec_input(cand))
         stored["economics"] = asdict(cand["economics"])
         stored["verification"] = asdict(verification)
         stored["score"] = asdict(score)
@@ -404,8 +421,10 @@ class Orchestrator:
         stored["tick_updated"] = tick
         stored["status"] = OppStatus.ACTIVE.value
         stored["evidence"] = ledger
+        stored["executability"] = exec_report
         stored["verification_level"] = evidence.compute_level(
-            ledger, verification, cand["feasibility"], passed_gates=True).value
+            ledger, verification, cand["feasibility"], passed_gates=True,
+            executable=exec_report["execution_ready"]).value
         stored["single_source"] = evidence.is_single_source(ledger)
         self.db.upsert_opportunity(stored)
         return True, "", None
@@ -551,20 +570,28 @@ def _key_gaps(store: Store, cfg: Config) -> list[str]:
     return gaps
 
 
+def _operator_profile(store: Store, cfg: Config) -> dict:
+    """The operator's execution preferences (risk tolerance, caps, reserve),
+    read from the watchlist if present."""
+
+    try:
+        from dataclasses import asdict
+        from .market import watchlist as wl
+        if cfg.watchlist_path.exists():
+            return asdict(wl.load(cfg.watchlist_path).operator)
+    except Exception:  # noqa: BLE001
+        pass
+    return {}
+
+
 def _operator_capital(store: Store, cfg: Config) -> float:
     """The operator's deployable capital: their watchlist budget if set,
     otherwise the configured capital cap."""
 
-    try:
-        from .market import watchlist as wl
-        if cfg.watchlist_path.exists():
-            op = wl.load(cfg.watchlist_path).operator
-            for key in ("capital_usd", "budget_usd"):
-                v = getattr(op, key, None)
-                if v:
-                    return float(v)
-    except Exception:  # noqa: BLE001
-        pass
+    op = _operator_profile(store, cfg)
+    for key in ("capital_usd", "budget_usd"):
+        if op.get(key):
+            return float(op[key])
     return float(cfg.capital_cap_usd)
 
 
@@ -606,10 +633,16 @@ def briefing(store: Store, cfg: Config, plan_name: str | None = None) -> dict:
     lines += _key_gaps(store, cfg)
 
     # Capital allocation: don't just rank opportunities — solve for the best
-    # use of finite capital. Greedy over net-per-dollar-per-day, capped per
-    # category, respecting the operator's actual budget.
+    # use of finite capital, deduplicated by thesis, respecting the operator's
+    # budget, risk tolerance, per-opportunity cap and liquidity reserve.
     capital = float(_operator_capital(store, cfg))
-    capital_plan = research.allocate_capital(actives, capital)
+    op = _operator_profile(store, cfg)
+    capital_plan = research.allocate_capital(
+        actives, capital,
+        risk_tolerance=op.get("risk_tolerance", "balanced"),
+        max_per_opportunity=op.get("max_per_opportunity") or None,
+        liquidity_reserve_pct=float(op.get("liquidity_reserve_pct", 0.10)),
+        max_holding_days=op.get("max_holding_days") or None)
 
     return {
         "generated_at": now.isoformat(),

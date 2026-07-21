@@ -325,49 +325,138 @@ def ucb_rank(rows: list[dict], total_scans: int) -> list[tuple[str, float]]:
 # --------------------------------------------------------------------------
 
 MAX_CATEGORY_SHARE = 0.6    # concentration cap: ≤60% of capital in one category
+BENCHMARK_DAILY = 0.0005    # ~18%/yr alternative return, for opportunity cost
+# Fraction of capital recoverable in a fire-sale, by opportunity kind — drives
+# the honest worst-case loss (you can usually dump goods; a launched venture's
+# startup spend is mostly sunk).
+_LIQUIDATION_RECOVERY = {"flip": 0.70, "dislocation": 0.70, "refurbish": 0.50,
+                         "venture": 0.15, "default": 0.5}
+_RISK_MIN_LEVEL = {"conservative": 3, "balanced": 2, "aggressive": 1}   # verification-level rank
+_LEVEL_RANK = {"execution_ready": 4, "multi_source_verified": 3,
+               "partially_verified": 2, "discovered": 1, "invalidated": 0}
 
 
-def allocate_capital(opportunities: list[dict], capital_usd: float) -> dict:
-    """Greedy plan over verified opportunities: deploy capital where expected
-    net per dollar per day is highest, capped per category so one thesis
-    can't own the whole book. Input rows are stored opportunity dicts."""
+def allocate_capital(opportunities: list[dict], capital_usd: float, *,
+                     max_per_opportunity: float | None = None,
+                     max_category_share: float = MAX_CATEGORY_SHARE,
+                     risk_tolerance: str = "balanced",
+                     liquidity_reserve_pct: float = 0.0,
+                     max_holding_days: float | None = None) -> dict:
+    """Solve for the best use of finite capital — not just a ranking (Phase 11).
 
-    scored = []
+    Inputs beyond the opportunity list: a per-opportunity cap, a per-category
+    concentration cap, a risk tolerance (which verification levels qualify and
+    whether to price on base or pessimistic net), a liquidity reserve to keep
+    uninvested, and a maximum holding time. Deduplicated by thesis so 20
+    listings of one edge don't each draw capital.
+
+    Outputs per pick: quantity, capital, expected profit, WORST-CASE loss,
+    expected completion date, and opportunity cost of the tied-up cash; plus
+    portfolio totals and cash remaining.
+    """
+
+    import datetime as _dt
+
+    reserve = max(0.0, float(capital_usd) * max(0.0, min(1.0, liquidity_reserve_pct)))
+    investable = max(0.0, float(capital_usd) - reserve)
+    min_level = _RISK_MIN_LEVEL.get(risk_tolerance, 2)
+    conservative = risk_tolerance == "conservative"
+    today = _dt.date.today()
+
+    # Dedup by thesis: keep the strongest opportunity per market edge.
+    from .clustering import thesis_key
+    best_by_thesis: dict[str, dict] = {}
     for o in opportunities:
+        k = thesis_key(o)
+        if k not in best_by_thesis or _net(o) > _net(best_by_thesis[k]):
+            best_by_thesis[k] = o
+
+    scored, filtered_out = [], []
+    for o in best_by_thesis.values():
         econ = o.get("economics") or {}
         cap = float(econ.get("capital_usd", 0) or 0)
-        net = float(econ.get("total_net_usd", 0) or 0)
+        base_net = float(econ.get("total_net_usd", 0) or 0)
+        pess_unit = float((econ.get("pessimistic") or {}).get("net_usd", 0) or 0)
+        qty = int(econ.get("qty", 1) or 1)
+        pess_net = pess_unit * qty
+        net = pess_net if conservative else base_net
         days = max(1.0, float(o.get("window_days", 7) or 7))
+        # A stored ACTIVE opportunity has passed the gates, so absent-level
+        # means at least partially-verified (not "discovered").
+        level = o.get("verification_level") or "partially_verified"
+        kind = (o.get("route", {}) or {}).get("kind") or ("venture" if econ.get("kind") == "venture" else "flip")
         if cap <= 0 or net <= 0:
             continue
-        scored.append({"id": o["id"], "title": o["title"], "category": o.get("category", "?"),
-                       "capital_usd": round(cap, 2), "net_usd": round(net, 2),
-                       "days": days, "velocity": round(net / cap / days, 4)})
+        if _LEVEL_RANK.get(level, 0) < min_level:
+            filtered_out.append({"id": o["id"], "title": o["title"],
+                                 "why": f"{level} below '{risk_tolerance}' risk floor"})
+            continue
+        if max_holding_days and days > max_holding_days:
+            filtered_out.append({"id": o["id"], "title": o["title"],
+                                 "why": f"{days:.0f}-day hold exceeds your {max_holding_days:.0f}-day limit"})
+            continue
+        recovery = _LIQUIDATION_RECOVERY.get(kind, _LIQUIDATION_RECOVERY["default"])
+        scored.append({
+            "id": o["id"], "title": o["title"], "category": o.get("category", "?"),
+            "verification_level": level, "qty": qty,
+            "capital_usd": round(cap, 2), "expected_profit_usd": round(net, 2),
+            "worst_case_loss_usd": round(cap * (1 - recovery), 2),
+            "days": days, "velocity": round(net / cap / days, 4),
+            "completion_date": (today + _dt.timedelta(days=round(days))).isoformat(),
+        })
     scored.sort(key=lambda r: r["velocity"], reverse=True)
 
-    plan, skipped = [], []
-    remaining = max(0.0, float(capital_usd))
+    plan, skipped = [], list(filtered_out)
+    remaining = investable
     cat_spend: dict[str, float] = {}
-    cat_cap = capital_usd * MAX_CATEGORY_SHARE if capital_usd > 0 else 0.0
+    cat_cap = investable * max_category_share if investable > 0 else 0.0
+    per_opp_cap = float(max_per_opportunity) if max_per_opportunity else float("inf")
     for r in scored:
         cat = r["category"]
-        if r["capital_usd"] > remaining:
-            skipped.append({**r, "why": f"needs ${r['capital_usd']:,.0f}, only ${remaining:,.0f} left"})
+        take = min(r["capital_usd"], per_opp_cap)
+        # The per-opportunity cap can only trim a MULTI-unit position (buy fewer
+        # units); a single indivisible lot over the cap is skipped, not fractioned.
+        if take < r["capital_usd"] and r["qty"] <= 1:
+            skipped.append({"id": r["id"], "title": r["title"],
+                            "why": f"${r['capital_usd']:,.0f} single lot exceeds your "
+                                   f"${per_opp_cap:,.0f} per-opportunity cap"})
             continue
-        if capital_usd > 0 and cat_spend.get(cat, 0.0) + r["capital_usd"] > cat_cap and len(scored) > 1:
-            skipped.append({**r, "why": f"category cap — already ${cat_spend.get(cat, 0.0):,.0f} in {cat}"})
+        if take > remaining:
+            skipped.append({"id": r["id"], "title": r["title"],
+                            "why": f"needs ${r['capital_usd']:,.0f}, only ${remaining:,.0f} investable left"})
             continue
-        remaining -= r["capital_usd"]
-        cat_spend[cat] = cat_spend.get(cat, 0.0) + r["capital_usd"]
-        plan.append({**r, "order": len(plan) + 1})
+        if investable > 0 and cat_spend.get(cat, 0.0) + take > cat_cap and len(scored) > 1:
+            skipped.append({"id": r["id"], "title": r["title"],
+                            "why": f"category cap — already ${cat_spend.get(cat, 0.0):,.0f} in {cat}"})
+            continue
+        # Scale down proportionally if the per-opportunity cap trims a multi-lot.
+        scale = take / r["capital_usd"] if r["capital_usd"] else 1.0
+        opp_cost = round(take * BENCHMARK_DAILY * r["days"], 2)
+        remaining -= take
+        cat_spend[cat] = cat_spend.get(cat, 0.0) + take
+        plan.append({**r, "order": len(plan) + 1, "capital_usd": round(take, 2),
+                     "qty": max(1, int(r["qty"] * scale)),
+                     "expected_profit_usd": round(r["expected_profit_usd"] * scale, 2),
+                     "worst_case_loss_usd": round(r["worst_case_loss_usd"] * scale, 2),
+                     "opportunity_cost_usd": opp_cost})
     deployed = round(sum(r["capital_usd"] for r in plan), 2)
-    expected = round(sum(r["net_usd"] for r in plan), 2)
+    expected = round(sum(r["expected_profit_usd"] for r in plan), 2)
+    worst = round(sum(r["worst_case_loss_usd"] for r in plan), 2)
+    completion = max((r["completion_date"] for r in plan), default=None)
     return {
         "capital_usd": round(float(capital_usd), 2),
+        "risk_tolerance": risk_tolerance,
+        "reserve_usd": round(reserve + max(0.0, remaining), 2),
         "deployed_usd": deployed,
-        "reserve_usd": round(max(0.0, float(capital_usd)) - deployed, 2),
+        "cash_remaining_usd": round(float(capital_usd) - deployed, 2),
         "expected_net_usd": expected,
         "expected_roi_pct": round(100 * expected / deployed, 1) if deployed else 0.0,
+        "worst_case_loss_usd": worst,
+        "expected_completion": completion,
         "plan": plan,
-        "skipped": skipped[:5],
+        "skipped": skipped[:6],
     }
+
+
+def _net(o: dict) -> float:
+    return float((o.get("economics") or {}).get("total_net_usd", 0) or 0)

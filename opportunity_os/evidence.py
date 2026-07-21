@@ -182,9 +182,11 @@ def is_single_source(ledger: list[dict]) -> bool:
 
 
 def compute_level(ledger: list[dict], verification, feasibility,
-                  passed_gates: bool) -> VerificationLevel:
+                  passed_gates: bool, executable: bool = True) -> VerificationLevel:
     """Grade an opportunity by the QUALITY of its evidence, not just whether it
-    passed. Single-source / asking-price-only work is honestly capped."""
+    passed. Single-source / asking-price-only work is honestly capped, and
+    EXECUTION_READY additionally requires the Thailand executability engine to
+    have no unknown/blocking answers (Phase 10)."""
 
     if not passed_gates:
         return VerificationLevel.DISCOVERED
@@ -198,7 +200,8 @@ def compute_level(ledger: list[dict], verification, feasibility,
     if n_sources < 2:
         return VerificationLevel.PARTIALLY_VERIFIED     # single-source — never "fully verified"
     level = VerificationLevel.MULTI_SOURCE_VERIFIED
-    if can_buy and can_sell and rails and fresh and (has_sold_comps(ledger) or n_sources >= 3):
+    if (executable and can_buy and can_sell and rails and fresh
+            and (has_sold_comps(ledger) or n_sources >= 3)):
         level = VerificationLevel.EXECUTION_READY
     return level
 

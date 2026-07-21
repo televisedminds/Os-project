@@ -6,6 +6,36 @@ The objective function, stated once and used to judge every idea below:
 > API budget and operator attention.** Scan count is an input cost, not a KPI.
 > 20 high-confidence opportunities beat 20,000 weak ones.
 
+## 0. v0.11 — dedup, Thailand executability, capital optimizer (Phases 6/10/11)
+
+* **Thesis clustering (`clustering.py`, Phase 6)** — twenty underpriced listings
+  of one model are ONE market inefficiency. `cluster` collapses opportunities
+  sharing a thesis key (type + route + product family) into a single row that
+  carries the depth — qualifying-listing count, price range, inventory depth,
+  recommended quantity, best confidence — instead of repeating the edge N
+  times. The feed clusters by default (`?cluster=false` to see every listing);
+  `cluster_metrics` reports raw candidates → unique listings → unique products →
+  unique theses with an inflation ratio, so "N verified" is readable for what
+  it is.
+* **Thailand executability engine (`executability.py`, Phase 10)** — every
+  opportunity answers the concrete questions a TH operator has: can a Thai
+  resident register on the buy/sell platform, is a Thai-usable payout available,
+  is a company required, are there category import/export restrictions, what
+  shipping and customs docs apply, are TH taxes in the numbers, is it still
+  profitable pessimistically. Each answer is yes/no/estimated/**unknown** —
+  and an opportunity cannot be EXECUTION_READY (Phase 7) while any critical
+  answer is unknown or a blocker. Nothing is guessed.
+* **Capital optimizer v2 (`research.allocate_capital`, Phase 11)** — solves for
+  the best use of finite capital, not a ranking: inputs are the budget, a
+  per-opportunity cap, a category concentration cap, a risk tolerance
+  (conservative prices on pessimistic net and admits only multi-source+;
+  aggressive admits all), a liquidity reserve, and a max holding time; outputs
+  per pick are quantity, capital, expected profit, WORST-CASE loss (from a
+  kind-specific liquidation recovery), completion date and the opportunity cost
+  of the tied-up cash — plus portfolio totals and cash remaining.
+  **Deduplicated by thesis**, so 20 listings of one edge draw capital once.
+  Surfaced in the daily briefing.
+
 ## 0a. v0.10 — evidence, verification levels, honest funnels (Phases 7–9)
 
 "Verified" used to be a single boolean. Now it means something graded, and
