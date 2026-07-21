@@ -18,6 +18,7 @@
   </div>
   <div class="topbar-right">
     <span class="tick" id="tick-label">tick —</span>
+    <span class="lock-state" id="lock-state" title="Reading is free; write actions ask for your token once.">🔒 locked</span>
     <label class="plan-picker">plan
       <select id="plan-select">
         <option value="free">Free</option>
@@ -25,7 +26,7 @@
         <option value="team">Team</option>
       </select>
     </label>
-    <button id="cycle-btn" class="btn btn-primary">▶ Run research cycle</button>
+    <button id="cycle-btn" class="btn btn-primary"><span class="btn-full">▶ Run research cycle</span><span class="btn-short">▶ Run</span></button>
   </div>
 </header>
 
@@ -85,6 +86,9 @@
     </div>
 
     <div class="detail-pane" id="detail-pane">
+      <div class="detail-backbar" id="detail-backbar">
+        <button class="btn" id="detail-back">←&nbsp;All opportunities</button>
+      </div>
       <div class="detail-empty" id="detail-empty">
         <div class="detail-empty-mark">◆</div>
         <p>Select an opportunity to see the evidence:<br>why-chain, cost waterfall, verification council,<br>Thailand feasibility and the execution playbook.</p>

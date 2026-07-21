@@ -57,6 +57,10 @@ const pct = (v, dp = 0) => v == null ? "—" : (v * 100).toFixed(dp) + "%";
    prompt once and retry — so the dashboard stays usable once a token is set on
    the server, without shipping the secret to the browser. */
 function adminToken() { return localStorage.getItem("oos_admin_token") || ""; }
+function markUnlocked() {
+  const el = document.getElementById("lock-state");
+  if (el) { el.textContent = "🔓 unlocked"; el.classList.add("unlocked"); }
+}
 
 async function api(path, opts = {}) {
   const withTok = (tok) => Object.assign({}, opts, {
@@ -65,12 +69,19 @@ async function api(path, opts = {}) {
   let r = await fetch(path, withTok(adminToken()));
   if (r.status === 401 || r.status === 403) {
     const entered = (window.prompt(
-      "Admin token required to view/manage keys or run cycles.\n" +
-      "Set OOS_DASHBOARD_TOKEN on the server (see SECURITY.md), then paste it here:") || "").trim();
+      "🔓 Unlock write actions (chat, run cycle, save keys)\n\n" +
+      "Reading opportunities is free — but actions that spend or change things ask for your " +
+      "one-time key. On the server run:  grep OOS_DASHBOARD_TOKEN /opt/opportunity-os/.env\n" +
+      "Paste the value here (saved on this device only):") || "").trim();
     if (entered) {
       localStorage.setItem("oos_admin_token", entered);
       r = await fetch(path, withTok(entered));
-      if (r.status === 401 || r.status === 403) localStorage.removeItem("oos_admin_token");
+      if (r.status === 401 || r.status === 403) {
+        localStorage.removeItem("oos_admin_token");
+        toast("That key didn't work — check the value on your server and try again.", 7000);
+      } else {
+        markUnlocked();
+      }
     }
   }
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
@@ -219,12 +230,13 @@ async function loadFeed() {
             title="${esc(o.personal.note)}">${o.personal.boost > 0 ? "★ for you" : "▼ downranked"}</span>` : ""}
         </div>
       </td>
-      <td class="t-right"><span class="${o.net_usd >= 0 ? "pos" : "neg"}">${fmtUSD(o.net_usd)}</span>
-        <div class="op-sub">${o.econ_kind === "venture" ? "/mo · " : `${o.qty}× · `}${fmtTHB(o.net_thb)}</div></td>
-      <td class="t-right">${o.margin_pct.toFixed(0)}%</td>
-      <td>${meter(o.score)}</td>
-      <td class="t-right">${pct(o.confidence)}</td>
-      <td class="t-right">${o.window_days.toFixed(0)}d</td>
+      <td class="t-right" data-label="Est. net"><span class="${o.net_usd >= 0 ? "pos" : "neg"}">${fmtUSD(o.net_usd)}</span>
+        <span class="op-sub">${o.econ_kind === "venture" ? "/mo · " : `${o.qty}× · `}${fmtTHB(o.net_thb)}</span></td>
+      <td class="t-right" data-label="Margin">${o.margin_pct.toFixed(0)}%</td>
+      <td data-label="Score">${meter(o.score)}</td>
+      <td class="t-right" data-label="Confidence">${pct(o.confidence)}</td>
+      <td class="t-right" data-label="Window">${o.window_days.toFixed(0)}d</td>
+      <td class="feed-go" aria-hidden="true">View details →</td>
     </tr>`;
   }).join("");
 
@@ -251,6 +263,15 @@ async function selectOpportunity(id) {
   el.innerHTML = renderDetail(o);
   wireDetail(el, o);
   el.scrollTop = 0;
+  // On phones the detail takes over the screen; a back bar returns to the list.
+  document.body.classList.add("detail-open");
+  window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+}
+
+function closeDetail() {
+  document.body.classList.remove("detail-open");
+  state.selectedId = null;
+  document.querySelectorAll(".feed-row").forEach((tr) => tr.classList.remove("selected"));
 }
 
 function renderDetail(o) {
@@ -732,6 +753,15 @@ function playbook(o) {
 
 function wireDetail(el, o) {
   wireChat(el, o);
+  // Phones: collapse the deep-dive sections by default so the detail leads with
+  // the money + the action, not a wall of terminal read-outs. Tap a heading to
+  // open it. The chat stays open — it's the interactive part.
+  const isPhone = window.matchMedia("(max-width: 720px)").matches;
+  el.querySelectorAll(".d-section").forEach((s) => {
+    if (isPhone && s.id !== "chat-section") s.classList.add("collapsed");
+    const h = s.querySelector("h3");
+    if (h) h.addEventListener("click", () => s.classList.toggle("collapsed"));
+  });
   el.querySelectorAll(".kit-gen").forEach((b) =>
     b.addEventListener("click", async () => {
       b.disabled = true;
@@ -1091,8 +1121,13 @@ function init() {
       loadOps();
     }));
 
+  $("#detail-back").addEventListener("click", closeDetail);
+  if (adminToken()) markUnlocked();
+
   refreshAll().then(async () => {
-    // preselect the top-scoring active opportunity so the evidence panel isn't empty
+    // On desktop, preselect the top opportunity so the evidence panel isn't
+    // empty. On phones, land on the LIST first — the detail opens on tap.
+    if (window.matchMedia("(max-width: 720px)").matches) return;
     const r = await api(`/api/opportunities?plan=${state.plan}&status=active`);
     if (r.opportunities.length) selectOpportunity(r.opportunities[0].id);
   }).catch((e) => toast("Failed to load: " + e.message));
