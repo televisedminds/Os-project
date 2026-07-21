@@ -644,6 +644,26 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
 
         return orch.run_cycle()
 
+    @app.get("/api/diagnostics/funnel")
+    def diagnostics_funnel():
+        """Source + opportunity-type funnels from stored data (no network).
+        Answers 'is 62 verified really 62 independent opportunities?'."""
+
+        from . import diagnostics
+        return {"by_source": diagnostics.source_funnel(store),
+                "by_type": diagnostics.type_funnel(store)}
+
+    @app.post("/api/diagnostics/sources")
+    def diagnostics_sources(_: None = Depends(guard)):
+        """Honest per-source health via real test calls. Gated + POST because a
+        probe spends live budget (a Serper/ScrapingDog credit, a tiny Claude
+        call) and hits the network."""
+
+        from . import diagnostics
+        world = orch.world
+        adapters = getattr(world, "adapters", None)
+        return {"sources": diagnostics.probe_sources(cfg, store, adapters)}
+
     @app.get("/api/agents")
     def agents():
         rows = store.list_agents()

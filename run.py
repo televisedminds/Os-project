@@ -156,6 +156,40 @@ def cmd_live_check(args) -> None:
     raise SystemExit(0 if all_ok else 1)
 
 
+def cmd_diagnose(args) -> None:
+    """Honest per-source health: a real, safe test call to each integration."""
+
+    args.live = True
+    cfg = _cfg(args)
+    from opportunity_os import diagnostics, settings as app_settings
+    store = _store(cfg)
+    app_settings.load_into(cfg, store)
+
+    print(f"\n◆ OPPORTUNITY OS  diagnose_sources   (db: {cfg.db_path})")
+    print("  Making one real test call per source — a key being 'set' proves nothing.\n")
+    rows = diagnostics.probe_sources(cfg, store)
+    icon = {"HEALTHY": "✓", "DEGRADED": "~", "AUTH_FAILED": "✗", "QUOTA_EXHAUSTED": "$",
+            "PARSER_BROKEN": "!", "NO_DATA": "·", "DISABLED": "−"}
+    print(f"  {'SOURCE':<14}{'STATUS':<16}{'LAT':>7}  {'PARSED':>7}  {'STORED':>7}  NOTE")
+    print(f"  {'-'*14}{'-'*16}{'-'*7}  {'-'*7}  {'-'*7}  {'-'*30}")
+    for r in rows:
+        lat = f"{r['avg_latency_ms']:.0f}ms" if r["avg_latency_ms"] is not None else "—"
+        parsed = r["records_parsed"] if r["records_parsed"] is not None else "—"
+        note = (r["note"] or r["error"] or "")[:44]
+        print(f"  {r['id']:<14}{icon.get(r['status'],'?')} {r['status']:<14}{lat:>7}  "
+              f"{str(parsed):>7}  {str(r['observations_stored']):>7}  {note}")
+
+    print("\n  Source funnel (what actually reaches a published opportunity):")
+    for f in diagnostics.source_funnel(store):
+        print(f"    {f['source']:<14} obs {f['observations_stored']:>6}   "
+              f"→ published {f['published_opportunities']}")
+    tf = diagnostics.type_funnel(store)
+    print(f"\n  Opportunity types: {tf['by_type']}")
+    print(f"  {tf['verified_opportunities']} verified = {tf['unique_theses']} unique theses "
+          f"across {tf['unique_products']} products")
+    print()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="opportunity-os", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -191,6 +225,10 @@ def main() -> None:
 
     lc = sub.add_parser("live-check", help="validate live keys, adapters, watchlist and FX")
     lc.set_defaults(fn=cmd_live_check)
+
+    dg = sub.add_parser("diagnose_sources",
+                        help="real test call to every source; honest health + funnel report")
+    dg.set_defaults(fn=cmd_diagnose)
 
     args = ap.parse_args()
     args.fn(args)
