@@ -270,6 +270,7 @@ function renderDetail(o) {
         <div style="margin-top:7px">
           <span class="chip"><span class="dot" style="background:${dot}"></span>${esc(TYPE_LABEL[o.type] || o.type)}</span>
           <span class="chip">${esc(o.category.replace(/_/g, " "))}</span>
+          ${verificationChip(o)}
           ${o.status !== "active" ? `<span class="status-pill status-${esc(o.status)}">${esc(o.status)}</span>` : ""}
         </div>
       </div>
@@ -370,6 +371,24 @@ function renderDetail(o) {
       <div class="wf-note" style="margin-top:8px">Human checkpoints: ${o.automation.human_checkpoints.map(esc).join(" · ")}</div>
     </div>` : ""}
 
+    <div class="d-section" id="chat-section"><h3>💬 Execution chat — this deal's own assistant</h3>
+      <div class="chat-meta" id="chat-meta">Loading workspace…</div>
+      <div class="chat-log" id="chat-log"></div>
+      <div class="chat-taps" id="chat-taps">
+        ${["Which exact product do I buy?", "Send me the buying link", "Is this still profitable?",
+           "How many units should I buy?", "Where do I sell it from Thailand?",
+           "Generate the selling listing", "What do I do next?"].map((q) =>
+          `<button class="chip chat-tap" type="button">${esc(q)}</button>`).join("")}
+      </div>
+      <div class="chat-inbar">
+        <input id="chat-input" type="text" placeholder="Ask about this deal, paste a price/listing, or 'I bought 2 for $80'…">
+        <button class="btn btn-primary" id="chat-send">Send</button>
+      </div>
+      <div class="wf-note" style="margin-top:6px">Evidence tags: LIVE fetched now · SAVED stored ·
+        CALCULATED computed · ASSUMPTION · UNKNOWN — the chat records and researches, it never buys,
+        pays or publishes anything without you.</div>
+    </div>
+
     <div class="d-section"><h3>Close the loop</h3>
       <p class="wf-note" style="margin:0 0 8px">Acted on this? Record what actually happened — outcomes retune
       scoring weights, source reliability and confidence calibration.</p>
@@ -391,6 +410,77 @@ function renderDetail(o) {
 
 const kpi = (l, v, s) => `<div class="kpi"><div class="kpi-l">${esc(l)}</div>
   <div class="kpi-v">${v}</div><div class="kpi-s">${s}</div></div>`;
+
+/* Verification level (Phase 7): single-source work is labelled, never dressed
+   up as fully verified. */
+const LEVEL_LABEL = {
+  execution_ready: ["EXECUTION READY", "var(--good)"],
+  multi_source_verified: ["MULTI-SOURCE VERIFIED", "var(--good)"],
+  partially_verified: ["SINGLE-SOURCE · PARTIAL", "var(--warning)"],
+  discovered: ["DISCOVERED", "var(--muted)"],
+  invalidated: ["INVALIDATED", "var(--critical)"],
+};
+function verificationChip(o) {
+  const lv = o.verification_level || "discovered";
+  const [label, color] = LEVEL_LABEL[lv] || [lv, "var(--muted)"];
+  const single = o.single_source && lv !== "partially_verified" ? " · single-source" : "";
+  return `<span class="chip" title="Graded from the evidence ledger: independent sources, sold comps, Thailand executability, freshness."
+    style="color:${color};border-color:color-mix(in srgb,${color} 45%,transparent)">${label}${esc(single)}</span>`;
+}
+
+/* ------------------------------------------------ execution chat (Phase 13) */
+
+function chatBubble(m) {
+  const ev = (m.evidence || []).map((e) =>
+    `<span class="ev-tag ev-${esc((e.label || "").toLowerCase())}" title="${esc(e.text || "")}">${esc(e.label)}</span>`).join("");
+  return `<div class="chat-msg chat-${m.role === "user" ? "user" : "ai"}">
+    <div class="chat-body">${esc(m.content)}</div>${ev ? `<div class="chat-evs">${ev}</div>` : ""}</div>`;
+}
+
+async function loadChat(o) {
+  try {
+    const c = await api(`/api/opportunities/${o.id}/chat`);
+    const st = c.state || {};
+    const na = (st.next_action || {});
+    const pnl = ((c.context || {}).realized_pnl || {});
+    $("#chat-meta").innerHTML =
+      `<span class="chip">state: <b>${esc((st.state || "not_started").replace(/_/g, " "))}</b></span>
+       <span class="chip">realised: <b class="${pnl.net_usd >= 0 ? "pos" : "neg"}">${fmtUSD(pnl.net_usd || 0)}</b></span>
+       <span class="chip" title="${esc(na.why || "")}">next: ${esc(na.title || "—")}</span>`;
+    const log = $("#chat-log");
+    log.innerHTML = (c.history || []).map(chatBubble).join("") ||
+      `<div class="wf-note">No messages yet — this chat already knows the whole deal. Ask it anything below.</div>`;
+    log.scrollTop = log.scrollHeight;
+  } catch (e) {
+    $("#chat-meta").textContent = "Chat unavailable: " + e.message;
+  }
+}
+
+function wireChat(el, o) {
+  const input = el.querySelector("#chat-input");
+  const send = async (text) => {
+    if (!text.trim()) return;
+    const log = $("#chat-log");
+    log.insertAdjacentHTML("beforeend", chatBubble({ role: "user", content: text }));
+    log.scrollTop = log.scrollHeight;
+    input.value = "";
+    try {
+      const r = await api(`/api/opportunities/${o.id}/chat`,
+        { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: text }) });
+      log.insertAdjacentHTML("beforeend", chatBubble({ role: "assistant", content: r.reply, evidence: r.evidence }));
+      log.scrollTop = log.scrollHeight;
+      loadChat(o);                       // refresh state/P&L strip
+    } catch (e) {
+      toast("Chat failed: " + e.message, 6000);
+    }
+  };
+  el.querySelector("#chat-send")?.addEventListener("click", () => send(input.value));
+  input?.addEventListener("keydown", (ev) => { if (ev.key === "Enter") send(input.value); });
+  el.querySelectorAll(".chat-tap").forEach((b) =>
+    b.addEventListener("click", () => send(b.textContent)));
+  loadChat(o);
+}
 
 /* AI selling kit — the execution layer: one tap turns a verified opportunity
    into ready-to-paste listings (flips) or a launch kit (ventures). */
@@ -641,6 +731,7 @@ function playbook(o) {
 }
 
 function wireDetail(el, o) {
+  wireChat(el, o);
   el.querySelectorAll(".kit-gen").forEach((b) =>
     b.addEventListener("click", async () => {
       b.disabled = true;

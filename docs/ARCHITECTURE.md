@@ -6,6 +6,21 @@ The objective function, stated once and used to judge every idea below:
 > API budget and operator attention.** Scan count is an input cost, not a KPI.
 > 20 high-confidence opportunities beat 20,000 weak ones.
 
+## v1.0 — final: the chat interface + the audited whole
+
+v1.0 closes the last mandate item: the execution chat's **interface** — a chat
+panel on every opportunity's detail view (state + realised P&L + next action
+strip, evidence-tagged history where every reply shows LIVE/SAVED/CALCULATED/
+ASSUMPTION/UNKNOWN chips, one-tap prompts, free-text box), a verification-level
+chip in the detail header so single-source work is visibly labelled, the exact
+`python -m opportunity_os diagnose_sources` entrypoint, and per-source
+`candidates_generated` in the health report. The full phase 0–13 mandate was
+re-audited item by item against the code with a scripted evidence run — every
+check passes, and the acceptance criteria live on as `tests/test_acceptance.py`
++ `tests/test_chat.py` so they cannot silently regress.
+
+![Execution chat](chat_panel.png)
+
 ## 0. v0.12 — per-opportunity execution chat + acceptance (Phases 12/13)
 
 Every opportunity now has a **persistent execution workspace** scoped to its id

@@ -106,12 +106,30 @@ def probe_sources(cfg, store, adapters: dict | None = None) -> list[dict]:
     out.append(_probe_anthropic(cfg))
     out.append(_probe_telegram(cfg))
 
-    # Fold in stored observation counts so a source that probes healthy but has
-    # never stored anything is visibly distinguished from one that is producing.
+    # Fold in stored observation + candidate counts so a source that probes
+    # healthy but has never produced anything is visibly distinguished from one
+    # that is feeding the pipeline.
     counts = _observation_counts(store)
+    cands = _candidate_counts(store)
     for h in out:
         h.observations_stored = counts.get(h.id, 0)
+        h.candidates_generated = cands.get(h.id, 0)
     return [h.dict() for h in out]
+
+
+def _candidate_counts(store) -> dict[str, int]:
+    """Discovery candidates each source has contributed (all time)."""
+
+    out: dict[str, int] = {}
+    try:
+        for row in store.list_discovered(active_only=False, limit=1000):
+            src = row.get("source") or "?"
+            # discovery source ids map onto probe ids where they share a backend
+            src = {"ebay_discovery": "ebay_us", "reddit_discovery": "reddit"}.get(src, src)
+            out[src] = out.get(src, 0) + 1
+    except Exception:  # noqa: BLE001
+        pass
+    return out
 
 
 def _probe_ebay(cfg, adapter) -> SourceHealth:

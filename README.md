@@ -19,6 +19,30 @@ buy/sell feasibility from Thailand (proxy services for JP marketplaces, Thai imp
 VAT/duty, Thailand Post/EMS routes, Payoneer/Wise/PromptPay rails, CN22 paperwork,
 and post-2025 US de-minimis duty risk priced into the pessimistic case).
 
+**v1.0** is the full research-to-execution system:
+
+* **Research** — 8 opportunity generators (cross-market flips, listing dislocations,
+  refurbishment, local-service/B2B gaps, digital/info products, micro-SaaS) over a
+  product knowledge graph with bounded, EV-ranked expansion; one API response is
+  strip-mined for many candidates.
+* **Honesty** — every claim sits in an evidence ledger (observed/estimated/calculated/
+  assumption/**unknown**); verification levels cap single-source, asking-price-only work
+  below "execution ready"; duplicate listings cluster into one market thesis; rejections
+  carry a taxonomy; `python -m opportunity_os diagnose_sources` proves which integrations
+  actually work.
+* **Thailand executability** — 10 concrete questions (register? payout? company?
+  customs? still profitable?) answered or honestly marked unknown, gating "execution
+  ready".
+* **Capital** — an optimizer (not a ranking): risk tolerance, per-deal/category caps,
+  liquidity reserve, worst-case loss and completion dates, deduplicated by thesis.
+* **Execution** — every opportunity has its own persistent chat workspace: product-match
+  protection (never buy the AGS-001 when the edge is the AGS-101), live link checks,
+  price re-decisions at *your* price (BUY/NEGOTIATE/WAIT/SKIP), listing drafts, a
+  transaction ledger with realised P&L, and a state machine that always knows the next
+  action. It researches and records — it **never** buys, pays or publishes without you.
+* **Security** — HTTPS always, admin-token-gated key management, credentials encrypted
+  at rest, CSRF + rate limiting. See [SECURITY.md](SECURITY.md).
+
 ---
 
 **New here? Read [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)** — plain-language
