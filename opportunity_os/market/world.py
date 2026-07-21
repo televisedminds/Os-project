@@ -400,12 +400,24 @@ class SimulatedMarket:
         n = max(6, min(int(lst.stock), 24, lst.sellers * 4 or 12))
         variants = ["complete in box", "cib tested", "japan import", "us seller",
                     f"{p.category} lot", "free shipping", "mint condition"]
+        # Category-plausible adjacent products (accessories/variants) that recur
+        # across titles the way real eBay listings do — the raw material for the
+        # knowledge-graph expansion ("profitable console → check the accessory").
+        _ADJACENT = {
+            "gaming": ["everdrive cart", "region free"],
+            "cameras": ["leather case", "flash unit"],
+            "watches": ["jubilee bracelet", "service dial"],
+            "electronics": ["travel adapter", "spare battery"],
+            "toys": ["display stand", "diorama base"],
+        }
+        adjacent = _ADJACENT.get(p.category, ["display case", "acrylic stand"])
         sellers = [f"sim_seller_{i}" for i in range(max(3, min(lst.sellers, 8)))]
         sample = []
         for i in range(n):
             mult = rng.uniform(0.9, 1.35) * (1.0 + 0.12 * (i / max(1, n)))  # sorted-ish ascending
             price = round(lst.price * mult, 2)
-            title = f"{p.name} {rng.choice(variants)}"
+            extra = f" with {rng.choice(adjacent)}" if rng.random() < 0.4 else ""
+            title = f"{p.name} {rng.choice(variants)}{extra}"
             if rng.random() < 0.12:
                 title += " for parts"                       # junk the filters must drop
             sample.append({
@@ -420,6 +432,14 @@ class SimulatedMarket:
                 "price": round(lst.price * rng.uniform(0.5, 0.62), 2),
                 "url": f"https://www.ebay.com/itm/sim{seed}X",
                 "seller": disl_seller, "condition": "USED_GOOD"})
+        # Occasionally a genuinely cheap for-parts/broken unit — the raw
+        # material for a refurbishment thesis (buy broken, fix, resell working).
+        if rng.random() < 0.22 and n >= 8 and lst.price >= 30:
+            sample.append({
+                "item_id": f"sim{seed}P", "title": f"{p.name} for parts not working",
+                "price": round(lst.price * rng.uniform(0.28, 0.42), 2),
+                "url": f"https://www.ebay.com/itm/sim{seed}P",
+                "seller": rng.choice(sellers), "condition": "FOR_PARTS_OR_NOT_WORKING"})
         return sample
 
     def product_history(self, product_id: str, venue: str) -> list[dict]:

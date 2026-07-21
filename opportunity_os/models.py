@@ -22,6 +22,8 @@ class OppType(str, Enum):
     LOCAL_SERVICE = "local_service"
     B2B_SERVICE = "b2b_service"
     INFO_PRODUCT = "info_product"
+    MICRO_SAAS = "micro_saas"
+    REFURBISHMENT = "refurbishment"
 
 
 class OppStatus(str, Enum):

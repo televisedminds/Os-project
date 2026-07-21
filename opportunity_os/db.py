@@ -62,6 +62,10 @@ CREATE TABLE IF NOT EXISTS research_yield (
 CREATE TABLE IF NOT EXISTS graph_edges (
     src TEXT, dst TEXT, kind TEXT, weight REAL DEFAULT 1, tick INTEGER, ts REAL,
     PRIMARY KEY (src, dst, kind));
+CREATE TABLE IF NOT EXISTS graph_nodes (
+    node_id TEXT PRIMARY KEY, ntype TEXT, name TEXT, attrs TEXT,
+    first_ts REAL, last_ts REAL);
+CREATE INDEX IF NOT EXISTS idx_graph_nodes_type ON graph_nodes(ntype);
 """
 
 
@@ -509,6 +513,56 @@ class Store:
     def graph_edge_count(self) -> int:
         with self._lock:
             return self._conn.execute("SELECT COUNT(*) FROM graph_edges").fetchone()[0]
+
+    def upsert_graph_node(self, node_id: str, ntype: str, name: str, attrs: dict | None = None) -> None:
+        now = time.time()
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO graph_nodes(node_id,ntype,name,attrs,first_ts,last_ts) "
+                "VALUES(?,?,?,?,?,?) ON CONFLICT(node_id) DO UPDATE SET "
+                "ntype=excluded.ntype, name=excluded.name, "
+                "attrs=COALESCE(excluded.attrs, graph_nodes.attrs), last_ts=excluded.last_ts",
+                (node_id, ntype, name, json.dumps(attrs or {}), now, now))
+
+    def get_graph_node(self, node_id: str) -> dict | None:
+        with self._lock:
+            r = self._conn.execute(
+                "SELECT node_id, ntype, name, attrs, first_ts, last_ts "
+                "FROM graph_nodes WHERE node_id=?", (node_id,)).fetchone()
+        if not r:
+            return None
+        d = dict(r)
+        d["attrs"] = json.loads(d["attrs"] or "{}")
+        return d
+
+    def graph_nodes_by_type(self, ntype: str, limit: int = 200) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT node_id, ntype, name, attrs, last_ts FROM graph_nodes "
+                "WHERE ntype=? ORDER BY last_ts DESC LIMIT ?", (ntype, limit)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["attrs"] = json.loads(d["attrs"] or "{}")
+            out.append(d)
+        return out
+
+    def graph_node_count(self) -> int:
+        with self._lock:
+            return self._conn.execute("SELECT COUNT(*) FROM graph_nodes").fetchone()[0]
+
+    def graph_edges_from(self, src: str, kinds: list[str] | None = None,
+                         limit: int = 50) -> list[dict]:
+        sql = "SELECT src, dst, kind, weight FROM graph_edges WHERE src=?"
+        args: list = [src]
+        if kinds:
+            sql += f" AND kind IN ({','.join('?' * len(kinds))})"
+            args += kinds
+        sql += " ORDER BY weight DESC LIMIT ?"
+        args.append(limit)
+        with self._lock:
+            rows = self._conn.execute(sql, args).fetchall()
+        return [dict(r) for r in rows]
 
     def close(self) -> None:
         with self._lock:

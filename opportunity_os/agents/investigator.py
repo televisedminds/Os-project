@@ -30,27 +30,32 @@ class Investigator:
 
     # ------------------------------------------------------------------ main
 
-    def build_candidates(self, ds, anomalies: list[Anomaly]) -> list[dict]:
+    def build_candidates(self, ds, anomalies: list[Anomaly], store=None,
+                         graph=None) -> list[dict]:
+        """Run every registered opportunity generator over the shared evidence.
+
+        Generators are decoupled: each reads the data source, the anomalies and
+        the knowledge graph and emits candidate theses of its own type. This is
+        what lets non-flip opportunity types exist without the flip path knowing
+        about them — a source collects evidence, a generator turns it into a
+        business thesis, and the same council gates them all."""
+
         by_entity: dict[str, list[Anomaly]] = {}
         for a in anomalies:
             by_entity.setdefault(a.entity_id, []).append(a)
-
+        by_entity = {k: by_entity[k] for k in sorted(by_entity)}
         niche_ids = {n["id"] for n in ds.niches()}
-        candidates = []
-        for entity_id in sorted(by_entity):
-            group = by_entity[entity_id]
-            if entity_id in niche_ids:
-                cand = self._venture_candidate(ds, entity_id, group)
-                if cand:
-                    candidates.append(cand)
-            else:
-                # A product can yield BOTH a cross-venue flip AND one or more
-                # per-listing dislocation flips — they are distinct, separately
-                # priced opportunities with distinct identities.
-                cand = self._flip_candidate(ds, entity_id, group)
-                if cand:
-                    candidates.append(cand)
-                candidates += self._dislocation_candidates(ds, entity_id, group)
+
+        from ..generators import build_generators, GenContext
+        ctx = GenContext(ds=ds, anomalies=anomalies, by_entity=by_entity,
+                         niche_ids=niche_ids, store=store, cfg=self.cfg,
+                         investigator=self, graph=graph)
+        candidates: list[dict] = []
+        for gen in build_generators(self.cfg):
+            try:
+                candidates += gen.generate(ctx)
+            except Exception:  # noqa: BLE001 - a broken generator never blocks the fleet
+                continue
         return candidates
 
     # ------------------------------------------------------- dislocation flips
@@ -259,9 +264,42 @@ class Investigator:
                       "sell_country": economics.VENUES[sell_venue]["country"]},
         }
 
+    def _refurb_why(self, product, cost, fair, repair, econ, wstats, vname) -> list:
+        return [
+            InvestigationStep(
+                "What is the play?",
+                f"A for-parts {product['name']} lists at ${cost:.2f} on {vname}, while "
+                f"{wstats['n']} working units clear around ${fair:.2f}. Buy broken, repair, resell.",
+                {"parts_price": cost, "working_fair": fair}),
+            InvestigationStep(
+                "What does the repair cost?",
+                f"Budget ≈ ${repair:.0f}/unit (parts + ~1h labour) for a {product.get('category','item')}; "
+                f"the pessimistic case inflates it 35% and adds a scrap reserve for units that can't be saved.",
+                {"repair_cost": repair}),
+            InvestigationStep(
+                "Is the edge real after repair + fees?",
+                f"${econ.base.net_usd:.2f} net ({econ.base.margin_pct:.0f}% margin) base, "
+                f"${econ.pessimistic.net_usd:.2f} pessimistic — after {vname} fees on the resale.",
+                {"net_base": econ.base.net_usd, "net_pessimistic": econ.pessimistic.net_usd}),
+            InvestigationStep(
+                "Can a Thailand operator do it?",
+                "Requires basic repair skill/tools; sourcing and reselling both happen on the same "
+                "reachable venue. Skip if you can't diagnose the fault from the listing photos.",
+                {"skill_required": True}),
+            InvestigationStep(
+                "What's the downside if the repair fails?",
+                f"Worst case the unit is unfixable: you're out the ${cost:.2f} purchase plus parts. "
+                f"The pessimistic scenario already books a scrap reserve, so a thin edge is rejected "
+                f"before you ever see it — size the position to what you can afford to write off.",
+                {"parts_price": cost, "downside_usd": round(cost + repair, 2)}),
+        ]
+
     # -------------------------------------------------------------- ventures
 
-    def _venture_candidate(self, ds, nid: str, anomalies: list[Anomaly]) -> dict | None:
+    def _venture_candidate(self, ds, nid: str, anomalies: list[Anomaly],
+                           opp_type_override: OppType | None = None,
+                           route_kind: str | None = None,
+                           title_prefix: str = "") -> dict | None:
         niche = next((n for n in ds.niches() if n["id"] == nid), None)
         if not niche:
             return None
@@ -304,9 +342,9 @@ class Investigator:
 
         return {
             "kind": "venture",
-            "opp_type": NICHE_TYPE[niche["kind"]],
+            "opp_type": opp_type_override or NICHE_TYPE[niche["kind"]],
             "entity_id": nid,
-            "title": niche["name"],
+            "title": (title_prefix + niche["name"]) if title_prefix else niche["name"],
             "subtitle": f"{m['volume']:,.0f} demand events/mo, {m['growth_pct']:.0f}%/mo growth, "
                         f"{supply_n:.0f} {supply_label}",
             "category": NICHE_CATEGORY[niche["kind"]],
@@ -317,7 +355,7 @@ class Investigator:
             "economics": econ, "feasibility": feas, "why": why,
             "anomalies": anomalies,
             "sources": sorted({"google_trends", "reddit"} | ({"news"} if cause else set())),
-            "route": {"geo": niche["geo"], "kind": niche["kind"]},
+            "route": {"geo": niche["geo"], "kind": route_kind or niche["kind"]},
         }
 
 

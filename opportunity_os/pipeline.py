@@ -41,6 +41,8 @@ class Orchestrator:
         self.detector = AnomalyDetector(config)
         self.investigator = Investigator(config)
         self.learning = LearningEngine(store)
+        from .graph import KnowledgeGraph
+        self.graph = KnowledgeGraph(store)         # shared product/opportunity memory
         from .ai import AIClassifier
         self.ai = AIClassifier(config)             # advisory risk desk (needs key)
 
@@ -98,13 +100,14 @@ class Orchestrator:
 
         anomalies = self.detector.detect(self.world)
         self.db.add_anomalies(anomalies)
-        candidates = self.investigator.build_candidates(self.world, anomalies)
+        candidates = self.investigator.build_candidates(
+            self.world, anomalies, store=self.db, graph=self.graph)
 
         council = VerificationCouncil(self.cfg, self.learning.verifier_reliability)
         scorer = ScoringEngine(self.learning.weights, self.cfg.capital_cap_usd)
 
         published, rejected, updated_ids = [], [], set()
-        published_entities: list[str] = []
+        published_new: list[dict] = []
         for cand in candidates:
             opp, reason = self._assess(cand, council, scorer, tick)
             if opp:
@@ -119,12 +122,16 @@ class Orchestrator:
                                   # first time this opportunity ever verified (vs a refresh)
                                   "new": is_new})
                 if is_new:
-                    published_entities.append(opp.entity_id)
+                    published_new.append({
+                        "entity_id": opp.entity_id, "title": opp.title,
+                        "is_product": opp.type in (OppType.PRODUCT_ARBITRAGE, OppType.REFURBISHMENT)})
             else:
-                rejected.append({"title": cand["title"], "type": cand["opp_type"].value, "reason": reason})
+                rejected.append({"title": cand["title"], "type": cand["opp_type"].value,
+                                 "reason": reason})
 
         self._ai_risk_pass(published)
-        self._record_yield(tick, anomalies, candidates, published_entities)
+        self._record_yield(tick, anomalies, candidates, published_new)
+        self._spawn_hypotheses(tick, published_new)
 
         invalidated, reverified = [], 0
         for stored in self.db.active_opportunities():
@@ -157,7 +164,7 @@ class Orchestrator:
         return report
 
     def _record_yield(self, tick: int, anomalies: list, candidates: list[dict],
-                      published_entities: list[str]) -> None:
+                      published_new: list[dict]) -> None:
         """Feed the EV allocator: every scan, anomaly, candidate and publication
         is credited to its entity, so scan budget flows toward what produces.
         And propagate — a publication raises the priority of its graph
@@ -173,12 +180,62 @@ class Orchestrator:
                 self.db.yield_bump(eid, tick, anomalies=c)
             for eid, c in Counter(c["entity_id"] for c in candidates).items():
                 self.db.yield_bump(eid, tick, candidates=c)
-            for eid in published_entities:
-                self.db.yield_bump(eid, tick, published=1)
-                neighbors = [n["dst"] for n in self.db.graph_neighbors(eid, 8)]
+            for p in published_new:
+                self.db.yield_bump(p["entity_id"], tick, published=1)
+                neighbors = [n["dst"] for n in self.db.graph_neighbors(p["entity_id"], 8)]
                 if neighbors:
                     self.db.bump_discovered_score(neighbors, 0.25)
         except Exception:  # noqa: BLE001 - telemetry must never break a cycle
+            pass
+
+    def _spawn_hypotheses(self, tick: int, published_new: list[dict]) -> None:
+        """Phase 5 in action: a verified opportunity marks its product
+        profitable in the knowledge graph, seeds the graph with the related
+        products its own listings are co-listed with, then a BOUNDED traversal
+        turns that one win into related hypotheses (variants, accessories,
+        adjacent products) — promoted into discovery so the fleet investigates
+        the cluster next, not one isolated listing. Never fans out unboundedly;
+        never a network call here (it reads the sample already captured)."""
+
+        try:
+            from dataclasses import asdict
+            from . import research
+            from .graph import N_PRODUCT, E_CO_LISTED
+            from .discovery import Candidate, clean_query, infer_category, slug
+            for p in published_new:
+                if not p.get("is_product"):
+                    continue
+                pid = p["entity_id"]
+                self.graph.mark_outcome(pid, p["title"], profitable=True, tick=tick)
+                # Seed co-listing edges from this product's own captured page —
+                # the sellers already wrote the adjacency into their titles.
+                if hasattr(self.world, "listing_sample"):
+                    product = self.world.product_public(pid)
+                    for venue in product.get("venues", []):
+                        sample = self.world.listing_sample(pid, venue)
+                        if not sample:
+                            continue
+                        for g in research.mine_related(sample, product["name"]):
+                            nid = slug(g["phrase"], "disc_p")
+                            self.graph.link(pid, nid, E_CO_LISTED, src_type=N_PRODUCT,
+                                            dst_type=N_PRODUCT, src_name=product["name"],
+                                            dst_name=g["phrase"].title(), weight=g["support"], tick=tick)
+                        break                        # one venue's page is enough to seed
+                hyps = self.graph.related_hypotheses(pid, budget=6, max_hops=2)
+                for h in hyps:
+                    if h.ntype not in ("product", "model", "accessory", "part", "unknown"):
+                        continue
+                    cid = h.node_id if h.node_id.startswith("disc_") else f"disc_p_{h.node_id}"
+                    cand = Candidate(
+                        kind="product", id=cid, name=h.name[:70], source="graph_expansion",
+                        score=round(min(1.8, 0.4 + h.ev_score / 3), 3),
+                        category=infer_category(h.name),
+                        reason=f"{h.relation.replace('_', ' ')} of a verified opportunity "
+                               f"('{p['title'][:40]}') — related hypothesis worth checking.",
+                        queries={"ebay_us": clean_query(h.name)}, reddit_query=clean_query(h.name))
+                    if hasattr(self.db, "upsert_discovered"):
+                        self.db.upsert_discovered(asdict(cand))
+        except Exception:  # noqa: BLE001 - enrichment must never break a cycle
             pass
 
     def _ai_risk_pass(self, published: list[dict]) -> None:
@@ -274,11 +331,13 @@ class Orchestrator:
         if age_days > stored["window_days"] * 2 + 4:
             return False, "window elapsed — original edge has fully played out", OppStatus.EXPIRED
 
-        if stored["type"] == OppType.PRODUCT_ARBITRAGE.value:
-            if stored.get("route", {}).get("kind") == "dislocation":
-                cand = self._fresh_dislocation(stored)
-            else:
-                cand = self._fresh_flip(stored)
+        route_kind = stored.get("route", {}).get("kind")
+        if stored["type"] == OppType.PRODUCT_ARBITRAGE.value and route_kind == "dislocation":
+            cand = self._fresh_dislocation(stored)
+        elif stored["type"] == OppType.REFURBISHMENT.value or route_kind == "refurbish":
+            cand = self._fresh_dislocation(stored)
+        elif stored["type"] == OppType.PRODUCT_ARBITRAGE.value:
+            cand = self._fresh_flip(stored)
         else:
             cand = self._fresh_venture(stored)
         if cand is None:
@@ -340,30 +399,47 @@ class Orchestrator:
         row = next((s for s in sample if s.get("item_id") == item_id), None)
         if not row:
             return None                    # the underpriced listing is gone — edge taken
-        stats = research.market_stats(sample)
+        refurbish = stored.get("route", {}).get("kind") == "refurbish"
+        # For refurb, fair value comes from WORKING comps only (this row is a
+        # parts unit and must not drag the comp down).
+        if refurbish:
+            from .generators_extra import _is_parts
+            working = [s for s in sample if not _is_parts(s.get("title", "")) and float(s.get("price", 0)) > 0]
+            stats = research.market_stats(working or sample)
+        else:
+            stats = research.market_stats(sample)
         product = self.world.product_public(pid)
         ask = float(row["price"])
         fair = stats["fair_usd"] or float(stored["route"].get("fair_usd", ask * 1.4))
-        econ = economics.compute_flip(product, venue, venue, ask, fair, qty=1)
+        repair = float(stored.get("route", {}).get("repair_cost", 0.0)) if refurbish else 0.0
+        econ = economics.compute_flip(product, venue, venue, ask, fair, qty=1,
+                                      extra_cost_usd=repair,
+                                      extra_note="refurbishment: parts + labour" if repair else "")
         agg = self.world.listing(pid, venue) or {}
         velocity = max(agg.get("sold_7d", 0) / 7.0, 0.2)
         vname = economics.VENUES[venue]["name"]
-        edge = (1 - ask / fair) * 100 if fair else 0
+        if refurbish:
+            subtitle = f"Buy a for-parts unit ${ask:.2f} on {vname}, repair (~${repair:.0f}), resell ${fair:.2f}"
+            opp_type = OppType.REFURBISHMENT
+        else:
+            edge = (1 - ask / fair) * 100 if fair else 0
+            subtitle = f"Buy one {vname} listing ${ask:.2f} → resell ${fair:.2f} ({edge:.0f}% under fair)"
+            opp_type = OppType.PRODUCT_ARBITRAGE
         return {
-            "kind": "flip", "opp_type": OppType.PRODUCT_ARBITRAGE, "entity_id": pid,
-            "title": stored["title"],
-            "subtitle": f"Buy one {vname} listing ${ask:.2f} → resell ${fair:.2f} ({edge:.0f}% under fair)",
+            "kind": "flip", "opp_type": opp_type, "entity_id": pid,
+            "title": stored["title"], "subtitle": subtitle,
             "category": stored["category"], "item": product,
             "buy_venue": venue, "sell_venue": venue, "buy_usd": ask, "sell_usd": fair,
             "qty": 1, "buy_stock": 1, "velocity": velocity,
             "sellers": stats["sellers"],
-            "window_days": round(min(10.0, max(2.0, stats["n"] / max(0.5, velocity))), 1),
+            "window_days": round(min(21.0 if refurbish else 10.0, max(2.0, stats["n"] / max(0.5, velocity))), 1),
             "economics": econ,
             "feasibility": thailand.feasibility(OppType.PRODUCT_ARBITRAGE.value,
                                                 stored["category"], venue, venue),
             "dislocation": {"item_id": item_id, "url": stored["route"].get("buy_url", ""),
                             "ask_usd": ask, "fair_usd": fair,
-                            "min_edge": self.cfg.dislocation_min_edge},
+                            "min_edge": self.cfg.dislocation_min_edge,
+                            "refurbish": refurbish, "repair_cost": repair},
             "route": stored["route"],
         }
 

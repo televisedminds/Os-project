@@ -6,6 +6,45 @@ The objective function, stated once and used to judge every idea below:
 > API budget and operator attention.** Scan count is an input cost, not a KPI.
 > 20 high-confidence opportunities beat 20,000 weak ones.
 
+## 0b. v0.9 — sources ≠ generators, and a knowledge graph (Phases 3–5)
+
+The diversity problem ("almost every result is an eBay flip") had a structural
+cause: the pipeline conflated **data sources** with **opportunity generators**,
+and only the flip path had a complete generator. v0.9 separates them:
+
+* **`generators.py` — a generator registry** decoupled from scanners. A source
+  collects evidence; a generator combines evidence into a business thesis; the
+  same council gates them all. Eight generators register today
+  (`cross_market_flip`, `dislocation`, `digital_product`, `info_product`,
+  `local_service`, `b2b_service`, `micro_saas`, `bundle_repair`), five+ distinct
+  opportunity types, and a broken generator can never break a cycle. Not every
+  generator touches a marketplace.
+* **Non-flip generators that produce real candidates** — the venture family
+  split by kind (digital / info / local-service / B2B), a distinct
+  `micro_saas` thesis (strict evidence: real demand growth + genuinely weak
+  supply, mutually exclusive with generic digital so demand isn't double-
+  counted), and `bundle_repair` — a **refurbishment** thesis mined from a
+  product's own ask distribution (buy a for-parts unit far under working comps,
+  repair, resell). Refurb economics carry a real parts+labour cost and a
+  pessimistic scrap reserve, and only fire on genuinely repairable categories
+  (gaming/electronics/cameras/watches) — never a sealed collectible.
+* **`graph.py` — the product & opportunity knowledge graph** (Phase 5).
+  Normalized nodes (product/brand/model/accessory/part/niche/seller/outcome)
+  and typed edges (variant-of, compatible-with, co-listed, previously-
+  profitable/rejected). A verified opportunity marks its product profitable and
+  seeds co-listing edges from its own page; a **bounded, EV-ranked traversal**
+  (`related_hypotheses`) then turns that one win into related hypotheses —
+  "profitable Seiko chronograph → check the service dial, the jubilee bracelet"
+  — promoted into discovery. Traversal is capped (never unbounded fan-out) and
+  scored by expected value per API request, steering toward proven neighbors
+  and away from previously-rejected ones.
+
+Measured (demo, same budget): opportunity types went from ~all
+`product_arbitrage` to a spread across `product_arbitrage`, `local`,
+`micro_saas`, `info`, `refurbish`; a verified discovery now spawns ~20+ related
+hypotheses for the fleet to investigate next. Every candidate still faces the
+council and the pessimistic economics gate.
+
 ## 0. v0.7 — the alpha-density rewrite (the single biggest bottleneck)
 
 **The bottleneck was never compute or scanner count. It was how much alpha we

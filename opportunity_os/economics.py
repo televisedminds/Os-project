@@ -160,11 +160,16 @@ def candidate_paths(buy_venue: str, sell_venue: str, home: str = "TH") -> list[l
 
 def _flip_scenario(name: str, *, item: dict, buy_venue: str, sell_venue: str,
                    buy_usd: float, sell_usd: float, path: list[str], qty: int,
-                   pessimistic: bool) -> Scenario:
+                   pessimistic: bool, extra_cost_usd: float = 0.0, extra_note: str = "") -> Scenario:
     """Per-unit waterfall at a given lot size. Fixed logistics costs (parcel
     base rates, origin shipping, forwarding fees) are amortised across the
     consolidated lot — the difference between a hobbyist mailing one card and
-    an operator shipping twenty in one box."""
+    an operator shipping twenty in one box.
+
+    `extra_cost_usd` is an optional per-unit cost added to the waterfall — used
+    by the refurbishment thesis for parts + labour + a scrap-rate reserve. In
+    the pessimistic case it is inflated (repairs run over, some units are
+    unfixable), so a thin refurb edge dies in the gate like any other."""
 
     weight = item.get("weight_kg", 0.5)
     category = item.get("category", "collectibles")
@@ -231,6 +236,11 @@ def _flip_scenario(name: str, *, item: dict, buy_venue: str, sell_venue: str,
     if fees.get("payout_fx_pct"):
         lines.append(CostLine("FX / payout spread", round(sale * fees["payout_fx_pct"], 2), "Payoneer/Wise USD→THB payout"))
 
+    if extra_cost_usd:
+        cost = extra_cost_usd * (1.35 if pessimistic else 1.0)
+        lines.append(CostLine("Refurbishment — parts + labour" + (" + scrap reserve" if pessimistic else ""),
+                              round(cost, 2), extra_note or "estimated repair cost per unit"))
+
     if pessimistic:
         dest = VENUES[sell_venue]["country"]
         origin = path[-2] if len(path) >= 2 else path[0]
@@ -246,16 +256,20 @@ def _flip_scenario(name: str, *, item: dict, buy_venue: str, sell_venue: str,
 
 
 def compute_flip(item: dict, buy_venue: str, sell_venue: str,
-                 buy_usd: float, sell_usd: float, qty: int = 1) -> Economics:
-    """Price a product flip along the best available route."""
+                 buy_usd: float, sell_usd: float, qty: int = 1,
+                 extra_cost_usd: float = 0.0, extra_note: str = "") -> Economics:
+    """Price a product flip along the best available route. `extra_cost_usd`
+    adds a per-unit cost (e.g. refurbishment) to the waterfall."""
 
     best: tuple[Scenario, Scenario, list[str]] | None = None
     notes = []
     for path in candidate_paths(buy_venue, sell_venue):
         base = _flip_scenario("base", item=item, buy_venue=buy_venue, sell_venue=sell_venue,
-                              buy_usd=buy_usd, sell_usd=sell_usd, path=path, qty=qty, pessimistic=False)
+                              buy_usd=buy_usd, sell_usd=sell_usd, path=path, qty=qty, pessimistic=False,
+                              extra_cost_usd=extra_cost_usd, extra_note=extra_note)
         pess = _flip_scenario("pessimistic", item=item, buy_venue=buy_venue, sell_venue=sell_venue,
-                              buy_usd=buy_usd, sell_usd=sell_usd, path=path, qty=qty, pessimistic=True)
+                              buy_usd=buy_usd, sell_usd=sell_usd, path=path, qty=qty, pessimistic=True,
+                              extra_cost_usd=extra_cost_usd, extra_note=extra_note)
         notes.append(f"{' → '.join(path)}: net ${base.net_usd}/unit")
         if best is None or base.net_usd > best[0].net_usd:
             best = (base, pess, path)
