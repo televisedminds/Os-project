@@ -186,18 +186,25 @@ class AdminGuard:
         self.cfg = cfg
         self.limiter = RateLimiter(
             max_hits=int(os.environ.get("OOS_ADMIN_RATE", "20")), window_s=60.0)
+        # Opt-in "no password anywhere" mode for a personal, single-user deploy.
+        # The guard becomes a no-op (rate-limit only). Convenience over security —
+        # only sensible when the box is otherwise access-controlled or you accept
+        # that anyone with the URL can use it.
+        self.open_mode = os.environ.get("OOS_OPEN_MODE", "") not in ("", "0", "false", "no")
 
     @property
     def token(self) -> str:
         return (getattr(self.cfg, "dashboard_token", "") or "").strip()
 
     def configured(self) -> bool:
-        return bool(self.token)
+        return bool(self.token) or self.open_mode
 
     def __call__(self, request: Request) -> None:
         ip = _client_ip(request)
         if not self.limiter.check(ip):
             raise HTTPException(429, "rate limit exceeded — slow down")
+        if self.open_mode:
+            return                    # password-free by explicit choice
         if not _same_origin(request):
             raise HTTPException(403, "cross-origin request refused")
         token = self.token

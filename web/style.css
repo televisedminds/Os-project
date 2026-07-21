@@ -546,7 +546,10 @@ ul { margin: 6px 0; padding-left: 18px; }
   .funnel-strip { font-size: 11px; padding: 8px 10px; gap: 5px 8px; }
 
   /* Feed → tappable cards (the table becomes a stack of cards) */
-  .feed-pane, .detail-pane { min-height: 0; border-radius: 12px; }
+  /* overflow:visible is essential — the desktop panes clip with overflow:hidden,
+     which on a phone hides everything below the fold and blocks scrolling. */
+  .feed-pane, .detail-pane { min-height: 0; border-radius: 12px; overflow: visible; }
+  body.detail-open .detail-pane { overflow: visible; }
   .filters { padding: 8px; gap: 6px; }
   .filters input[type="search"] { flex: 1 1 100%; }
   .feed-table-wrap { max-height: none; overflow: visible; }

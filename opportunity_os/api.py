@@ -196,7 +196,10 @@ def _action_card(o: dict, operator: dict | None = None, resolve=None) -> dict | 
         pb = o.get("playbook") or {}
         steps = [s["title"] for s in pb.get("steps", [])]
 
-        if o["type"] == "product_arbitrage":
+        # Refurbishment is economically a flip (buy a parts unit, resell it
+        # working) — it must use the buy→sell card, NOT the venture "launch a
+        # monthly business" card.
+        if o["type"] in ("product_arbitrage", "refurbishment"):
             route = o["route"]
             bv, sv = route["buy_venue"], route["sell_venue"]
             buy_usd = e["base"]["lines"][0]["amount_usd"]
@@ -204,7 +207,7 @@ def _action_card(o: dict, operator: dict | None = None, resolve=None) -> dict | 
             sell_usd = float(listing.get("price_usd") or e["base"]["revenue_usd"])
             buy_url, buy_search = _links(bv)
             sell_url, sell_search = _links(sv)
-            dislocation = route.get("kind") == "dislocation"
+            dislocation = route.get("kind") in ("dislocation", "refurbish")
             if dislocation and route.get("buy_url"):
                 # The exact underpriced listing — the whole point of a
                 # dislocation is that we can hand over the precise URL to buy.
@@ -218,7 +221,9 @@ def _action_card(o: dict, operator: dict | None = None, resolve=None) -> dict | 
                         "qty": e["qty"],
                         "url": buy_url, "search_url": buy_search,
                         "exact": bool(buy_url and buy_url != buy_search),
-                        "how": thailand.VENUE_ACCESS.get(bv, {}).get("buy_note", "")},
+                        "how": ((f"⚠ This is a FOR-PARTS unit — budget ~${route['repair_cost']:.0f} to "
+                                 f"repair it before reselling. ") if route.get("kind") == "refurbish"
+                                else "") + thailand.VENUE_ACCESS.get(bv, {}).get("buy_note", "")},
                 "sell": {"venue": economics.VENUES[sv]["name"],
                          "price_usd": round(sell_usd, 2), "price_thb": thb(sell_usd),
                          "url": sell_url, "search_url": sell_search,
@@ -362,7 +367,8 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
     def health():
         out = {"ok": True, "version": __version__, "mode": cfg.mode,
                "tick": store.meta_get("tick", 0) if cfg.mode == "demo" else store.meta_get("live_tick", 0),
-               "demo_mode": cfg.mode == "demo"}
+               "demo_mode": cfg.mode == "demo",
+               "auth": {"open_mode": guard.open_mode, "token_required": not guard.open_mode}}
         if cfg.mode == "demo":
             out["note"] = ("Demo mode runs on a deterministic simulated market; run with --live "
                            "and a watchlist for real data.")

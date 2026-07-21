@@ -105,6 +105,10 @@ async function loadBriefing() {
     api("/api/goal"), api("/api/funnel")]);
   const ver = $("#brand-version");
   if (ver && h.version) ver.textContent = "v" + h.version;
+  if (h.auth && h.auth.open_mode) {
+    const el = document.getElementById("lock-state");
+    if (el) { el.textContent = "🔓 open"; el.classList.add("unlocked"); }
+  }
   const badge = document.querySelector(".badge-demo");
   if (badge && h.mode === "live") {
     badge.textContent = "LIVE FEED";

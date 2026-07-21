@@ -69,6 +69,17 @@ def test_cross_origin_request_refused(tmp_path):
     assert r.status_code == 403
 
 
+def test_open_mode_disables_the_password(tmp_path, monkeypatch):
+    """OOS_OPEN_MODE=1 → no token needed anywhere (opt-in convenience)."""
+
+    monkeypatch.setenv("OOS_OPEN_MODE", "1")
+    app, _ = make_app(tmp_path, token=None)
+    c = TestClient(app)                              # no token header at all
+    assert c.get("/api/settings").status_code == 200
+    assert c.post("/api/cycle").status_code == 200
+    assert c.get("/api/health").json()["auth"]["open_mode"] is True
+
+
 def test_public_read_endpoints_stay_open(tmp_path):
     """The guard protects secrets + spending, not the feed itself."""
 
