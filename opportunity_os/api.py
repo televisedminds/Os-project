@@ -269,6 +269,8 @@ def _row(o: dict, affinity: int = 0) -> dict:
         "tick_created": o["tick_created"], "tick_updated": o["tick_updated"],
         "updated_ts": o.get("updated_ts"),
         "sources": o.get("sources", []),
+        "verification_level": o.get("verification_level", "discovered"),
+        "single_source": o.get("single_source", True),
         "invalidation_reason": o.get("invalidation_reason", ""),
         "personal": ({"boost": affinity,
                       "note": (f"Prioritized — you've profited in {o['category'].replace('_', ' ')} before"
@@ -646,12 +648,14 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
 
     @app.get("/api/diagnostics/funnel")
     def diagnostics_funnel():
-        """Source + opportunity-type funnels from stored data (no network).
-        Answers 'is 62 verified really 62 independent opportunities?'."""
+        """Source + opportunity-type + rejection funnels from stored data (no
+        network). Answers 'is 62 verified really 62 independent opportunities?'
+        and 'why do candidates die?', per source and per type."""
 
         from . import diagnostics
         return {"by_source": diagnostics.source_funnel(store),
-                "by_type": diagnostics.type_funnel(store)}
+                "by_type": diagnostics.type_funnel(store),
+                "rejections": diagnostics.rejection_funnel(store)}
 
     @app.post("/api/diagnostics/sources")
     def diagnostics_sources(_: None = Depends(guard)):

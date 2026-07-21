@@ -23,7 +23,7 @@ from .config import Config
 from .db import Store
 from .market import SimulatedMarket
 from .models import Opportunity, OppStatus, OppType, opportunity_id
-from . import economics, research, thailand
+from . import economics, evidence, research, thailand
 
 
 class Orchestrator:
@@ -126,8 +126,11 @@ class Orchestrator:
                         "entity_id": opp.entity_id, "title": opp.title,
                         "is_product": opp.type in (OppType.PRODUCT_ARBITRAGE, OppType.REFURBISHMENT)})
             else:
-                rejected.append({"title": cand["title"], "type": cand["opp_type"].value,
-                                 "reason": reason})
+                route = cand.get("route", {}) or {}
+                rejected.append({"title": cand["title"],
+                                 "type": route.get("kind") or cand["opp_type"].value,
+                                 "reason": reason,
+                                 "category": evidence.classify_rejection(reason)})
 
         self._ai_risk_pass(published)
         self._record_yield(tick, anomalies, candidates, published_new)
@@ -144,8 +147,11 @@ class Orchestrator:
                 stored["status"] = fail_status.value
                 stored["invalidation_reason"] = reason
                 stored["tick_updated"] = tick
+                if fail_status == OppStatus.INVALIDATED:
+                    stored["verification_level"] = evidence.VerificationLevel.INVALIDATED.value
                 self.db.upsert_opportunity(stored)
-                invalidated.append({"id": stored["id"], "title": stored["title"], "reason": reason})
+                invalidated.append({"id": stored["id"], "title": stored["title"], "reason": reason,
+                                    "category": evidence.classify_rejection(reason)})
 
         report = {
             "tick": tick,
@@ -255,12 +261,27 @@ class Orchestrator:
                 r = reviews.get(o["id"])
                 if not r:
                     continue
+                missing = r.get("missing_evidence", []) or []
                 o["why_chain"].append({
                     "question": "AI risk review — why does this edge exist, and what could go wrong?",
                     "finding": f"[{labels.get(r['verdict'], r['verdict'])}] {r['edge']} "
-                               f"Risks: {' · '.join(r['risks'])}",
+                               f"Risks: {' · '.join(r['risks'])}"
+                               + (f" · Missing: {', '.join(missing)}" if missing else ""),
                     "data": {"verdict": r["verdict"]},
                 })
+                # The AI's judgement is recorded as evidence of KIND
+                # ai_interpretation — explicitly NOT a source of fact, and its
+                # named gaps are surfaced so the operator sees what's unproven.
+                o.setdefault("evidence", []).append({
+                    "field": "ai_risk_review", "value": f"{r['verdict']}: {r['edge']}",
+                    "kind": evidence.AI_INTERPRETATION, "source": "claude",
+                    "independent": False, "ref": "", "ts": 0.0, "freshness": "n/a",
+                    "is_sold_comp": False})
+                for gap in missing:
+                    o["evidence"].append({
+                        "field": "missing_evidence", "value": gap, "kind": evidence.UNKNOWN,
+                        "source": "claude", "independent": False, "ref": "", "ts": 0.0,
+                        "freshness": "n/a", "is_sold_comp": False})
                 self.db.upsert_opportunity(o)
         except Exception:  # noqa: BLE001 - advisory only
             pass
@@ -295,6 +316,12 @@ class Orchestrator:
         automation = build_automation(cand)
         playbook = build_playbook(cand)
         score = scorer.score(cand, automation.coverage_pct)
+        # Evidence ledger + the verification level it earns (Phase 7/9): the
+        # grade reflects the QUALITY of evidence, not just that it passed —
+        # single-source, asking-price-only work is honestly capped.
+        ledger = evidence.build_ledger(cand, verification, self.cfg.mode, self._latest_ts(cand))
+        level = evidence.compute_level(ledger, verification, cand["feasibility"], passed_gates=True)
+        single = evidence.is_single_source(ledger)
         # A dislocation is identified by its specific listing, so two under-
         # priced listings of the same product get distinct, stable identities.
         buy_key = cand["buy_venue"]
@@ -311,8 +338,23 @@ class Orchestrator:
             economics=cand["economics"], verification=verification, score=score,
             feasibility=cand["feasibility"], why_chain=cand["why"],
             playbook=playbook, automation=automation, sources=cand["sources"],
+            evidence=ledger, verification_level=level.value, single_source=single,
         )
         return opp, ""
+
+    def _latest_ts(self, cand: dict) -> float:
+        """Timestamp of the freshest observation behind a candidate (live mode);
+        0 in demo, where freshness is a deterministic replay."""
+
+        if self.cfg.mode != "live":
+            return 0.0
+        try:
+            pid = cand["entity_id"]
+            venue = cand.get("sell_venue") or cand.get("buy_venue")
+            rows = self.db.live_snapshot_series(pid, venue, 1) if venue else []
+            return rows[-1]["ts"] if rows else 0.0
+        except Exception:  # noqa: BLE001
+            return 0.0
 
     # --------------------------------------------------------------- reverify
 
@@ -352,6 +394,7 @@ class Orchestrator:
 
         automation = build_automation(cand)
         score = scorer.score(cand, automation.coverage_pct)
+        ledger = evidence.build_ledger(cand, verification, self.cfg.mode, self._latest_ts(cand))
         stored["economics"] = asdict(cand["economics"])
         stored["verification"] = asdict(verification)
         stored["score"] = asdict(score)
@@ -360,6 +403,10 @@ class Orchestrator:
         stored["subtitle"] = cand["subtitle"]
         stored["tick_updated"] = tick
         stored["status"] = OppStatus.ACTIVE.value
+        stored["evidence"] = ledger
+        stored["verification_level"] = evidence.compute_level(
+            ledger, verification, cand["feasibility"], passed_gates=True).value
+        stored["single_source"] = evidence.is_single_source(ledger)
         self.db.upsert_opportunity(stored)
         return True, "", None
 

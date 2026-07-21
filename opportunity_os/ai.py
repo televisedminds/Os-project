@@ -194,8 +194,12 @@ RISK_REVIEW_SCHEMA = {
                                             "is on the losing side of it"},
                     "risks": {"type": "array", "items": {"type": "string"},
                               "description": "2-4 concrete, specific risks for THIS deal"},
+                    "missing_evidence": {
+                        "type": "array", "items": {"type": "string"},
+                        "description": "the evidence you would need to be confident but that is "
+                                       "NOT in the ledger (e.g. 'sold comps', 'seller feedback %')"},
                 },
-                "required": ["id", "verdict", "edge", "risks"],
+                "required": ["id", "verdict", "edge", "risks", "missing_evidence"],
                 "additionalProperties": False,
             },
         }
@@ -209,16 +213,24 @@ You are the specialist risk desk (market, competition, legal/IP, logistics,
 Thailand operations) reviewing opportunities that already passed quantitative
 verification, for a solo Thailand-based operator with small capital.
 
+You are an INVESTIGATOR, not a source of truth. You reason ONLY over the
+evidence ledger provided for each opportunity. You MUST NOT invent or estimate
+any number — prices, inventory, sales volume, fees, tax rates, shipping costs,
+platform eligibility, supplier availability. If a fact is not in the ledger,
+you do not know it: put it in missing_evidence instead of guessing.
+
 For each opportunity give:
 - edge: WHY does this mispricing exist? (information asymmetry, friction,
-  fad, restock lag…) If you cannot name a plausible edge, that is itself a
-  red flag — someone may simply know something the data doesn't show.
+  fad, restock lag…) grounded in the ledger. If you cannot name a plausible
+  edge from the evidence, say so — that is itself a red flag.
 - risks: 2-4 concrete risks specific to THIS deal — authenticity/counterfeit
-  exposure, IP/licensing problems, platform policy (eBay/Shopee bans),
-  fragility/shipping damage, fad decay speed, competitor response, cash-flow
-  timing, customs surprises. Never generic filler like "market may change".
+  exposure, IP/licensing, platform policy (eBay/Shopee bans), fragility/
+  shipping damage, fad decay, competitor response, cash-flow timing, customs.
+  Never generic filler like "market may change".
+- missing_evidence: what you'd need to be confident that the ledger lacks.
+  Be specific ("realised sold prices, not asking", "seller feedback score").
 - verdict: proceed / proceed_with_caution / high_risk.
-Ground everything in the data given; never invent facts about the product."""
+Challenge the thesis. Prefer "I lack the evidence" over a confident guess."""
 
 
 class AIClassifier:
@@ -323,15 +335,17 @@ class AIClassifier:
         payload = [{
             "id": o["id"], "title": o["title"], "type": o["type"],
             "category": o.get("category"), "route": o.get("route"),
-            "margin_pct": o.get("economics", {}).get("base", {}).get("margin_pct"),
-            "net_usd": o.get("economics", {}).get("total_net_usd"),
-            "capital_usd": o.get("economics", {}).get("capital_usd"),
-            "qty": o.get("economics", {}).get("qty"),
+            "verification_level": o.get("verification_level"),
+            "single_source": o.get("single_source"),
+            # The evidence ledger IS the ground truth the AI may reason over —
+            # every number it cites must appear here (Phase 9).
+            "evidence_ledger": [{"field": e["field"], "value": e["value"],
+                                 "kind": e["kind"], "source": e["source"],
+                                 "freshness": e.get("freshness")}
+                                for e in (o.get("evidence") or [])],
             "window_days": o.get("window_days"),
-            "signals": [w.get("finding") for w in (o.get("why_chain") or [])[:2]],
         } for o in opps[:10]]
         try:
-            import anthropic
             client = self._get_client()
             response = client.messages.create(
                 model=self.cfg.ai_model, max_tokens=4096, system=RISK_SYSTEM,

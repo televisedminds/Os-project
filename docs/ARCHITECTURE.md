@@ -6,6 +6,38 @@ The objective function, stated once and used to judge every idea below:
 > API budget and operator attention.** Scan count is an input cost, not a KPI.
 > 20 high-confidence opportunities beat 20,000 weak ones.
 
+## 0a. v0.10 — evidence, verification levels, honest funnels (Phases 7–9)
+
+"Verified" used to be a single boolean. Now it means something graded, and
+every number behind it is traceable:
+
+* **Evidence ledger (`evidence.py`, Phase 9)** — each opportunity carries a
+  list of `EvidenceItem`s: what the claim is OF, its value, its KIND (observed
+  / estimated / calculated / assumption / user-supplied / ai-interpretation /
+  unknown), the source, whether it counts as an *independent* corroboration,
+  the raw-record id and freshness. Economics are always `calculated`, a Browse
+  price is `observed` but explicitly labelled *asking, not a sold comp*, and
+  counterfeit/condition risk is honestly `unknown` rather than faked.
+* **Verification levels (Phase 7)** — `compute_level` grades from the ledger,
+  not from "it passed": DISCOVERED → PARTIALLY_VERIFIED → MULTI_SOURCE_VERIFIED
+  → EXECUTION_READY → INVALIDATED. An opportunity whose evidence all comes from
+  one marketplace is `single_source` and capped at PARTIALLY_VERIFIED; nothing
+  reaches EXECUTION_READY on asking prices alone (it needs sold comps or a
+  third independent corroboration). Measured on demo: cross-market flips and
+  corroborated ventures reach multi-source; single-venue dislocations stay
+  partial — exactly the honesty the audit asked for.
+* **Rejection taxonomy + funnels (Phase 8)** — every rejection is classified
+  into a fixed taxonomy (margin_below_threshold, unsupported_thailand,
+  insufficient_supply, low_confidence, stale_data, …) and aggregated per type
+  in `rejection_funnel`; `type_funnel` now also breaks down by verification
+  level and counts single-source opportunities. So "lots rejected" becomes a
+  map of *why*.
+* **AI as investigator, not oracle (Phase 9)** — the risk desk is handed the
+  evidence ledger as its ONLY ground truth, forbidden from inventing prices/
+  volumes/fees/eligibility, and required to name `missing_evidence` instead of
+  guessing. Its verdict is stored as an `ai_interpretation` evidence item —
+  never as fact — and its named gaps become `unknown` items on the ledger.
+
 ## 0b. v0.9 — sources ≠ generators, and a knowledge graph (Phases 3–5)
 
 The diversity problem ("almost every result is an eBay flip") had a structural

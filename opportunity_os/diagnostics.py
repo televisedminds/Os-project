@@ -352,16 +352,24 @@ def type_funnel(store) -> dict:
     'verified' opportunities are independent theses vs the same edge repeated.
 
     A 'thesis' is (opportunity type + route + entity family), so twenty
-    listings of the same underpriced model collapse to one thesis."""
+    listings of the same underpriced model collapse to one thesis. Also breaks
+    down by verification LEVEL (Phase 7), so single-source/partial work is not
+    conflated with multi-source-verified work."""
 
     active = store.list_opportunities(status="active", limit=1000)
     by_type: dict[str, int] = {}
+    by_level: dict[str, int] = {}
     theses: set[str] = set()
     products: set[str] = set()
+    single_source = 0
     for o in active:
         route = o.get("route", {}) or {}
         kind = route.get("kind") or o.get("type")
         by_type[kind] = by_type.get(kind, 0) + 1
+        level = o.get("verification_level", "discovered")
+        by_level[level] = by_level.get(level, 0) + 1
+        if o.get("single_source"):
+            single_source += 1
         products.add(o.get("entity_id", ""))
         thesis = f"{o.get('type')}|{route.get('buy_venue')}|{route.get('sell_venue')}|{o.get('entity_id')}"
         theses.add(thesis)
@@ -369,7 +377,36 @@ def type_funnel(store) -> dict:
         "verified_opportunities": len(active),
         "unique_products": len(products),
         "unique_theses": len(theses),
+        "single_source": single_source,
         "by_type": dict(sorted(by_type.items(), key=lambda kv: kv[1], reverse=True)),
+        "by_verification_level": dict(sorted(by_level.items(), key=lambda kv: kv[1], reverse=True)),
         "note": "unique_theses < verified_opportunities means the same edge is "
-                "counted more than once — see Phase 6 clustering.",
+                "counted more than once; single_source counts opportunities whose "
+                "evidence all comes from one marketplace (never 'execution ready').",
+    }
+
+
+def rejection_funnel(store, cycles: int = 30) -> dict:
+    """Why candidates die — the taxonomy breakdown across recent cycles, overall
+    and per opportunity type. Turns 'lots rejected' into an actionable map."""
+
+    by_category: dict[str, int] = {}
+    by_type_category: dict[str, dict[str, int]] = {}
+    total = 0
+    examples: dict[str, str] = {}
+    for c in store.recent_cycles(cycles):
+        rep = c["report"]
+        for rj in rep.get("rejected", []):
+            cat = rj.get("category") or "other"
+            typ = rj.get("type", "?")
+            by_category[cat] = by_category.get(cat, 0) + 1
+            by_type_category.setdefault(typ, {})
+            by_type_category[typ][cat] = by_type_category[typ].get(cat, 0) + 1
+            examples.setdefault(cat, rj.get("reason", "")[:120])
+            total += 1
+    return {
+        "total_rejected": total,
+        "by_category": dict(sorted(by_category.items(), key=lambda kv: kv[1], reverse=True)),
+        "by_type": by_type_category,
+        "example_reason": examples,
     }

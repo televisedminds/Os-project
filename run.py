@@ -186,7 +186,13 @@ def cmd_diagnose(args) -> None:
     tf = diagnostics.type_funnel(store)
     print(f"\n  Opportunity types: {tf['by_type']}")
     print(f"  {tf['verified_opportunities']} verified = {tf['unique_theses']} unique theses "
-          f"across {tf['unique_products']} products")
+          f"across {tf['unique_products']} products ({tf['single_source']} single-source)")
+    print(f"  By verification level: {tf['by_verification_level']}")
+    rf = diagnostics.rejection_funnel(store)
+    if rf["total_rejected"]:
+        print(f"\n  Why candidates were rejected ({rf['total_rejected']} across recent cycles):")
+        for cat, n in rf["by_category"].items():
+            print(f"    {cat:<24} {n:>4}   e.g. {rf['example_reason'].get(cat,'')[:50]}")
     print()
 
 

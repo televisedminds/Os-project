@@ -212,6 +212,10 @@ class Opportunity:
     automation: AutomationPlan
     sources: list[str] = field(default_factory=list)
     invalidation_reason: str = ""
+    # Phase 7/9: the evidence ledger and the level it earns.
+    evidence: list[dict[str, Any]] = field(default_factory=list)
+    verification_level: str = "discovered"
+    single_source: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
