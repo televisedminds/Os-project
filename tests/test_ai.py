@@ -231,7 +231,11 @@ def test_pipeline_appends_ai_risk_step(tmp_path):
 
     orch.ai._client = _client(handler)
     orch.run_cycle()
-    opp = orch.db.active_opportunities()[0]
-    last = opp["why_chain"][-1]
-    assert "risk review" in last["question"]
-    assert "PROCEED" in last["finding"] and "Restock risk" in last["finding"]
+    # Don't assume index 0 or last-in-chain: newer phases may publish more
+    # than one opportunity per cycle and append further why-chain steps after
+    # the risk review, so find the step by content instead of position.
+    reviewed = [step for opp in orch.db.active_opportunities()
+                for step in opp["why_chain"] if "risk review" in step["question"]]
+    assert reviewed, "no opportunity carries an AI risk-review why-chain step"
+    assert any("PROCEED" in step["finding"] and "Restock risk" in step["finding"]
+               for step in reviewed)
