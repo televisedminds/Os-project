@@ -188,7 +188,8 @@ def _probe_serper(cfg, adapter) -> SourceHealth:
                      credential_present=bool(cfg.serper_api_key),
                      daily_allowance="2,500 free credits (one-time)", cost_per_request="1 credit")
     if not h.credential_present:
-        h.status, h.note = DISABLED, "no SERPER_API_KEY — niche demand falls back to bootstrap"
+        h.status, h.note = DISABLED, ("no SERPER_API_KEY — niche demand/supply stays UNOBSERVED "
+                                      "(ventures cannot verify) and TH+EN gap mining is idle")
         return h
     n, err, ms = _timed(lambda: adapter.reddit_posts_7d("nintendo switch"))
     h.avg_latency_ms = ms
@@ -334,6 +335,9 @@ def _observation_counts(store) -> dict[str, int]:
             for src, n in store._conn.execute(
                     "SELECT source, COUNT(*) FROM live_mentions GROUP BY source").fetchall():
                 out[src] = out.get(src, 0) + n
+        # Search-derived evidence (Serper demand/supply/gap observations).
+        for src, n in store.search_obs_counts().items():
+            out[src] = out.get(src, 0) + n
     except Exception:  # noqa: BLE001
         pass
     return out

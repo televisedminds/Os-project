@@ -59,12 +59,17 @@ CATEGORY_HINTS = [
     ("books", ("manga", "book", "comic", "first edition")),
 ]
 
-# Niche-kind inference for demand/venture candidates.
+# Niche-kind inference for demand/venture candidates (English + Thai terms —
+# a Thai search like "รับซ่อมรองเท้า ใกล้ฉัน" is a LOCAL service signal).
 NICHE_KIND_HINTS = [
-    ("digital", ("saas", "app", "tool", "dashboard", "api", "software", "automation", "chrome extension")),
-    ("info", ("guide", "course", "ebook", "template", "checklist", "tutorial", "how to")),
-    ("local", ("cleaning", "repair", "install", "delivery", "bangkok", "local", "detailing")),
-    ("b2b", ("wholesale", "supplier", "b2b", "partnership", "installer", "contractor")),
+    ("digital", ("saas", "app", "tool", "dashboard", "api", "software", "automation",
+                 "chrome extension", "โปรแกรม", "แอป", "ระบบ")),
+    ("info", ("guide", "course", "ebook", "template", "checklist", "tutorial", "how to",
+              "คอร์ส", "สอน", "วิธี")),
+    ("local", ("cleaning", "repair", "install", "delivery", "bangkok", "local", "detailing",
+               "รับซ่อม", "ทำความสะอาด", "ติดตั้ง", "ใกล้ฉัน", "กรุงเทพ", "รับจ้าง", "บริการ")),
+    ("b2b", ("wholesale", "supplier", "b2b", "partnership", "installer", "contractor",
+             "ขายส่ง", "โรงงาน", "ตัวแทนจำหน่าย", "ซัพพลายเออร์")),
 ]
 
 # Phrases that signal an UNMET NEED — someone asking the internet for a tool,
@@ -80,12 +85,22 @@ GAP_PATTERNS = (
     "how do you automate", "how do you handle", "willing to pay",
 )
 
+# The same unmet-need language in Thai — what a Thai customer types when they
+# can't find a product/service ("where do I find…", "does anyone do…",
+# "recommend a shop for…", "why is there no…").
+GAP_PATTERNS_TH = (
+    "หาซื้อได้ที่ไหน", "หายังไง", "หาไม่เจอ", "หาไม่ได้", "มีใครรับ", "มีที่ไหนรับ",
+    "แนะนำร้าน", "แนะนำหน่อย", "ร้านไหนดี", "ที่ไหนดี", "ทำไมไม่มี", "อยากได้",
+    "รับทำไหม", "จ้างได้ที่ไหน", "มีแอปไหน", "มีโปรแกรมไหน", "ช่วยแนะนำ",
+)
+
 
 def gap_relevance(text: str) -> float:
-    """0..1 — how much a post reads like an unmet-need signal."""
+    """0..1 — how much a post reads like an unmet-need signal (EN or TH)."""
 
     low = text.lower()
     hits = sum(1 for p in GAP_PATTERNS if p in low)
+    hits += sum(1 for p in GAP_PATTERNS_TH if p in text)   # Thai has no case
     return min(1.0, hits / 1.5)
 
 
@@ -148,6 +163,7 @@ class Candidate:
     niche_kind: str = "info"
     geo: str = "global"
     price_point_usd: float = 15.0
+    serper_query_th: str | None = None    # Thai demand/supply measurement query
 
     def to_watch_product(self) -> wl.WatchProduct:
         return wl.WatchProduct(
@@ -156,11 +172,16 @@ class Candidate:
             bootstrap_sold_7d={}, reddit_query=self.reddit_query, news_query=self.news_query)
 
     def to_watch_niche(self) -> wl.WatchNiche:
+        # Zeros mean UNKNOWN, deliberately: a discovered niche arrives with NO
+        # demand/supply baselines. The live pipeline must OBSERVE them (mention
+        # series, Serper demand/supply) before a venture can verify — the old
+        # fabricated constants (base_volume=1500, solution_count=3) made every
+        # discovered niche's economics fiction in live mode.
         return wl.WatchNiche(
             id=self.id, name=self.name, kind=self.niche_kind, geo=self.geo,
             price_point_usd=self.price_point_usd, reddit_query=self.reddit_query,
-            news_query=self.news_query, base_volume=1500.0, solution_count=3,
-            providers=3, demand_posts=60.0)
+            news_query=self.news_query, base_volume=0.0, solution_count=0,
+            providers=0, demand_posts=0.0, serper_query_th=self.serper_query_th)
 
 
 class DiscoverySource:
@@ -309,6 +330,113 @@ class HackerNewsDiscovery(DiscoverySource):
             return False, self.last_error
         return True, (f"keyless; {len(got)} unmet-need post(s) in the last "
                       f"{self.days} days (strict gap filter)")
+
+
+# ------------------------------------------------------------- Serper gap mining
+
+class SerperGapDiscovery(DiscoverySource):
+    """Thai + English unmet-need mining through Google (Serper).
+
+    Runs a rotating set of gap templates — Thai service-gap language against
+    google.co.th and English build-gap language globally — and harvests what
+    Google itself reveals people are asking: People-Also-Ask questions and
+    related searches that contain unmet-need phrasing. Each survivor becomes a
+    NICHE candidate carrying the exact query that found it, so the measurement
+    pass can keep observing its demand (and supply) with the same key.
+
+    This is the source that lets Thailand local-service and B2B candidates
+    ENTER the funnel at all — before it, no discovery source spoke Thai.
+    Budgeted hard (default 6 calls/sweep, sweeps every Nth cycle) so a free
+    2,500-credit key lasts months."""
+
+    id = "serper_gaps"
+    name = "Serper gap mining (TH + EN)"
+
+    # (query, gl, hl, default niche kind) — templates are seeds; the harvest is
+    # what Google's PAA/related-searches return around them.
+    TEMPLATES = [
+        # Thailand local services / B2B (Thai, google.co.th)
+        ("มีใครรับ ซ่อม ไหม pantip", "th", "th", "local"),
+        ("แนะนำร้าน รับทำ ไม่เจอ pantip", "th", "th", "local"),
+        ("หาซื้อได้ที่ไหน ไม่มีขาย pantip", "th", "th", "local"),
+        ("ขายส่ง หาซัพพลายเออร์ ยังไง pantip", "th", "th", "b2b"),
+        ("มีแอปไหน ช่วย ธุรกิจ ไหม pantip", "th", "th", "digital"),
+        ("จ้างได้ที่ไหน บริการ กรุงเทพ", "th", "th", "local"),
+        # English digital / SaaS / B2B gaps (global)
+        ("\"is there a tool for\" site:reddit.com", "us", "en", "digital"),
+        ("\"i wish there was an app\" site:reddit.com", "us", "en", "digital"),
+        ("\"how do you automate\" small business site:reddit.com", "us", "en", "b2b"),
+        ("\"willing to pay for\" tool site:reddit.com", "us", "en", "digital"),
+    ]
+
+    def __init__(self, cfg, client=None, serper_adapter=None):
+        super().__init__(cfg, client)
+        if serper_adapter is None:
+            from .market.adapters import SerperAdapter
+            serper_adapter = SerperAdapter(cfg, self.client)
+        self.serper = serper_adapter
+        self.budget = int(getattr(cfg, "serper_discovery_budget", 6))
+        self._sweep = 0
+
+    def _harvest(self, data: dict, gl: str, hl: str, default_kind: str) -> list[Candidate]:
+        """Pull unmet-need phrases out of one search response."""
+
+        phrases: list[tuple[str, str]] = []      # (phrase, where-found)
+        for q in (data.get("peopleAlsoAsk") or []):
+            if q.get("question"):
+                phrases.append((q["question"], "people-also-ask"))
+        for r in (data.get("relatedSearches") or []):
+            if r.get("query"):
+                phrases.append((r["query"], "related-search"))
+        for o in (data.get("organic") or [])[:8]:
+            if o.get("title"):
+                phrases.append((o["title"], "result-title"))
+        out: list[Candidate] = []
+        for phrase, where in phrases:
+            phrase = phrase.strip()
+            if len(phrase) < 8 or len(phrase) > 120:
+                continue
+            rel = gap_relevance(phrase)
+            if rel < 0.5:
+                continue
+            kind = infer_niche_kind(phrase)
+            if kind == "info" and default_kind != "info":
+                kind = default_kind          # template context beats the fallback
+            thai = hl == "th" or any("฀" <= ch <= "๿" for ch in phrase)
+            out.append(Candidate(
+                kind="niche", id=slug(phrase, "disc_n"), name=phrase[:70],
+                source=self.id, score=round(0.5 + rel * 0.5, 3),
+                niche_kind=kind, geo="TH" if thai else "global",
+                reason=f"Unmet-need phrase Google surfaced ({where}, {'Thai' if thai else 'EN'} search).",
+                serper_query_th=phrase if thai else None,
+                reddit_query=None if thai else clean_query(phrase),
+                news_query=None if thai else clean_query(phrase)))
+        return out
+
+    def discover(self) -> list[Candidate]:
+        if not self.serper.configured():
+            return self._fail("SERPER_API_KEY not set — Thai/EN gap mining idle")
+        n = min(self.budget, len(self.TEMPLATES))
+        start = (self._sweep * n) % len(self.TEMPLATES)
+        self._sweep += 1
+        picked = [self.TEMPLATES[(start + i) % len(self.TEMPLATES)] for i in range(n)]
+        out: list[Candidate] = []
+        for query, gl, hl, kind in picked:
+            data = self.serper.search(query, gl=gl, hl=hl)
+            if data is None:
+                self.last_error = self.serper.last_error
+                continue
+            out += self._harvest(data, gl, hl, kind)
+        if not out and self.last_error:
+            return self._fail(self.last_error)
+        return out
+
+    def check(self) -> tuple[bool, str]:
+        if not self.serper.configured():
+            return False, ("needs SERPER_API_KEY (serper.dev, 2,500 free searches) — "
+                           "this is the source that finds Thai service gaps")
+        return True, (f"configured; {len(self.TEMPLATES)} TH+EN gap templates, "
+                      f"{self.budget} searches per sweep")
 
 
 # --------------------------------------------------------------------- Reddit
@@ -659,6 +787,7 @@ def build_sources(cfg, store, client: httpx.Client | None = None) -> list[Discov
     sources: list[DiscoverySource] = [
         GoogleTrendsDiscovery(cfg, client),
         HackerNewsDiscovery(cfg, client),
+        SerperGapDiscovery(cfg, client),
         RedditDiscovery(cfg, client, reddit_adapter=reddit_ad),
         EbayBrowseDiscovery(cfg, client, ebay_adapter=ebay_ad),
     ]

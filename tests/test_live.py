@@ -139,7 +139,8 @@ def test_serper_feeds_niche_demand_when_reddit_dark(live_cfg):
     from opportunity_os.market.adapters import SerperAdapter
     store = Store(live_cfg.db_path)
     live_cfg.serper_api_key = "sk-serper"
-    counts = iter([2, 2, 2, 3, 6, 9, 10, 10, 10, 10])
+    # 10 mention measurements + 1 one-off supply scan on the first pass.
+    counts = iter([2, 2, 2, 3, 6, 9, 10, 10, 10, 10, 10])
 
     def handler(req):
         return httpx.Response(200, json={"organic": [{}] * next(counts)})
@@ -157,6 +158,10 @@ def test_serper_feeds_niche_demand_when_reddit_dark(live_cfg):
     assert metrics["growth_pct"] > 0                         # momentum from the serper series
     assert "serper" in lm.social_sources()                   # council sees it as corroboration
     assert lm.mentions("th_tax", "serper")[-1] == 10
+    # The first pass also ran a one-off supply scan and stored the observation;
+    # its 0-provider result must NOT override the operator's typed estimate.
+    assert store.latest_search_obs("th_tax", "supply") is not None
+    assert metrics["observed"]["supply"] == "user_supplied"
 
 
 def test_tiered_scheduler_budgets_scans_by_priority(tmp_path):

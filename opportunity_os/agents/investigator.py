@@ -354,8 +354,24 @@ class Investigator:
             "window_days": window_days,
             "economics": econ, "feasibility": feas, "why": why,
             "anomalies": anomalies,
-            "sources": sorted({"google_trends", "reddit"} | ({"news"} if cause else set())),
+            "sources": self._venture_sources(niche, cause),
             "route": {"geo": niche["geo"], "kind": route_kind or niche["kind"]},
         }
+
+    @staticmethod
+    def _venture_sources(niche: dict, cause) -> list[str]:
+        """Attribute a venture to the sources that actually measured it —
+        the mention-series source and an observed supply scan carry real
+        provenance in live mode; the legacy pair is only the demo fallback."""
+
+        prov = (niche.get("metrics") or {}).get("observed") or {}
+        srcs = {"news"} if cause else set()
+        if prov.get("demand_series"):
+            srcs.add(prov["demand_series"])
+        if prov.get("supply") == "observed":
+            srcs.add("serper")
+        if not (srcs - {"news"}):
+            srcs |= {"google_trends", "reddit"}    # demo / legacy metrics
+        return sorted(srcs)
 
 

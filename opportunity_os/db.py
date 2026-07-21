@@ -41,8 +41,12 @@ CREATE TABLE IF NOT EXISTS live_niches (
     id INTEGER PRIMARY KEY AUTOINCREMENT, niche_id TEXT, tick INTEGER, ts REAL, metrics TEXT);
 CREATE TABLE IF NOT EXISTS live_headlines (
     id INTEGER PRIMARY KEY AUTOINCREMENT, entity_id TEXT, tick INTEGER, ts REAL, text TEXT, etype TEXT);
+CREATE TABLE IF NOT EXISTS live_search_obs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, entity_id TEXT, source TEXT, kind TEXT,
+    tick INTEGER, ts REAL, query TEXT, geo TEXT, lang TEXT, payload TEXT);
 CREATE INDEX IF NOT EXISTS idx_live_snap ON live_snapshots(entity_id, venue, tick);
 CREATE INDEX IF NOT EXISTS idx_live_mention ON live_mentions(entity_id, source, tick);
+CREATE INDEX IF NOT EXISTS idx_live_search ON live_search_obs(entity_id, kind, tick);
 CREATE TABLE IF NOT EXISTS mission_progress (
     opportunity_id TEXT, step_order INTEGER, done INTEGER, ts REAL,
     PRIMARY KEY (opportunity_id, step_order));
@@ -316,6 +320,50 @@ class Store:
                 "SELECT count FROM live_mentions WHERE entity_id=? AND source=? ORDER BY id DESC LIMIT ?",
                 (entity_id, source, limit)).fetchall()
         return [r["count"] for r in reversed(rows)]
+
+    def add_search_obs(self, entity_id: str, source: str, kind: str, tick: int,
+                       query: str, payload: dict, geo: str = "us", lang: str = "en") -> None:
+        """A normalized search-derived observation (demand/supply/gap evidence).
+        The payload is the parsed result verbatim — every downstream claim can
+        trace back to the exact query, geo, language and timestamp."""
+
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO live_search_obs(entity_id,source,kind,tick,ts,query,geo,lang,payload) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (entity_id, source, kind, tick, time.time(), query, geo, lang,
+                 json.dumps(payload, ensure_ascii=False, default=str)))
+
+    def latest_search_obs(self, entity_id: str, kind: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM live_search_obs WHERE entity_id=? AND kind=? "
+                "ORDER BY id DESC LIMIT 1", (entity_id, kind)).fetchone()
+        if not row:
+            return None
+        out = dict(row)
+        out["payload"] = json.loads(out["payload"] or "{}")
+        return out
+
+    def search_obs_series(self, entity_id: str, kind: str, limit: int = 30) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM live_search_obs WHERE entity_id=? AND kind=? "
+                "ORDER BY id DESC LIMIT ?", (entity_id, kind, limit)).fetchall()
+        out = []
+        for r in reversed(rows):
+            d = dict(r)
+            d["payload"] = json.loads(d["payload"] or "{}")
+            out.append(d)
+        return out
+
+    def search_obs_counts(self) -> dict[str, int]:
+        """observations stored per source in live_search_obs (for diagnostics)."""
+
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT source, COUNT(*) AS n FROM live_search_obs GROUP BY source").fetchall()
+        return {r["source"]: r["n"] for r in rows}
 
     def add_live_niche(self, niche_id: str, tick: int, metrics: dict) -> None:
         with self._lock, self._conn:

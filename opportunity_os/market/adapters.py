@@ -15,6 +15,7 @@ Verified transports:
 from __future__ import annotations
 
 import base64
+import re
 import statistics
 import time
 import xml.etree.ElementTree as ET
@@ -280,16 +281,33 @@ class FxAdapter(BaseAdapter):
 # ------------------------------------------------------------------- Serper
 
 class SerperAdapter(BaseAdapter):
-    """google.serper.dev — Google results as an API. Used here as a demand
-    signal for niches: how many Reddit discussions Google saw this week for a
-    query (site:reddit.com …, past-week filter). It measures the same thing
-    the Reddit API does, more coarsely — which makes it the working stand-in
-    while a Reddit key is pending approval. 2,500 free credits at signup;
-    1 credit per call at num<=10."""
+    """google.serper.dev — Google results as an API, used as an EVIDENCE
+    COLLECTOR, not just a counter:
+
+    * `reddit_posts_7d` — coarse demand momentum (site:reddit.com, past week),
+      the Reddit stand-in that feeds mention series;
+    * `demand_observation` — what people are actually asking around a niche
+      (People-Also-Ask questions, related searches, result depth), in any
+      language/geo Google serves (Thai included);
+    * `supply_observation` — who currently serves the niche: distinct
+      commercial domains in the organic results, the observed stand-in for
+      "how many credible solutions/providers exist". This replaces the old
+      fabricated solution_count=3 constant with a real, sourced number.
+
+    2,500 free credits at signup; 1 credit per call at num<=10."""
 
     id = "serper"
     name = "Serper (Google search)"
     URL = "https://google.serper.dev/search"
+
+    # Domains that appear in results but are not a competing provider/solution:
+    # social networks, encyclopedias, video, marketplaces of ideas — presence
+    # there is DEMAND evidence, not SUPPLY.
+    NON_PROVIDER_DOMAINS = (
+        "reddit.com", "quora.com", "facebook.com", "youtube.com", "wikipedia.org",
+        "twitter.com", "x.com", "pantip.com", "instagram.com", "tiktok.com",
+        "medium.com", "linkedin.com", "pinterest.",
+    )
 
     def __init__(self, cfg, client: httpx.Client | None = None):
         super().__init__(cfg, client)
@@ -298,23 +316,87 @@ class SerperAdapter(BaseAdapter):
     def configured(self) -> bool:
         return bool(self.cfg.serper_api_key)
 
-    def reddit_posts_7d(self, query: str) -> int | None:
-        """Count of Reddit results Google indexed in the past week (0-10)."""
+    def search(self, query: str, gl: str = "us", hl: str = "en",
+               num: int = 10, tbs: str | None = None) -> dict | None:
+        """One raw Serper call. Returns the full parsed JSON (organic,
+        peopleAlsoAsk, relatedSearches) or None on failure."""
 
         if not self.configured():
-            return self._fail("SERPER_API_KEY not set")
+            return self._fail_none("SERPER_API_KEY not set")
+        body: dict = {"q": query, "num": num, "gl": gl, "hl": hl}
+        if tbs:
+            body["tbs"] = tbs
         try:
             r = self.client.post(
                 self.URL,
                 headers={"X-API-KEY": self.cfg.serper_api_key,
                          "Content-Type": "application/json"},
-                json={"q": f"site:reddit.com {query}", "num": 10, "tbs": "qdr:w"})
+                json=body)
             r.raise_for_status()
-            organic = r.json().get("organic", []) or []
             self.last_error = ""
-            return len(organic)
+            return r.json()
         except Exception as e:  # noqa: BLE001
-            return self._fail(f"Serper search failed: {e}")
+            return self._fail_none(f"Serper search failed: {e}")
+
+    def _fail_none(self, msg: str):
+        self.last_error = msg[:300]
+        return None
+
+    def reddit_posts_7d(self, query: str) -> int | None:
+        """Count of Reddit results Google indexed in the past week (0-10)."""
+
+        data = self.search(f"site:reddit.com {query}", tbs="qdr:w")
+        if data is None:
+            return None
+        return len(data.get("organic", []) or [])
+
+    @staticmethod
+    def _domain(url: str) -> str:
+        m = re.match(r"https?://(?:www\.)?([^/]+)", url or "")
+        return m.group(1).lower() if m else ""
+
+    def demand_observation(self, query: str, gl: str = "us", hl: str = "en") -> dict | None:
+        """What the internet is asking around this query — stored verbatim so
+        every downstream claim traces to a real search result."""
+
+        data = self.search(query, gl=gl, hl=hl)
+        if data is None:
+            return None
+        organic = data.get("organic", []) or []
+        return {
+            "query": query, "gl": gl, "hl": hl,
+            "results": len(organic),
+            "questions": [q.get("question", "") for q in
+                          (data.get("peopleAlsoAsk", []) or [])[:8] if q.get("question")],
+            "related": [r.get("query", "") for r in
+                        (data.get("relatedSearches", []) or [])[:8] if r.get("query")],
+            "top": [{"title": o.get("title", ""), "url": o.get("link", ""),
+                     "snippet": (o.get("snippet", "") or "")[:200]}
+                    for o in organic[:5]],
+        }
+
+    def supply_observation(self, query: str, gl: str = "us", hl: str = "en") -> dict | None:
+        """Who serves this niche today: distinct commercial domains ranking for
+        the query. An observed proxy for provider/solution count — honest about
+        being a proxy, but sourced, timestamped and reproducible (unlike the
+        fabricated constants it replaces)."""
+
+        data = self.search(query, gl=gl, hl=hl)
+        if data is None:
+            return None
+        providers: dict[str, dict] = {}
+        for o in data.get("organic", []) or []:
+            dom = self._domain(o.get("link", ""))
+            if not dom or any(nd in dom for nd in self.NON_PROVIDER_DOMAINS):
+                continue
+            providers.setdefault(dom, {"domain": dom, "title": o.get("title", "")[:120],
+                                       "url": o.get("link", "")})
+        return {
+            "query": query, "gl": gl, "hl": hl,
+            "provider_count": len(providers),
+            "providers": list(providers.values())[:8],
+            "results": len(data.get("organic", []) or []),
+        }
 
     def check(self) -> tuple[bool, str]:
         if not self.configured():

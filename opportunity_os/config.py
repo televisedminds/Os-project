@@ -89,6 +89,11 @@ class Config:
     # credits should last weeks, not days.
     serper_api_key: str = _env("SERPER_API_KEY", "")
     serper_every_n_ticks: int = field(default_factory=lambda: int(os.environ.get("OOS_SERPER_EVERY", "12")))
+    # Per-pass Serper spend caps: niche demand/supply measurement, and the
+    # TH+EN gap-mining discovery source. At the defaults and a 30-min cadence
+    # this stays under ~60 credits/day total.
+    serper_niche_budget: int = field(default_factory=lambda: int(os.environ.get("OOS_SERPER_NICHE_BUDGET", "12")))
+    serper_discovery_budget: int = field(default_factory=lambda: int(os.environ.get("OOS_SERPER_DISCOVERY_BUDGET", "6")))
     telegram_bot_token: str = _env("TELEGRAM_BOT_TOKEN", "")
     telegram_chat_id: str = _env("TELEGRAM_CHAT_ID", "")
 

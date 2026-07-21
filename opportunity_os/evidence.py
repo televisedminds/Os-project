@@ -112,15 +112,30 @@ def build_ledger(cand: dict, verification, mode: str = "demo",
     else:  # venture
         niche = cand.get("niche", {})
         m = niche.get("metrics", {})
+        prov = m.get("observed") or {}
+        # Demand: kind follows its real provenance. 'user_supplied' means the
+        # operator typed the baseline into the watchlist; 'unknown' is named,
+        # not hidden.
+        demand_kind = {"observed": OBSERVED, "user_supplied": USER_SUPPLIED,
+                       "unknown": UNKNOWN}.get(prov.get("demand"), OBSERVED)
         for src in cand.get("sources", []):
             if src in ("reddit", "serper", "google_trends", "news"):
                 items.append(EvidenceItem(
                     "demand", f"{m.get('volume', 0):,.0f} demand events/mo, "
-                    f"{m.get('growth_pct', 0):.0f}%/mo", OBSERVED, src,
-                    independent=True, ts=latest_ts, freshness=fresh))
+                    f"{m.get('growth_pct', 0):.0f}%/mo", demand_kind, src,
+                    independent=demand_kind == OBSERVED, ts=latest_ts, freshness=fresh))
+        supply_kind = {"observed": OBSERVED, "user_supplied": USER_SUPPLIED,
+                       "unknown": UNKNOWN}.get(prov.get("supply"), OBSERVED)
+        supply_src = {"observed": "serper", "user_supplied": "watchlist"}.get(
+            prov.get("supply"), "market_scan")
+        doms = m.get("supply_domains") or []
+        supply_val = (f"{m.get('solution_count', m.get('providers', 0))} existing "
+                      f"solutions/providers" + (f" ({', '.join(doms[:4])})" if doms else ""))
+        if supply_kind == UNKNOWN:
+            supply_val = "not yet observed — research required"
         items.append(EvidenceItem(
-            "supply", f"{m.get('solution_count', m.get('providers', 0))} existing solutions/providers",
-            OBSERVED, "market_scan", independent=False, ts=latest_ts, freshness=fresh))
+            "supply", supply_val, supply_kind, supply_src,
+            independent=supply_kind == OBSERVED, ts=latest_ts, freshness=fresh))
 
     # economics — always CALCULATED, never observed
     if econ is not None:

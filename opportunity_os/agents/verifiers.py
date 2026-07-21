@@ -208,13 +208,33 @@ class VerificationCouncil:
                             f"({mentions[-1] if mentions else 0}/day mentions), "
                             f"demand:supply {'✓' if posts_up else '✗'} ({ratio:.0f}:1).", critical=True))
 
-        if niche["kind"] in ("digital", "info"):
+        # Supply-side honesty: metrics carry provenance in live mode. A supply
+        # count that was never observed (no Serper scan, no watchlist value)
+        # must NOT pass as a "confirmed gap" — that was exactly how fabricated
+        # constants used to publish fictional ventures. Demo/legacy metrics
+        # (no provenance key) keep the original behaviour: the simulator's
+        # numbers ARE its ground truth.
+        prov = m.get("observed") or {}
+        supply_src = prov.get("supply")
+        gap_conf = 0.85
+        if supply_src == "unknown":
+            gap_ok = False
+            gap_ev = ("Supply side never observed — no Serper supply scan and no "
+                      "watchlist value. Research required before this can verify.")
+        elif niche["kind"] in ("digital", "info"):
             gap_ok = m["solution_count"] <= 4
             gap_ev = f"{m['solution_count']} credible solutions for {m['volume']:,.0f} monthly searches."
         else:
             gap_ok = ratio >= 25
             gap_ev = f"{m['providers']:.0f} providers vs {m['demand_posts']:.0f} demand posts/mo."
-        checks.append(Check("competition_gap", "Supply-side gap confirmed", gap_ok, 0.85, gap_ev, critical=True))
+        if supply_src == "observed":
+            doms = ", ".join(m.get("supply_domains", [])[:4])
+            gap_ev += f" Observed via Google supply scan{': ' + doms if doms else ''}."
+        elif supply_src == "user_supplied":
+            gap_conf = 0.6
+            gap_ev += " (Supply count is your watchlist estimate — verify it yourself.)"
+        checks.append(Check("competition_gap", "Supply-side gap confirmed", gap_ok, gap_conf,
+                            gap_ev, critical=True))
 
         unit_ok = econ.pessimistic.net_usd > 0
         checks.append(Check("unit_economics", "Positive at 45% of modelled demand", unit_ok, 0.85,

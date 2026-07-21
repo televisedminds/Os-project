@@ -111,12 +111,20 @@ Platform / Data API help pages), describe it as *personal, non-commercial
 market research*, and wait for approval. Everything else in this platform
 keeps working while you wait — Reddit only adds signal, it isn't required.
 
-## 4b. Serper — free Google-search demand, the Reddit stand-in (2 min)
+## 4b. Serper — the non-flip evidence engine (2 min, free)
 
-**What it powers here:** while your Reddit key is pending (or if you never get
-one), Serper measures niche demand through Google instead — it counts how many
-Reddit discussions Google indexed this week for each tracked topic. Coarser
-than the Reddit API, but real, and it makes niches verifiable *today*.
+**What it powers here (v1.1.0 — this key matters more than it looks):**
+
+1. **Demand series** for every tracked niche — Thai niches are measured *in
+   Thai* against google.co.th, English ones via Reddit-scoped Google search.
+2. **Supply observation** — who already serves a niche (distinct commercial
+   domains ranking for it). Ventures can only *verify* on observed or
+   hand-typed supply; without this key their supply stays UNKNOWN and they are
+   honestly held at "research required" instead of published on guesses.
+3. **Thai + English gap mining** — a discovery source that harvests unmet-need
+   searches ("มีใครรับ…ไหม", "is there a tool for…") into Thailand
+   local-service, B2B and digital candidates. This is how non-flip
+   opportunities enter the funnel at all.
 
 **Steps:**
 1. [serper.dev](https://serper.dev) → sign in with your Google account.

@@ -51,10 +51,15 @@ class WatchNiche:
     price_point_usd: float
     reddit_query: str | None = None
     news_query: str | None = None
+    # Supply/demand baselines. In a hand-typed watchlist these are YOUR numbers
+    # (user-supplied, you are accountable). Discovered niches arrive with 0 =
+    # UNKNOWN: the pipeline must observe demand/supply (Serper) before any
+    # venture built on them can verify — it never invents them.
     base_volume: float = 1000.0
     solution_count: int = 3
     providers: int = 3
     demand_posts: float = 50.0
+    serper_query_th: str | None = None    # Thai-language demand/supply query
 
 
 @dataclass
@@ -149,6 +154,7 @@ def load(path: Path) -> Watchlist:
         solution_count=int(n.get("solution_count", 3)),
         providers=int(n.get("providers", 3)),
         demand_posts=float(n.get("demand_posts", 50)),
+        serper_query_th=n.get("serper_query_th"),
     ) for n in raw.get("niches", [])]
     op_raw = raw.get("operator", {}) or {}
     operator = Operator(

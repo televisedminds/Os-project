@@ -12,7 +12,8 @@
     "action card then opens that listing instead of a search. eBay-queried venues get",
     "the exact live listing automatically from the Browse API.",
     "niches: reddit_query drives the live demand signal; you maintain the supply-side",
-    "counts (solution_count/providers) as you scout competitors."
+    "counts (solution_count/providers) as you scout competitors.",
+    "serper_query_th (niches): a Thai search phrase for the niche. With a Serper key, TH niches get demand measured in Thai against google.co.th and supply OBSERVED (who already serves it) — the evidence non-flip opportunities verify against."
   ],
   "operator": {
     "_help": "Who is executing. capital_usd = your wallet today; goal_usd = the number everything works toward; budget_usd caps per-deal position sizing; avoid_types hides whole categories (product_arbitrage, digital_product, info_product, local_service, b2b_service); registered_venues marks platforms you already sell on so playbooks skip signup.",
@@ -22,14 +23,24 @@
     "avoid_types": [],
     "prefer_categories": [],
     "registered_venues": [],
-    "has": ["PromptPay"]
+    "has": [
+      "PromptPay"
+    ]
   },
   "radar": [
-    { "date": "2026-10-16", "label": "Pokémon 'Mega Evolution' set — global release",
+    {
+      "date": "2026-10-16",
+      "label": "Pokémon 'Mega Evolution' set — global release",
       "note": "Sealed JP product historically appreciates into set launches.",
-      "related": "moonbreon_umbreon_vmax", "prep_days": 30 },
-    { "date": "2026-08-10", "label": "Back-to-school peak (TH) — electronics demand",
-      "note": "Gimbals/keyboards sell-through rises; stock up 3 weeks ahead.", "prep_days": 21 }
+      "related": "moonbreon_umbreon_vmax",
+      "prep_days": 30
+    },
+    {
+      "date": "2026-08-10",
+      "label": "Back-to-school peak (TH) — electronics demand",
+      "note": "Gimbals/keyboards sell-through rises; stock up 3 weeks ahead.",
+      "prep_days": 21
+    }
   ],
   "products": [
     {
@@ -37,12 +48,21 @@
       "name": "Umbreon VMAX alt art 215/s12a 'Moonbreon' (raw, JP print)",
       "category": "trading_cards",
       "weight_kg": 0.05,
-      "queries": { "ebay_us": "umbreon vmax 215/s12a alt art -psa -cgc -bgs" },
-      "manual_listings": {
-        "yahoo_auctions_jp": { "price_thb": 2450, "stock": 12, "sellers": 6, "sold_7d": 5,
-                               "note": "Buyee search — update weekly" }
+      "queries": {
+        "ebay_us": "umbreon vmax 215/s12a alt art -psa -cgc -bgs"
       },
-      "bootstrap_sold_7d": { "ebay_us": 10 },
+      "manual_listings": {
+        "yahoo_auctions_jp": {
+          "price_thb": 2450,
+          "stock": 12,
+          "sellers": 6,
+          "sold_7d": 5,
+          "note": "Buyee search — update weekly"
+        }
+      },
+      "bootstrap_sold_7d": {
+        "ebay_us": 10
+      },
       "reddit_query": "umbreon vmax alt art",
       "news_query": "pokemon card prices"
     },
@@ -51,12 +71,21 @@
       "name": "New Balance 2002R Protection Pack (TH retail sizes)",
       "category": "sneakers",
       "weight_kg": 1.4,
-      "queries": { "ebay_us": "new balance 2002r protection pack rain cloud" },
-      "manual_listings": {
-        "shopee_th": { "price_thb": 3590, "stock": 8, "sellers": 4, "sold_7d": 3,
-                       "note": "TH retail/resale — verify size run before buying" }
+      "queries": {
+        "ebay_us": "new balance 2002r protection pack rain cloud"
       },
-      "bootstrap_sold_7d": { "ebay_us": 6 },
+      "manual_listings": {
+        "shopee_th": {
+          "price_thb": 3590,
+          "stock": 8,
+          "sellers": 4,
+          "sold_7d": 3,
+          "note": "TH retail/resale — verify size run before buying"
+        }
+      },
+      "bootstrap_sold_7d": {
+        "ebay_us": 6
+      },
       "reddit_query": "new balance 2002r protection pack"
     },
     {
@@ -64,12 +93,21 @@
       "name": "Game Boy Advance SP AGS-101 (boxed)",
       "category": "gaming",
       "weight_kg": 0.45,
-      "queries": { "ebay_us": "game boy advance sp ags-101 boxed" },
-      "manual_listings": {
-        "facebook_mp_th": { "price_thb": 2900, "stock": 3, "sellers": 3, "sold_7d": 1,
-                            "note": "BKK retro groups; inspect screen before paying" }
+      "queries": {
+        "ebay_us": "game boy advance sp ags-101 boxed"
       },
-      "bootstrap_sold_7d": { "ebay_us": 8 },
+      "manual_listings": {
+        "facebook_mp_th": {
+          "price_thb": 2900,
+          "stock": 3,
+          "sellers": 3,
+          "sold_7d": 1,
+          "note": "BKK retro groups; inspect screen before paying"
+        }
+      },
+      "bootstrap_sold_7d": {
+        "ebay_us": 8
+      },
       "reddit_query": "gameboy advance sp ags 101"
     },
     {
@@ -77,16 +115,33 @@
       "name": "Foldable phone gimbal (creator kit) — CN import",
       "category": "electronics",
       "weight_kg": 0.6,
-      "queries": { "shopee_th": "กันสั่นมือถือ gimbal พับได้" },
+      "queries": {
+        "shopee_th": "กันสั่นมือถือ gimbal พับได้"
+      },
       "manual_listings": {
-        "aliexpress":     { "price_usd": 23.0, "stock": 500, "sellers": 40, "sold_7d": 30,
-                            "url": "https://www.aliexpress.com/item/1005006357290000.html",
-                            "note": "AliExpress: paste the exact item URL you'd buy; order 1 sample first" },
-        "shopee_th":      { "price_thb": 1790, "stock": 60, "sellers": 18, "sold_7d": 20,
-                            "url": "https://shopee.co.th/product/123456789/987654321",
-                            "note": "Shopee TH sell side — from the ขายแล้ว counter" },
-        "tiktok_shop_th": { "price_thb": 1990, "stock": 45, "sellers": 12, "sold_7d": 16,
-                            "note": "TikTok Shop TH — video demos sell these" }
+        "aliexpress": {
+          "price_usd": 23.0,
+          "stock": 500,
+          "sellers": 40,
+          "sold_7d": 30,
+          "url": "https://www.aliexpress.com/item/1005006357290000.html",
+          "note": "AliExpress: paste the exact item URL you'd buy; order 1 sample first"
+        },
+        "shopee_th": {
+          "price_thb": 1790,
+          "stock": 60,
+          "sellers": 18,
+          "sold_7d": 20,
+          "url": "https://shopee.co.th/product/123456789/987654321",
+          "note": "Shopee TH sell side — from the ขายแล้ว counter"
+        },
+        "tiktok_shop_th": {
+          "price_thb": 1990,
+          "stock": 45,
+          "sellers": 12,
+          "sold_7d": 16,
+          "note": "TikTok Shop TH — video demos sell these"
+        }
       }
     },
     {
@@ -95,9 +150,19 @@
       "category": "electronics",
       "weight_kg": 0.4,
       "manual_listings": {
-        "facebook_mp_th": { "price_thb": 11300, "stock": 6, "sellers": 5, "sold_7d": 2,
-                            "note": "FB groups; meet at BTS, check battery health ≥ 85%" },
-        "shopee_th":      { "price_thb": 14400, "stock": 14, "sellers": 20, "sold_7d": 6 }
+        "facebook_mp_th": {
+          "price_thb": 11300,
+          "stock": 6,
+          "sellers": 5,
+          "sold_7d": 2,
+          "note": "FB groups; meet at BTS, check battery health ≥ 85%"
+        },
+        "shopee_th": {
+          "price_thb": 14400,
+          "stock": 14,
+          "sellers": 20,
+          "sold_7d": 6
+        }
       }
     }
   ],
@@ -105,25 +170,41 @@
     {
       "id": "th_freelance_tax",
       "name": "Thai freelancer tax calculator + filing guide (ภาษีฟรีแลนซ์)",
-      "kind": "info", "geo": "TH", "price_point_usd": 15,
+      "kind": "info",
+      "geo": "TH",
+      "price_point_usd": 15,
       "reddit_query": "thailand freelance tax",
       "news_query": "thailand freelancer tax rules",
-      "base_volume": 8000, "solution_count": 2, "providers": 2, "demand_posts": 120
+      "base_volume": 8000,
+      "solution_count": 2,
+      "providers": 2,
+      "demand_posts": 120,
+      "serper_query_th": "ภาษีฟรีแลนซ์ ยื่นยังไง โปรแกรมคำนวณ"
     },
     {
       "id": "dtv_visa_guide",
       "name": "DTV visa application walkthrough (nomads relocating to TH)",
-      "kind": "info", "geo": "TH", "price_point_usd": 19,
+      "kind": "info",
+      "geo": "TH",
+      "price_point_usd": 19,
       "reddit_query": "DTV visa thailand",
       "news_query": "thailand DTV visa",
-      "base_volume": 12000, "solution_count": 4, "providers": 4, "demand_posts": 200
+      "base_volume": 12000,
+      "solution_count": 4,
+      "providers": 4,
+      "demand_posts": 200
     },
     {
       "id": "bkk_airbnb_cleaning",
       "name": "Airbnb turnover cleaning — Sukhumvit condos",
-      "kind": "local", "geo": "Bangkok", "price_point_usd": 32,
+      "kind": "local",
+      "geo": "Bangkok",
+      "price_point_usd": 32,
       "reddit_query": "bangkok airbnb cleaning",
-      "base_volume": 300, "solution_count": 9, "providers": 9, "demand_posts": 280
+      "base_volume": 300,
+      "solution_count": 9,
+      "providers": 9,
+      "demand_posts": 280
     }
   ]
 }

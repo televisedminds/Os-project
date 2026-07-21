@@ -350,3 +350,62 @@ Drop the file in, restart. It's judged by the AI brain, capped by the engine,
 observed by the tiered scheduler, and gated by the council like everything
 else. That contract — *plugins propose, the pipeline disposes* — is what lets
 source count grow 100× without the quality bar moving an inch.
+
+## 7. v1.1.0 — why the live feed was all eBay-US flips, and the fix
+
+The audit question: *"with eBay, Serper, ScrapingDog and Claude all
+configured, why is the visible output still eBay-US buy-and-resell flips?"*
+Root causes found (file:line refs are pre-fix):
+
+1. **Discovered niches shipped with fabricated baselines** —
+   `discovery.py` `to_watch_niche()` gave every discovered niche
+   `base_volume=1500, solution_count=3, providers=3, demand_posts=60`.
+   Consequences: the council's "supply-side gap confirmed" check
+   (`verifiers.py`, `solution_count <= 4`) passed **by construction**; venture
+   economics monetised an invented volume; the evidence ledger labelled the
+   invented supply `OBSERVED/market_scan`. Live-mode non-flip output was
+   either fiction or (in practice) nothing.
+2. **Serper's evidence was discarded** — the adapter returned only
+   `len(organic)` for a `site:reddit.com` query. Titles, URLs, snippets,
+   People-Also-Ask, related searches — the actual competitor/complaint/gap
+   evidence — were thrown away. ScrapingDog was Shopee-price-only.
+3. **No source spoke Thai** — trends geo defaulted to US, eBay seeds are
+   US-liquid products, the niche-kind classifier only knew English words.
+   Thailand local/B2B candidates could not *enter* the funnel.
+4. **Scan-budget asymmetry** — products got tiered scans every cycle; niches
+   got ≤12 coarse counts every 12th cycle, so venture demand series starved
+   while flip evidence compounded.
+
+The v1.1.0 fix, mechanically:
+
+* `SerperAdapter.demand_observation / supply_observation / search` — full
+  parsed results stored in the new `live_search_obs` table (query, geo,
+  language, timestamp, payload verbatim). Supply = distinct commercial
+  domains ranking for the niche (directories/social filtered out) — an
+  observed, reproducible proxy replacing the constant `3`.
+* `LiveMarket._niche_metrics` now emits **provenance**:
+  `observed: {demand: observed|user_supplied|unknown, supply: …}`. Discovered
+  niches start at 0/unknown; hand-typed watchlist numbers stay the operator's
+  own (and a 0-provider scan never silently overwrites them).
+* `verify_venture`: unknown supply **fails** the critical gap check with
+  "research required" — a venture can no longer verify on unobserved supply.
+  Observed supply cites the domains found. Demo metrics (no provenance key)
+  keep simulator semantics.
+* `evidence.build_ledger`: venture demand/supply items carry their true kind
+  (OBSERVED / USER_SUPPLIED / UNKNOWN) and source (serper / watchlist), so
+  the AI risk desk and the UI can no longer be lied to by defaults.
+* **`SerperGapDiscovery`** — Thai + English unmet-need mining (rotating
+  templates against google.co.th and reddit-scoped English gaps), harvesting
+  People-Also-Ask + related searches + result titles through the same
+  gap-relevance filter (now Thai-aware, `GAP_PATTERNS_TH`). Thai candidates
+  carry `serper_query_th`, so the measurement pass keeps observing their
+  demand *in Thai* and their supply. Budgeted: `OOS_SERPER_DISCOVERY_BUDGET`
+  (6/sweep) + `OOS_SERPER_NICHE_BUDGET` (12/pass) ≈ under ~60 credits/day.
+
+What this changes about the product: with a Serper key set, the funnel's
+non-flip lanes run on real, cited evidence end to end — and when evidence is
+missing, the candidate is *visibly* research-required instead of silently
+fictional. Without a Serper key, the diagnostics now say exactly that
+(`no SERPER_API_KEY — niche demand/supply stays UNOBSERVED (ventures cannot
+verify)`), which is the honest description of the old behaviour too — it just
+never admitted it.

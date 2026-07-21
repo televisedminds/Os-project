@@ -144,7 +144,9 @@ class LiveMarket:
 
         # Discovery sweeps are heavier (many outbound calls) so they run every
         # Nth cycle. New candidates join the observed set immediately below.
-        if self.discovery and (t % max(1, self.cfg.discover_every_n_ticks) == 1):
+        # (n<=1 means every cycle — `t % 1 == 1` is never true, so gate on it.)
+        every = max(1, self.cfg.discover_every_n_ticks)
+        if self.discovery and (every == 1 or t % every == 1):
             self.discovery_report = self.discovery.run()
             for e in self.discovery_report.get("errors", []):
                 self._err(f"discovery/{e}")
@@ -223,7 +225,7 @@ class LiveMarket:
         serper_every = max(1, getattr(serper, "every_n_ticks", 12)) if serper else 12
         serper_pass = (serper is not None and getattr(serper, "configured", lambda: False)()
                        and (serper_every == 1 or t % serper_every == 1))
-        serper_budget = 12                         # hard cap per pass — protects free credits
+        serper_budget = int(getattr(self.cfg, "serper_niche_budget", 12))
         for n in self._all_niches():
             count = None
             if reddit and n.reddit_query:
@@ -233,14 +235,43 @@ class LiveMarket:
                 else:
                     self._err(f"{n.id}/reddit: {reddit.last_error}")
             # Reddit down or key pending? Serper measures the same demand via
-            # Google (site:reddit.com, past week) — coarser, but real.
-            if count is None and serper_pass and serper_budget > 0 and n.reddit_query:
-                wk = serper.reddit_posts_7d(n.reddit_query)
-                serper_budget -= 1
-                if wk is not None:
-                    self.db.add_live_mention(n.id, "serper", t, wk)
-                else:
-                    self._err(f"{n.id}/serper: {serper.last_error}")
+            # Google — Thai niches are measured with their Thai query against
+            # google.co.th, so a Bangkok service gap gets a REAL demand series.
+            if count is None and serper_pass and serper_budget > 0:
+                if n.serper_query_th:
+                    obs = serper.demand_observation(n.serper_query_th, gl="th", hl="th")
+                    serper_budget -= 1
+                    if obs is not None:
+                        self.db.add_live_mention(n.id, "serper", t, obs["results"])
+                        self.db.add_search_obs(n.id, "serper", "demand", t,
+                                               n.serper_query_th, obs, geo="th", lang="th")
+                    else:
+                        self._err(f"{n.id}/serper: {serper.last_error}")
+                elif n.reddit_query:
+                    wk = serper.reddit_posts_7d(n.reddit_query)
+                    serper_budget -= 1
+                    if wk is not None:
+                        self.db.add_live_mention(n.id, "serper", t, wk)
+                    else:
+                        self._err(f"{n.id}/serper: {serper.last_error}")
+            # Supply side: OBSERVE who already serves this niche instead of
+            # trusting a constant. Slow rotation — one lookup per niche until
+            # covered, refreshed only when stale (>3 days) — so it costs a few
+            # credits, not a flood.
+            if serper_pass and serper_budget > 0:
+                sq = n.serper_query_th or n.reddit_query
+                if sq:
+                    prev = self.db.latest_search_obs(n.id, "supply")
+                    stale = prev is None or (time.time() - prev["ts"]) > 3 * 86400
+                    if stale:
+                        gl, hl = ("th", "th") if n.serper_query_th else ("us", "en")
+                        sup = serper.supply_observation(sq, gl=gl, hl=hl)
+                        serper_budget -= 1
+                        if sup is not None:
+                            self.db.add_search_obs(n.id, "serper", "supply", t,
+                                                   sq, sup, geo=gl, lang=hl)
+                        else:
+                            self._err(f"{n.id}/serper-supply: {serper.last_error}")
             self.db.add_live_niche(n.id, t, self._niche_metrics(n, count))
             if news and n.news_query:
                 headlines += self._fresh_headlines(news, n.id, n.news_query)
@@ -307,22 +338,68 @@ class LiveMarket:
         return round(est)
 
     def _niche_metrics(self, n: wl.WatchNiche, mentions_today: int | None) -> dict:
+        """Honest niche metrics: every number is observed, user-supplied, or
+        explicitly unknown — never an invented constant.
+
+        * hand-typed watchlist niches (base_volume > 0): YOUR baselines, scaled
+          by the observed momentum — provenance 'user_supplied';
+        * discovered niches: demand comes ONLY from measured series (Reddit
+          mentions or Serper results), supply ONLY from a stored Serper supply
+          observation. Missing measurement → 0 + provenance 'unknown', and the
+          verification council treats unknown supply as research-required."""
+
         series = self.db.live_mention_series(n.id, "reddit", 30)
+        demand_src_series = "reddit"
         if len(series) < 6:                        # Reddit dark → Serper series drives momentum
             series = self.db.live_mention_series(n.id, "serper", 30)
+            demand_src_series = "serper"
         momentum, growth = 1.0, 0.0
         if len(series) >= 6:
             recent = fmean(series[-3:])
             base = max(fmean(series[:-3]), 0.5)
             momentum = max(0.5, min(3.0, recent / base))
             growth = max(-50.0, min(80.0, (momentum - 1.0) * 100))
-        posts = (mentions_today * 30) if mentions_today is not None else n.demand_posts
+
+        user_supplied = n.base_volume > 0
+        measured_today = mentions_today if mentions_today is not None else (
+            series[-1] if series else None)
+        if measured_today is not None:
+            posts = float(measured_today) * 30
+        else:
+            posts = float(n.demand_posts) if user_supplied else 0.0
+
+        if user_supplied:
+            volume, demand_src = round(n.base_volume * momentum, 1), "user_supplied"
+        elif measured_today is not None:
+            volume, demand_src = round(posts, 1), "observed"
+        else:
+            volume, demand_src = 0.0, "unknown"
+
+        sup_obs = self.db.latest_search_obs(n.id, "supply")
+        observed_n = int(sup_obs["payload"].get("provider_count", 0)) if sup_obs else None
+        # A 0-provider scan is meaningful for a DISCOVERED niche (demand with no
+        # visible supply = the gap itself) but too weak to zero out a hand-typed
+        # watchlist estimate — those queries are demand-phrased and can miss
+        # providers entirely.
+        if sup_obs and (observed_n > 0 or not user_supplied):
+            supply_n = observed_n
+            supply_src = "observed"
+            supply_domains = [p.get("domain", "") for p in
+                              (sup_obs["payload"].get("providers") or [])[:5]]
+        elif user_supplied:
+            supply_n, supply_src, supply_domains = n.solution_count, "user_supplied", []
+        else:
+            supply_n, supply_src, supply_domains = 0, "unknown", []
+
         return {
-            "volume": round(n.base_volume * momentum, 1),
+            "volume": volume,
             "growth_pct": round(growth, 1),
-            "solution_count": n.solution_count,
-            "demand_posts": round(float(posts), 1),
-            "providers": n.providers,
+            "solution_count": supply_n if supply_src != "user_supplied" else n.solution_count,
+            "demand_posts": round(posts, 1),
+            "providers": supply_n if supply_src != "user_supplied" else n.providers,
+            "observed": {"demand": demand_src, "supply": supply_src,
+                         "demand_series": demand_src_series},
+            "supply_domains": supply_domains,
         }
 
     # ------------------------------------------------------- DataSource impl
