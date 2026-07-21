@@ -66,6 +66,25 @@ CREATE TABLE IF NOT EXISTS graph_nodes (
     node_id TEXT PRIMARY KEY, ntype TEXT, name TEXT, attrs TEXT,
     first_ts REAL, last_ts REAL);
 CREATE INDEX IF NOT EXISTS idx_graph_nodes_type ON graph_nodes(ntype);
+-- Per-opportunity execution chat (Phase 13). Everything is keyed by
+-- opportunity_id so one opportunity's workspace can never contaminate another.
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, opportunity_id TEXT, ts REAL,
+    role TEXT, content TEXT, evidence TEXT, tool TEXT);
+CREATE INDEX IF NOT EXISTS idx_chat_msg ON chat_messages(opportunity_id, ts);
+CREATE TABLE IF NOT EXISTS chat_state (
+    opportunity_id TEXT PRIMARY KEY, state TEXT, next_action TEXT,
+    updated_ts REAL, data TEXT);
+CREATE TABLE IF NOT EXISTS chat_ledger (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, opportunity_id TEXT, ts REAL,
+    kind TEXT, amount_usd REAL, qty INTEGER, note TEXT);
+CREATE INDEX IF NOT EXISTS idx_chat_ledger ON chat_ledger(opportunity_id, ts);
+CREATE TABLE IF NOT EXISTS chat_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, opportunity_id TEXT, ts REAL,
+    url TEXT, alive INTEGER, price_usd REAL, note TEXT);
+CREATE TABLE IF NOT EXISTS chat_checklist (
+    opportunity_id TEXT, step TEXT, done INTEGER, ts REAL,
+    PRIMARY KEY (opportunity_id, step));
 """
 
 
@@ -563,6 +582,107 @@ class Store:
         with self._lock:
             rows = self._conn.execute(sql, args).fetchall()
         return [dict(r) for r in rows]
+
+    # ---------------------------------------------- per-opportunity chat (P13)
+
+    def add_chat_message(self, opp_id: str, role: str, content: str,
+                         evidence: list | None = None, tool: str | None = None) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO chat_messages(opportunity_id,ts,role,content,evidence,tool) "
+                "VALUES(?,?,?,?,?,?)",
+                (opp_id, time.time(), role, content, json.dumps(evidence or []), tool))
+
+    def chat_history(self, opp_id: str, limit: int = 200) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT ts, role, content, evidence, tool FROM chat_messages "
+                "WHERE opportunity_id=? ORDER BY ts ASC, id ASC LIMIT ?",
+                (opp_id, limit)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["evidence"] = json.loads(d["evidence"] or "[]")
+            out.append(d)
+        return out
+
+    def get_chat_state(self, opp_id: str) -> dict:
+        with self._lock:
+            r = self._conn.execute(
+                "SELECT state, next_action, updated_ts, data FROM chat_state "
+                "WHERE opportunity_id=?", (opp_id,)).fetchone()
+        if not r:
+            return {"state": "not_started", "next_action": None, "data": {}}
+        d = dict(r)
+        d["data"] = json.loads(d["data"] or "{}")
+        return d
+
+    def set_chat_state(self, opp_id: str, state: str, next_action: str | None,
+                       data: dict | None = None) -> None:
+        with self._lock, self._conn:
+            existing = self.get_chat_state(opp_id)
+            merged = {**existing.get("data", {}), **(data or {})}
+            self._conn.execute(
+                "INSERT INTO chat_state(opportunity_id,state,next_action,updated_ts,data) "
+                "VALUES(?,?,?,?,?) ON CONFLICT(opportunity_id) DO UPDATE SET "
+                "state=excluded.state, next_action=excluded.next_action, "
+                "updated_ts=excluded.updated_ts, data=excluded.data",
+                (opp_id, state, next_action, time.time(), json.dumps(merged)))
+
+    def add_chat_ledger(self, opp_id: str, kind: str, amount_usd: float,
+                        qty: int = 0, note: str = "") -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO chat_ledger(opportunity_id,ts,kind,amount_usd,qty,note) "
+                "VALUES(?,?,?,?,?,?)", (opp_id, time.time(), kind, float(amount_usd), int(qty), note))
+
+    def chat_ledger(self, opp_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT ts, kind, amount_usd, qty, note FROM chat_ledger "
+                "WHERE opportunity_id=? ORDER BY ts ASC", (opp_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def realized_pnl(self, opp_id: str) -> dict:
+        """Net realised from the ledger: sales + refunds-in minus purchases/expenses."""
+
+        inflow = outflow = 0.0
+        for e in self.chat_ledger(opp_id):
+            if e["kind"] in ("sale", "refund_received"):
+                inflow += e["amount_usd"]
+            elif e["kind"] in ("purchase", "expense", "refund_issued"):
+                outflow += e["amount_usd"]
+        return {"inflow_usd": round(inflow, 2), "outflow_usd": round(outflow, 2),
+                "net_usd": round(inflow - outflow, 2)}
+
+    def add_chat_link(self, opp_id: str, url: str, alive: bool,
+                      price_usd: float | None = None, note: str = "") -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO chat_links(opportunity_id,ts,url,alive,price_usd,note) "
+                "VALUES(?,?,?,?,?,?)",
+                (opp_id, time.time(), url, 1 if alive else 0, price_usd, note))
+
+    def chat_links(self, opp_id: str, limit: int = 30) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT ts, url, alive, price_usd, note FROM chat_links "
+                "WHERE opportunity_id=? ORDER BY ts DESC LIMIT ?", (opp_id, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_checklist_item(self, opp_id: str, step: str, done: bool) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO chat_checklist(opportunity_id,step,done,ts) VALUES(?,?,?,?) "
+                "ON CONFLICT(opportunity_id,step) DO UPDATE SET done=excluded.done, ts=excluded.ts",
+                (opp_id, step, 1 if done else 0, time.time()))
+
+    def chat_checklist(self, opp_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT step, done, ts FROM chat_checklist WHERE opportunity_id=? ORDER BY ts ASC",
+                (opp_id,)).fetchall()
+        return [{"step": r["step"], "done": bool(r["done"]), "ts": r["ts"]} for r in rows]
 
     def close(self) -> None:
         with self._lock:

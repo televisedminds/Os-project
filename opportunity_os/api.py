@@ -159,6 +159,19 @@ class ProgressIn(BaseModel):
     done: bool = True
 
 
+class ChatIn(BaseModel):
+    message: str
+
+
+class ChatToolIn(BaseModel):
+    tool: str
+    params: dict | None = None
+
+
+class ChatStateIn(BaseModel):
+    target: str
+
+
 def _action_card(o: dict, operator: dict | None = None, resolve=None) -> dict | None:
     """A do-this-deal summary: where to buy, where to sell, at which prices,
     with clickable links — everything needed to act, in one block.
@@ -507,6 +520,41 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
             raise HTTPException(404, "unknown opportunity id")
         store.set_progress(opp_id, body.step, body.done)
         return {"done_steps": store.get_progress(opp_id)}
+
+    # -------------------------------------------------- per-opportunity chat
+
+    def _chat_session(opp_id: str):
+        from .chat import ChatSession
+        if not store.get_opportunity(opp_id):
+            raise HTTPException(404, "unknown opportunity id")
+        return ChatSession(store, opp_id, world=orch.world, ai=brain)
+
+    @app.get("/api/opportunities/{opp_id}/chat")
+    def get_chat(opp_id: str):
+        """The opportunity's scoped workspace: context, execution state, history."""
+
+        cs = _chat_session(opp_id)
+        return {"context": cs.context(), "state": cs.state(), "history": cs.history(),
+                "tools": list(__import__("opportunity_os.chat", fromlist=["TOOLS"]).TOOLS)}
+
+    @app.post("/api/opportunities/{opp_id}/chat")
+    def post_chat(opp_id: str, body: ChatIn, _: None = Depends(guard)):
+        """Send a message. Gated: a turn can refresh live data (spend budget),
+        record transactions and change execution state. It never transacts."""
+
+        return _chat_session(opp_id).send(body.message)
+
+    @app.post("/api/opportunities/{opp_id}/chat/tool")
+    def post_chat_tool(opp_id: str, body: ChatToolIn, _: None = Depends(guard)):
+        """Run one execution tool directly (structured)."""
+
+        return _chat_session(opp_id).run_tool(body.tool, body.params or {})
+
+    @app.post("/api/opportunities/{opp_id}/chat/state")
+    def post_chat_state(opp_id: str, body: ChatStateIn, _: None = Depends(guard)):
+        """Advance the execution state machine."""
+
+        return _chat_session(opp_id).set_state(body.target)
 
     @app.get("/api/activity")
     def activity(limit: int = Query(default=40, le=100)):

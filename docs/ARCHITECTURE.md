@@ -6,6 +6,43 @@ The objective function, stated once and used to judge every idea below:
 > API budget and operator attention.** Scan count is an input cost, not a KPI.
 > 20 high-confidence opportunities beat 20,000 weak ones.
 
+## 0. v0.12 — per-opportunity execution chat + acceptance (Phases 12/13)
+
+Every opportunity now has a **persistent execution workspace** scoped to its id
+— not general chat, an assistant that drives ONE deal from research to realised
+profit, from Thailand.
+
+* **`chat.py` / `chat_tools.py` / `execution.py`** — a `ChatSession` scoped to
+  one opportunity id, with its own message history, checklist, transaction
+  ledger and execution state (`not_started → researching → ready_to_buy →
+  purchased → in_transit → received → listed → sold → completed`, plus
+  cancelled/invalidated). Fifteen deterministic tools: refresh buy/sell
+  listings, sold-comp check, recalc profit/qty, price decision, find
+  alternative suppliers, live link check, inventory, validity, compare a pasted
+  listing, generate a listing draft, update checklist, record purchase/expense/
+  sale/refund, escalate re-verification. **It researches, recalculates, drafts,
+  validates and records — it never transacts** (no tool buys, pays, publishes,
+  accepts an offer, cancels or refunds), which is the human-approval guarantee,
+  enforced structurally.
+* **`matching.py`** — a product-match engine (EXACT / LIKELY / POSSIBLE_MISMATCH
+  / WRONG_PRODUCT / INSUFFICIENT_INFO) so the AGS-101 doesn't turn into the
+  cheaper AGS-001; a price-decision engine that re-decides at the *current*
+  offered price (BUY / NEGOTIATE / WAIT / SKIP with the max buy price); and a
+  live link validator that actually fetches the URL and records when — never
+  inventing a listing, price or seller.
+* **Grounding + isolation** — every factual answer is tagged LIVE / SAVED /
+  CALCULATED / ASSUMPTION / UNKNOWN, comes from a tool result or the stored
+  evidence ledger, and the chat says "I don't have that evidence" rather than
+  inventing. Claude (when keyed) only phrases grounded facts. Each opportunity's
+  workspace is isolated by id — two chats never share state. Everything
+  persists across restart.
+* **Phase 12** — the acceptance criteria are codified as tests
+  (`test_acceptance.py`): source-health report, no silent failures, evidence
+  traceable, dedup + metrics, ≥5 generator types, ≥3 non-flip, verification
+  levels, Thailand gate, no fabrication, and the chat surface. The 12 chat
+  acceptance scenarios are in `test_chat.py`. All run without an LLM — the
+  substance is deterministic.
+
 ## 0. v0.11 — dedup, Thailand executability, capital optimizer (Phases 6/10/11)
 
 * **Thesis clustering (`clustering.py`, Phase 6)** — twenty underpriced listings
