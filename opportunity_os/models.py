@@ -26,6 +26,8 @@ class OppType(str, Enum):
     REFURBISHMENT = "refurbishment"
     IMPORT_EXPORT = "import_export"      # cross-border route into/out of Thailand
     WHOLESALE = "wholesale"             # buy a bulk lot, break it, resell per-unit
+    LEAD_GENERATION = "lead_generation"  # sell leads to under-exposed local/B2B providers
+    SEASONAL = "seasonal"               # dated catalyst — prep window + hard expiry
 
 
 class OppStatus(str, Enum):

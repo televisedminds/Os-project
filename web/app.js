@@ -38,6 +38,8 @@ const TYPE_COLOR = {
   refurbishment: "var(--accent)",
   import_export: "var(--orange)",
   wholesale: "var(--violet)",
+  lead_generation: "var(--orange)",
+  seasonal: "var(--magenta)",
 };
 const TYPE_LABEL = {
   product_arbitrage: "flip",
@@ -49,6 +51,8 @@ const TYPE_LABEL = {
   refurbishment: "refurbish",
   import_export: "import/export",
   wholesale: "wholesale",
+  lead_generation: "lead-gen",
+  seasonal: "seasonal",
 };
 
 const fmtUSD = (v, dp) => {

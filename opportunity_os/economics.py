@@ -312,6 +312,12 @@ VENTURE_PARAMS = {
                  "fee_pct": 0.0,   "fee_fixed": 0.0,  "cost_note": "supplies, fuel, LINE ads"},
     "b2b":      {"capture": 0.20, "conv": 0.15,  "monthly_cost": 120.0, "startup": 600.0,
                  "fee_pct": 0.0,   "fee_fixed": 0.0,  "cost_note": "tooling, certification, outreach"},
+    # Lead generation: a share of local searchers become a lead you can sell to
+    # a provider. `price_point_usd` on the niche is the PER-LEAD price (derived
+    # in the generator from the underlying service value). Running cost is ad
+    # spend to capture the search intent; there's no fulfilment cost.
+    "leadgen":  {"capture": 0.05, "conv": 1.0,   "monthly_cost": 60.0, "startup": 200.0,
+                 "fee_pct": 0.03,  "fee_fixed": 0.0,  "cost_note": "Google/Facebook ad spend + landing page"},
 }
 
 

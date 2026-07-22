@@ -106,6 +106,79 @@ IMPORT_PROHIBITED_KEYWORDS = (
 )
 
 
+# Thailand seasonal calendar — real recurring demand catalysts a seller preps
+# for. Reference data (early-2026 approximations for the lunar/movable ones,
+# flagged in the note), same standing as the tariff tables. Each: (month, day)
+# of the peak, how many days ahead you must source/prep, and the product
+# categories whose demand spikes. Chosen for roughly year-round coverage so a
+# seller always has a next catalyst on the horizon.
+SEASONAL_EVENTS = [
+    {"name": "Chinese New Year (Thai-Chinese gifting)", "month": 2, "day": 10, "prep_days": 45,
+     "categories": ("food", "apparel", "luxury_bags", "gaming"),
+     "note": "Red/gold gifting; date moves yearly (reference: ~Feb 10)."},
+    {"name": "Valentine's Day", "month": 2, "day": 14, "prep_days": 35,
+     "categories": ("luxury_bags", "watches", "handmade", "apparel"),
+     "note": "Gifting peak; couples' spend skews to accessories and keepsakes."},
+    {"name": "Songkran (Thai New Year, water festival)", "month": 4, "day": 13, "prep_days": 45,
+     "categories": ("electronics", "apparel", "toys"),
+     "note": "Waterproof phone pouches/cases, dry bags, floral shirts, water toys."},
+    {"name": "Thai school term 1 opens", "month": 5, "day": 16, "prep_days": 40,
+     "categories": ("electronics", "stationery", "books"),
+     "note": "Calculators, tablets, stationery — back-to-school demand."},
+    {"name": "Mother's Day (Queen's Birthday)", "month": 8, "day": 12, "prep_days": 35,
+     "categories": ("apparel", "luxury_bags", "watches", "handmade"),
+     "note": "National holiday; gifting to mothers, jasmine-themed goods."},
+    {"name": "Halloween", "month": 10, "day": 31, "prep_days": 35,
+     "categories": ("apparel", "toys", "handmade"),
+     "note": "Growing in Thai malls/tourist areas; costumes and props."},
+    {"name": "Thai school term 2 opens", "month": 11, "day": 1, "prep_days": 35,
+     "categories": ("electronics", "stationery", "books"),
+     "note": "Second back-to-school wave."},
+    {"name": "11.11 shopping festival", "month": 11, "day": 11, "prep_days": 30,
+     "categories": ("electronics", "apparel", "sneakers", "toys", "gaming"),
+     "note": "Huge TH e-commerce event (Shopee/Lazada/TikTok); stock ahead."},
+    {"name": "Loy Krathong", "month": 11, "day": 15, "prep_days": 30,
+     "categories": ("handmade", "toys"),
+     "note": "Movable (full moon, 12th lunar month); decorative/floating goods."},
+    {"name": "Father's Day (King's Birthday)", "month": 12, "day": 5, "prep_days": 30,
+     "categories": ("watches", "electronics", "apparel"),
+     "note": "National holiday; gifting to fathers."},
+    {"name": "12.12 shopping festival", "month": 12, "day": 12, "prep_days": 25,
+     "categories": ("electronics", "apparel", "sneakers", "gaming"),
+     "note": "Year-end e-commerce peak."},
+    {"name": "Christmas & New Year gifting", "month": 12, "day": 22, "prep_days": 45,
+     "categories": ("electronics", "toys", "gaming", "watches", "luxury_bags"),
+     "note": "Tourist + local gifting; year-end spend."},
+]
+
+EVENT_TAIL_DAYS = 3            # an opportunity stays valid a few days past the peak
+
+
+def upcoming_events(today, horizon_days: int = 90) -> list[dict]:
+    """Thai seasonal catalysts whose peak falls within `horizon_days` of `today`.
+
+    Returns each with its next occurrence date, days until the peak, the prep
+    window status (are we inside the sourcing lead time yet), a hard expiry
+    (peak + tail), and the categories it drives. `today` is a datetime.date."""
+
+    import datetime as _dt
+    out = []
+    for ev in SEASONAL_EVENTS:
+        occ = _dt.date(today.year, ev["month"], ev["day"])
+        if occ < today:
+            occ = _dt.date(today.year + 1, ev["month"], ev["day"])
+        days_until = (occ - today).days
+        if 0 <= days_until <= horizon_days:
+            out.append({
+                "name": ev["name"], "date": occ.isoformat(), "days_until": days_until,
+                "prep_days": ev["prep_days"], "in_prep_window": days_until <= ev["prep_days"],
+                "categories": tuple(ev["categories"]), "note": ev["note"],
+                "expiry_date": (occ + _dt.timedelta(days=EVENT_TAIL_DAYS)).isoformat(),
+            })
+    out.sort(key=lambda e: e["days_until"])
+    return out
+
+
 def import_restriction(category: str, product_name: str = "") -> dict:
     """Legal screen for importing a product into Thailand for resale.
 
@@ -148,12 +221,14 @@ def import_charges(cif_usd: float, category: str, usd_thb: float,
 def feasibility(opp_type: str, category: str, buy_venue: str | None, sell_venue: str | None) -> Feasibility:
     """Screen an opportunity for executability from Thailand."""
 
-    if opp_type not in ("product_arbitrage", "import_export", "wholesale"):
+    if opp_type not in ("product_arbitrage", "import_export", "wholesale", "seasonal"):
         geo_note = {
             "local_service":  "Runs on the ground in Thailand (Bangkok metro assumed) — fully local.",
             "digital_product": "Built and operated remotely from Thailand; global distribution.",
             "b2b_service":    "Serves Thai businesses; Thai-language advantage applies.",
             "info_product":   "Created and sold online from Thailand; no customs involved.",
+            "lead_generation": "Runs online from Thailand: capture local search demand, sell the "
+                               "leads to Thai providers via LINE/phone. Thai-language advantage applies.",
         }.get(opp_type, "Operable from Thailand.")
         return Feasibility(can_buy=True, can_sell=True,
                            buy_notes=[geo_note],

@@ -493,3 +493,40 @@ target vs watched vs verified, with an honest "buying info" flag). Knobs:
 **Remaining Phase-9/10 gaps** (honest): lead-generation and seasonal generators
 (2 of the 4 missing types still unbuilt), and ScrapingDog as a general evidence
 collector (Phase 7).
+
+## 10. v1.4.0 — lead-gen + seasonal generators (the 11-generator set is complete)
+
+The last two of the four generators the mandate named. All 11 opportunity
+families now exist as real, evidence-backed generators facing the same council.
+
+**`LeadGenGenerator`** (`generators_market.py`) — a channel business, distinct
+from providing the service yourself. Fires on a local/B2B niche with OBSERVED
+demand and a supply side that is present-but-thin with weak online presence: a
+few providers exist to BUY leads, but few rank online, so searchers can't find
+them. You capture the search intent and sell the leads, priced per-lead off the
+underlying service value (`economics` gets a `leadgen` param set). Its verifier
+is type-appropriate (Phase 13): the "gap" is INVERTED — 1–8 under-exposed
+providers is the sweet spot (enough to buy leads, few enough to need them), not
+a wide underserved ratio. It reads every niche, not just the ones that spiked,
+because its signal is structural, not an anomaly.
+
+**`SeasonalGenerator`** (`generators_market.py`) — a dated catalyst. Matches
+watched products against a real Thai seasonal calendar
+(`thailand.SEASONAL_EVENTS`: Songkran, 11.11/12.12, school terms, Mother's/
+Father's Day, Chinese New Year, …). When a product in an event-driven category
+has a profitable Thailand sell route AND we're inside the sourcing lead time, it
+emits a time-boxed flip whose window is the run-up and whose expiry is HARD —
+`_reverify` marks it EXPIRED the day after the event, because the premium is
+gone regardless of live prices. The value a standing flip can't give:
+act-by-this-date timing, sized to what clears before the deadline.
+
+Both re-verify through dedicated builders (`_fresh_leadgen`, `_fresh_seasonal`),
+map onto diversity families (lead-gen → b2b, seasonal → physical), and appear in
+the demo feed via `ev_charger_install` (a thin-supply high-value B2B niche) and
+an isolated `wp_phone_pouch` product timed to Songkran. 269 tests pass (+19 in
+test_market_generators.py, incl. a guard that all 12 generator ids are
+registered).
+
+**Phase 9 is now complete.** The remaining open mandate item is Phase 7:
+ScrapingDog as a general evidence collector (competitor pricing, reviews,
+supplier pages) to deepen the local-service/B2B/lead-gen theses.

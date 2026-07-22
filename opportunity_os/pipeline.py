@@ -390,12 +390,28 @@ class Orchestrator:
             return False, "window elapsed — original edge has fully played out", OppStatus.EXPIRED
 
         route_kind = stored.get("route", {}).get("kind")
+        # A seasonal opportunity has a HARD dated expiry: once the event passes,
+        # the premium is gone regardless of any live price re-check.
+        if stored["type"] == OppType.SEASONAL.value or route_kind == "seasonal":
+            exp = stored.get("route", {}).get("expiry_date", "")
+            if exp:
+                from datetime import date as _date
+                try:
+                    if _date.today() > _date.fromisoformat(exp):
+                        return False, f"seasonal event passed ({exp}) — premium gone", OppStatus.EXPIRED
+                except ValueError:
+                    pass
+
         if stored["type"] == OppType.PRODUCT_ARBITRAGE.value and route_kind == "dislocation":
             cand = self._fresh_dislocation(stored)
         elif stored["type"] == OppType.REFURBISHMENT.value or route_kind == "refurbish":
             cand = self._fresh_dislocation(stored)
         elif stored["type"] == OppType.WHOLESALE.value or route_kind == "wholesale":
             cand = self._fresh_wholesale(stored)
+        elif stored["type"] == OppType.LEAD_GENERATION.value or route_kind == "lead_generation":
+            cand = self._fresh_leadgen(stored)
+        elif stored["type"] == OppType.SEASONAL.value or route_kind == "seasonal":
+            cand = self._fresh_seasonal(stored)
         elif stored["type"] in (OppType.PRODUCT_ARBITRAGE.value, OppType.IMPORT_EXPORT.value):
             cand = self._fresh_flip(stored)
         else:
@@ -551,6 +567,49 @@ class Orchestrator:
             "wholesale": {"item_id": item_id, "url": stored["route"].get("buy_url", ""),
                           "lot_size": n, "per_unit_usd": per_unit, "single_fair_usd": fair,
                           "min_edge": stored.get("wholesale", {}).get("min_edge", 0.25)},
+            "route": stored["route"],
+        }
+
+    def _fresh_seasonal(self, stored: dict) -> dict | None:
+        pid = stored["entity_id"]
+        bv, sv = stored["route"]["buy_venue"], stored["route"]["sell_venue"]
+        buy, sell = self.world.listing(pid, bv), self.world.listing(pid, sv)
+        if not buy or not sell or buy["stock"] == 0:
+            return None
+        product = self.world.product_public(pid)
+        qty = max(1, min(stored["economics"]["qty"], buy["stock"]))
+        econ = economics.compute_flip(product, bv, sv, buy["price"], sell["price"], qty=qty)
+        velocity = max(sell["sold_7d"] / 7.0, 0.1)
+        return {
+            "kind": "flip", "opp_type": OppType.SEASONAL, "entity_id": pid,
+            "title": stored["title"], "subtitle": stored["subtitle"],
+            "category": stored["category"], "item": product,
+            "buy_venue": bv, "sell_venue": sv, "buy_usd": buy["price"], "sell_usd": sell["price"],
+            "qty": qty, "buy_stock": buy["stock"], "velocity": velocity, "sellers": sell["sellers"],
+            "window_days": stored["window_days"],
+            "economics": econ,
+            "feasibility": thailand.feasibility("seasonal", stored["category"], bv, sv),
+            "route": stored["route"],
+        }
+
+    def _fresh_leadgen(self, stored: dict) -> dict | None:
+        nid = stored["entity_id"]
+        niche = next((n for n in self.world.niches() if n["id"] == nid), None)
+        if not niche:
+            return None
+        per_lead = float(stored.get("route", {}).get("per_lead_usd", 0)) or 2.0
+        volume = niche["metrics"].get("volume", 0)
+        econ = economics.compute_venture({"kind": "leadgen", "price_point_usd": per_lead,
+                                          "metrics": {"volume": volume}})
+        providers = int(niche["metrics"].get("providers", niche["metrics"].get("solution_count", 0)))
+        return {
+            "kind": "venture", "opp_type": OppType.LEAD_GENERATION, "entity_id": nid,
+            "title": stored["title"], "subtitle": stored["subtitle"],
+            "category": "lead_generation", "niche": niche,
+            "buy_venue": None, "sell_venue": None,
+            "qty": 1, "velocity": volume / 30.0, "sellers": providers,
+            "window_days": stored["window_days"], "economics": econ,
+            "feasibility": thailand.feasibility("lead_generation", "b2b_services", None, None),
             "route": stored["route"],
         }
 

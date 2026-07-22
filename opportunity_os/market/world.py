@@ -106,7 +106,7 @@ class SimulatedMarket:
         # Products added to demonstrate a specific generator are evolved on their
         # own RNG so they never perturb the original catalogue's deterministic
         # trajectories (keeps existing demo-dependent tests byte-stable).
-        self._isolated: set[str] = {"casio_fx_jp"}
+        self._isolated: set[str] = {"casio_fx_jp", "wp_phone_pouch"}
         self._build_catalog(event_base=warmup)
         for _ in range(warmup):
             self.tick()
@@ -189,6 +189,13 @@ class SimulatedMarket:
                     {"yahoo_auctions_jp": _p(34.00, 250, 22, 5), "shopee_th": _p(98.00, 45, 15, 11),
                      "ebay_us": _p(152.00, 24, 12, 8)},
                     {"reddit": 4, "tiktok": 3, "x": 2}))
+        # A cheap electronics good imported from China with a profitable Thai
+        # sell route — the archetype the seasonal generator times to a catalyst
+        # (Songkran waterproofing, 11.11/12.12, school terms, year-end gifting).
+        add(Product("wp_phone_pouch", "Waterproof phone pouch (universal, floating)", "electronics", 0.08,
+                    {"aliexpress": _p(5.50, 800, 60, 40), "shopee_th": _p(22.00, 70, 20, 24),
+                     "tiktok_shop_th": _p(24.00, 55, 14, 18)},
+                    {"reddit": 2, "tiktok": 12, "x": 3}))
 
         def addn(n: Niche):
             N[n.id] = n
@@ -209,7 +216,7 @@ class SimulatedMarket:
                    {"volume": 280, "growth_pct": 11, "solution_count": 9, "demand_posts": 280, "providers": 9},
                    {"reddit": 2, "tiktok": 2, "x": 1}))
         addn(Niche("ev_charger_install", "EV wallbox installation partnerships (Thailand)", "b2b", "TH", 380.0,
-                   {"volume": 190, "growth_pct": 20, "solution_count": 6, "demand_posts": 75, "providers": 6},
+                   {"volume": 210, "growth_pct": 20, "solution_count": 5, "demand_posts": 75, "providers": 5},
                    {"reddit": 2, "tiktok": 1, "x": 4}))
         addn(Niche("dtv_visa_guide", "DTV visa application walkthrough (nomads relocating to TH)", "info", "TH", 19.0,
                    {"volume": 12500, "growth_pct": 28, "solution_count": 4, "demand_posts": 210, "providers": 4},

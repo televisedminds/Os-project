@@ -265,11 +265,15 @@ class VerificationCouncil:
         ratio = m["demand_posts"] / max(1, m["providers"])
         hist = ds.niche_history(nid)
         posts_then = hist[-9]["demand_posts"] if len(hist) >= 9 else m["demand_posts"]
-        if cand["opp_type"].value in ("local_service", "b2b_service"):
+        opp_val = cand["opp_type"].value
+        if opp_val in ("local_service", "b2b_service", "lead_generation"):
             trend_up = m["growth_pct"] >= 8 or m["demand_posts"] >= 1.25 * max(1.0, posts_then)
         else:
             trend_up = m["growth_pct"] >= 12
-        posts_up = ratio >= 25
+        # Lead-gen doesn't need a wide demand:supply gap — a modest steady flow
+        # of searchers is enough to resell as leads, so its demand bar is the
+        # volume floor, not the ratio.
+        posts_up = ratio >= 25 or (opp_val == "lead_generation" and m.get("volume", 0) >= 150)
         corroborations = sum([social_up, trend_up, posts_up])
         checks.append(Check("demand_corroboration", "Demand seen by ≥2 independent sources",
                             corroborations >= 2, min(0.95, 0.55 + 0.15 * corroborations),
@@ -291,6 +295,14 @@ class VerificationCouncil:
             gap_ok = False
             gap_ev = ("Supply side never observed — no Serper supply scan and no "
                       "watchlist value. Research required before this can verify.")
+        elif opp_val == "lead_generation":
+            # For lead-gen the "gap" is INVERTED: you need a few under-exposed
+            # providers to BUY the leads — not zero (no buyers) and not a crowd
+            # (they already have all the work they need).
+            providers = int(m.get("providers", m.get("solution_count", 0)))
+            gap_ok = 1 <= providers <= 8
+            gap_ev = (f"{providers} provider(s) online for ~{m['volume']:,.0f} searches/mo — "
+                      f"{'a lead market: enough to buy leads, few enough to need them.' if gap_ok else 'wrong count to resell leads to.'}")
         elif niche["kind"] in ("digital", "info"):
             gap_ok = m["solution_count"] <= 4
             gap_ev = f"{m['solution_count']} credible solutions for {m['volume']:,.0f} monthly searches."

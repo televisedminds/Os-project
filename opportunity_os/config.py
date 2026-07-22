@@ -136,6 +136,10 @@ class Config:
         default_factory=lambda: os.environ.get("OOS_DIVERSITY", "1") not in ("0", "false", "no"))
     diversity_min_floor: int = field(default_factory=lambda: int(os.environ.get("OOS_DIVERSITY_MIN_FLOOR", "8")))
     diversity_adapt: float = field(default_factory=lambda: float(os.environ.get("OOS_DIVERSITY_ADAPT", "0.5")))
+    # Seasonal generator: how far ahead to look for Thai catalysts, and an
+    # optional fixed "today" (ISO date) for deterministic tests/replays.
+    seasonal_horizon_days: int = field(default_factory=lambda: int(os.environ.get("OOS_SEASONAL_HORIZON", "90")))
+    seasonal_today: str = _env("OOS_SEASONAL_TODAY", "")
 
     # Home base: the operator is in Thailand. Every opportunity is assessed
     # for buy/sell feasibility from Thailand.
