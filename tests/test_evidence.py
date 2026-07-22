@@ -104,6 +104,26 @@ def test_rejection_classifier_maps_reasons_to_categories():
     assert EV.classify_rejection("Listing disappeared on re-check") == EV.STALE_DATA
 
 
+def test_venture_research_gaps_are_research_required_not_hard_rejections():
+    """Regression: the council writes venture rejections as
+    '<check_name> failed — <evidence>'. A demand_corroboration failure used to
+    match the generic 'supply' branch (because its evidence contains
+    'demand:supply ✗') and be mislabelled INSUFFICIENT_SUPPLY. An
+    under-corroborated or never-scanned venture is a research gap, not a defect."""
+
+    # Exactly the string _gates() produces for a failing demand check.
+    demand = ("demand_corroboration failed — Trend ✗ (5%/mo), social ✗ "
+              "(0/day mentions), demand:supply ✗ (12:1).")
+    assert EV.classify_rejection(demand) == EV.RESEARCH_REQUIRED
+    # A supply side that was never scanned is research, not a real 'no supply'.
+    never = ("competition_gap failed — Supply side never observed — no Serper "
+             "supply scan and no watchlist value. Research required before this "
+             "can verify.")
+    assert EV.classify_rejection(never) == EV.RESEARCH_REQUIRED
+    # But a MEASURED thin/exhausted supply is still a hard supply verdict.
+    assert EV.classify_rejection("source inventory exhausted") == EV.INSUFFICIENT_SUPPLY
+
+
 def test_rejection_funnel_aggregates_categories(built):
     _, store = built
     from opportunity_os import diagnostics as dx

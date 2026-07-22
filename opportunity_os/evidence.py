@@ -257,7 +257,14 @@ def classify_rejection(reason: str) -> str:
     """Map a free-text rejection reason to a fixed taxonomy category."""
 
     r = (reason or "").lower()
-    if "research required" in r or "never observed" in r:
+    if ("research required" in r or "never observed" in r
+            or "demand_corroboration" in r):
+        # An under-corroborated venture hasn't FAILED — its demand evidence is
+        # still accumulating (too few repeated observations to see ≥2
+        # independent signals yet), and an unobserved supply side is a scan we
+        # haven't run. Both are research/validation gaps, not defects. The
+        # council names these by the failing check ("demand_corroboration
+        # failed — …") or the phrase "never observed / research required".
         return RESEARCH_REQUIRED
     if "avoid list" in r or "operator profile" in r:
         return EXCLUDED_BY_OPERATOR

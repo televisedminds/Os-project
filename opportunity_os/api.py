@@ -866,9 +866,18 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
                     fams[dv.opp_type_family(t)]["published_new"] += 1
             for r in rep.get("rejected", []):
                 t = r.get("type") or "product_arbitrage"
-                # route kinds map onto types loosely; normalize the knowns
-                t = {"dislocation": "product_arbitrage", "refurbish": "refurbishment",
-                     "import": "import_export", "export": "import_export"}.get(t, t)
+                # A rejection carries the route KIND (route["kind"]), not the
+                # OppType value — for ventures that's the niche kind
+                # ("local"/"b2b"/"digital"/"info"), for flips a route verb
+                # ("dislocation"/"refurbish"/…). Map both onto real opp types so
+                # venture rejections stop leaking into "physical". Kinds that are
+                # already valid opp types ("lead_generation"/"seasonal"/
+                # "wholesale"/"micro_saas") pass straight through.
+                t = {"dislocation": "product_arbitrage", "flip": "product_arbitrage",
+                     "refurbish": "refurbishment", "import": "import_export",
+                     "export": "import_export", "local": "local_service",
+                     "b2b": "b2b_service", "digital": "digital_product",
+                     "info": "info_product", "leadgen": "lead_generation"}.get(t, t)
                 fam = dv.opp_type_family(t if t in dv._OPP_TYPE_TO_FAMILY else "product_arbitrage")
                 cat = r.get("category") or classify_rejection(r.get("reason", ""))
                 fams[fam]["rejected"] += 1
@@ -881,27 +890,35 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         # Niche measurement state: how much observed evidence each venture lane
         # has accumulated (series length is the 'insufficient repeated
         # observations' meter — ventures need ≥6 points to corroborate).
-        niche_state = []
+        niche_state: list[dict] = []
+        niche_state_error = None
+        # An honest instrument reports its own failures rather than returning an
+        # empty list that reads like "no niches". Fetch once; harden each niche
+        # so one bad row can't blank the whole panel; surface the first error.
         try:
             niches = orch.world.niches() if hasattr(orch.world, "niches") else []
-            for n in niches:
-                m = n.get("metrics", {})
+        except Exception as e:  # noqa: BLE001
+            niches, niche_state_error = [], f"niches() failed: {type(e).__name__}: {e}"
+        for n in niches:
+            try:
+                m = n.get("metrics", {}) or {}
                 prov = m.get("observed") or {}
-                series = []
+                series: list[int] = []
                 if hasattr(orch.world, "mentions"):
                     for src in ("reddit", "serper"):
                         s = orch.world.mentions(n["id"], src)
                         if len(s) > len(series):
                             series = s
                 niche_state.append({
-                    "id": n["id"], "name": n.get("name", "")[:60], "kind": n.get("kind"),
+                    "id": n["id"], "name": (n.get("name") or "")[:60], "kind": n.get("kind"),
                     "geo": n.get("geo"), "demand_series_points": len(series),
                     "points_needed": 6, "provenance": prov,
                     "supply_domains": m.get("supply_domains", []),
                     "price_point_usd": n.get("price_point_usd"),
                 })
-        except Exception:  # noqa: BLE001 - observability must never crash
-            pass
+            except Exception as e:  # noqa: BLE001 - one bad niche can't blank the panel
+                if niche_state_error is None:
+                    niche_state_error = f"niche {n.get('id')!r}: {type(e).__name__}: {e}"
 
         return {
             "cycles_scanned": cycles_seen,
@@ -921,6 +938,8 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
                 "prices": r["payload"].get("prices"),
                 "review": r["payload"].get("review"),
             } for r in store.recent_search_obs(source="scrapingdog", limit=20)],
+            "niche_state": niche_state,
+            "niche_state_error": niche_state_error,
             "note": "candidates counts populate on cycles run after v1.5.1; "
                     "research_required = the council named a missing observation, "
                     "not a defect. Ventures corroborate at ≥6 demand series points.",

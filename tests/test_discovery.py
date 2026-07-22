@@ -34,6 +34,25 @@ def test_relevance_and_inference():
     assert disc.clean_query("How to buy the LEGO Bonsai Tree for you") == "buy lego bonsai tree"
 
 
+def test_infer_niche_kind_is_score_based_not_first_match():
+    """Regression: first-match-wins buried local/b2b intent (checked last) and
+    defaulted everything to 'info'. These are the exact production phrases that
+    misclassified — the strongest signal must win now, not list order."""
+
+    # Thai consumer looking for a shop/factory that MAKES furniture → a LOCAL
+    # service gap, not b2b/info. ('แนะนำร้าน' + 'ร้าน' outscore the lone 'โรงงาน'.)
+    assert disc.infer_niche_kind("ช่วยแนะนำร้าน/โรงงานทำเฟอร์นิเจอร์ไม้แท้") == "local"
+    # Thai "recommend a repair shop near me" → local.
+    assert disc.infer_niche_kind("รับซ่อมรองเท้า ใกล้ฉัน แนะนำร้าน") == "local"
+    # Sourcing intent → b2b, even though no English keyword precedes it.
+    assert disc.infer_niche_kind("หา supplier ผู้ผลิต ขายส่ง") == "b2b"
+    assert disc.infer_niche_kind("looking for a wholesale distributor") == "b2b"
+    # A digital signal still wins when it is the strongest.
+    assert disc.infer_niche_kind("chrome extension automation tool") == "digital"
+    # No signal at all falls back to info (the safe, lowest-claim bucket).
+    assert disc.infer_niche_kind("xyzzy plugh nothing") == "info"
+
+
 # ---------------------------------------------------------- Google Trends
 
 

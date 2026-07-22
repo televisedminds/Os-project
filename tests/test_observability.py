@@ -35,6 +35,10 @@ def test_observability_reports_all_families(client):
                           "research_required", "rejections",
                           "watched_discovered", "verified_active"}
     assert isinstance(d["serper_log"], list) and isinstance(d["scrapingdog_log"], list)
+    # niche_state must be present (it was built but never returned before v1.6.0)
+    # and, if it ever fails to build, say so instead of silently blanking.
+    assert "niche_state" in d and isinstance(d["niche_state"], list)
+    assert "niche_state_error" in d
 
 
 def test_trace_assembles_full_chain(client):
@@ -59,6 +63,42 @@ def test_cycle_report_carries_candidates_by_type(client):
     rep = s["last_report"]
     cbt = rep.get("candidates_by_type")
     assert cbt and sum(cbt.values()) == rep["candidates"]
+
+
+def test_venture_rejections_attribute_to_their_family_not_physical(tmp_path):
+    """Regression (v1.6.0): a rejection carries the route KIND ('local'/'b2b'/…),
+    not an OppType. The funnel used to default every unknown kind to
+    product_arbitrage, dumping venture rejections into 'physical'. They must now
+    land in their own family, and a demand_corroboration miss must count as
+    research_required — not as a physical supply failure."""
+
+    from opportunity_os.db import Store
+
+    cfg = Config(db_path=tmp_path / "attr.db", auto_cycle_seconds=0)
+    app = create_app(cfg, auto_cycle_seconds=0, seed_cycles=0)
+    with TestClient(app) as c:
+        s = Store(cfg.db_path)
+        s.add_cycle(1, 1.0, {
+            "candidates_by_type": {"local_service": 2, "b2b_service": 1},
+            "published": [],
+            "rejected": [
+                {"title": "TH furniture repair", "type": "local",
+                 "reason": "demand_corroboration failed — Trend ✗ (5%/mo), social ✗ "
+                           "(0/day mentions), demand:supply ✗ (12:1).",
+                 "category": "research_required"},
+                {"title": "TH parts sourcing", "type": "b2b",
+                 "reason": "competition_gap failed — Supply side never observed. "
+                           "Research required before this can verify.",
+                 "category": "research_required"},
+            ],
+        })
+        fams = c.get("/api/observability").json()["families"]
+        assert fams["local_service"]["rejected"] == 1
+        assert fams["local_service"]["research_required"] == 1
+        assert fams["b2b"]["rejected"] == 1
+        assert fams["b2b"]["research_required"] == 1
+        # None of the venture rejections leaked into physical.
+        assert fams["physical"]["rejected"] == 0
 
 
 def test_discovery_kind_filter_surfaces_buried_niches(tmp_path):

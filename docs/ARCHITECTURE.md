@@ -571,3 +571,52 @@ Serper beyond its free tier) cost real credits, so live coverage of the non-flip
 families scales with the operator's key budget — the system now spends those
 credits on evidence that changes a decision, and labels everything it cannot
 observe.
+
+## 12. v1.6.0 — Milestone 0 audit + honest venture funnel (Thai local fix)
+
+A live audit of the production droplet (v1.5.2) against the observability
+instrument found the pipeline was reaching the venture generators with real
+data, but three bugs made the result **read as "flip-only" and hid the venture
+work that was actually happening**:
+
+1. **Thai local intent misclassified.** `infer_niche_kind` was first-match-wins
+   in a fixed order (digital → info → local → b2b), so `local` and `b2b` were
+   checked last and lost to any accidental earlier match — and the fallback was
+   `info`. A Thai phrase like *"ช่วยแนะนำร้าน/โรงงานทำเฟอร์นิเจอร์ไม้แท้"* (recommend a
+   shop/factory that makes real wood furniture — a **local** service gap) landed
+   as `info`. Fixed: inference is now **score-based** — every kind is scored by
+   how many of its terms appear and the strongest signal wins; ties favour
+   concrete service/supply intent over the info fallback. The Thai/EN hint lists
+   were widened with the real service/sourcing vocabulary
+   (ซ่อม, ร้าน, แนะนำร้าน, ช่าง, รับทำ, ใกล้ฉัน; หา supplier, ผู้ผลิต, รับผลิต, distributor…).
+
+2. **Venture rejections leaked into "physical".** A rejection record carries the
+   route **kind** (`local`/`b2b`/`digital`/`info`), not an OppType; the
+   observability funnel defaulted every unrecognised kind to `product_arbitrage`,
+   dumping venture rejections into the physical family. Now route kinds map onto
+   their real opp types, so a rejected local-service candidate is counted under
+   `local_service`, not `physical`.
+
+3. **Demand-corroboration misfiled as a supply defect.** The council writes a
+   failed check as `"<check> failed — <evidence>"`, and the demand check's
+   evidence contains the substring `demand:supply ✗` — which matched the generic
+   `supply` branch and got labelled `INSUFFICIENT_SUPPLY`. An under-corroborated
+   or never-scanned venture is a **research gap, not a defect**: those reasons now
+   classify as `RESEARCH_REQUIRED`, while a *measured* thin supply still reads as
+   a real supply verdict.
+
+Also fixed a fourth, quieter bug: the observability endpoint **built the
+`niche_state` panel but never returned it**, so the demand-series accumulation
+meter always read empty. It is now in the response, hardened per-niche, and
+reports its own failure via `niche_state_error` instead of silently blanking —
+an honest instrument names its own faults.
+
+**Capability status (truth contract):** these are *code-level* fixes with
+deterministic regression tests (Thai/venture classification, funnel attribution,
+research-required mapping, niche_state presence). They are **IMPLEMENTED BUT NOT
+YET LIVE-PROVEN** until the droplet runs v1.6.0 and the observability funnel
+shows venture rejections attributed to their own families with
+`research_required` counts and a non-empty `niche_state`. No claim is made that
+this publishes more ventures — it makes the *funnel honest* so the real
+bottleneck (ventures need ≥6 accumulated demand-series points to corroborate) is
+visible rather than mislabelled. All 34 tests in the affected suites pass.

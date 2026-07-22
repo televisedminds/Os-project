@@ -61,15 +61,21 @@ CATEGORY_HINTS = [
 
 # Niche-kind inference for demand/venture candidates (English + Thai terms —
 # a Thai search like "รับซ่อมรองเท้า ใกล้ฉัน" is a LOCAL service signal).
+# NOTE: inference is SCORE-BASED (see infer_niche_kind) — the strongest signal
+# wins, not the first in list order. Local/service and B2B/supply intent used
+# to lose to whichever kind was checked first; they no longer do.
 NICHE_KIND_HINTS = [
-    ("digital", ("saas", "app", "tool", "dashboard", "api", "software", "automation",
-                 "chrome extension", "โปรแกรม", "แอป", "ระบบ")),
+    ("digital", ("saas", "app", "tool ", "dashboard", "api", "software", "automation",
+                 "chrome extension", "plugin", "โปรแกรม", "แอป", "แอปไหน", "ระบบ", "ปลั๊กอิน")),
     ("info", ("guide", "course", "ebook", "template", "checklist", "tutorial", "how to",
-              "คอร์ส", "สอน", "วิธี")),
-    ("local", ("cleaning", "repair", "install", "delivery", "bangkok", "local", "detailing",
-               "รับซ่อม", "ทำความสะอาด", "ติดตั้ง", "ใกล้ฉัน", "กรุงเทพ", "รับจ้าง", "บริการ")),
-    ("b2b", ("wholesale", "supplier", "b2b", "partnership", "installer", "contractor",
-             "ขายส่ง", "โรงงาน", "ตัวแทนจำหน่าย", "ซัพพลายเออร์")),
+              "คอร์ส", "สอน", "วิธีทำ", "อีบุ๊ค")),
+    ("local", ("cleaning", "repair", "install", "installation", "delivery", "bangkok",
+               "near me", "local", "detailing", "plumber", "electrician", "handyman",
+               "รับซ่อม", "ซ่อม", "ทำความสะอาด", "ติดตั้ง", "ใกล้ฉัน", "กรุงเทพ", "รับจ้าง",
+               "บริการ", "ร้าน", "แนะนำร้าน", "ช่าง", "รับทำ", "จ้าง", "ที่ไหนดี", "ล้าง"),),
+    ("b2b", ("wholesale", "supplier", "suppliers", "b2b", "partnership", "installer",
+             "contractor", "distributor", "manufacturer", "ขายส่ง", "โรงงาน",
+             "ตัวแทนจำหน่าย", "ซัพพลายเออร์", "หา supplier", "ผู้ผลิต", "รับผลิต"),),
 ]
 
 # Phrases that signal an UNMET NEED — someone asking the internet for a tool,
@@ -122,9 +128,22 @@ def infer_category(name: str) -> str:
 
 
 def infer_niche_kind(name: str) -> str:
+    """Classify a demand phrase into digital / info / local / b2b by the STRONGEST
+    signal, not list order. First-match-wins used to bury local/b2b (checked
+    last) and default everything to 'info' — so Thai service intent like
+    'แนะนำร้าน...ทำเฟอร์นิเจอร์' (recommend a shop) landed as b2b/info instead of
+    local. Now every kind is scored by how many of its terms appear, and the
+    top score wins; ties favour concrete service/supply intent over info."""
+
     low = name.lower()
-    for kind, keys in NICHE_KIND_HINTS:
-        if any(k in low for k in keys):
+    scores = {kind: sum(1 for k in keys if k in low) for kind, keys in NICHE_KIND_HINTS}
+    best = max(scores.values())
+    if best == 0:
+        return "info"
+    # Tie-break priority: a phrase that mentions BOTH a shop and a factory is a
+    # consumer looking for a provider (local) more often than a wholesale lead.
+    for kind in ("local", "b2b", "digital", "info"):
+        if scores.get(kind, 0) == best:
             return kind
     return "info"
 
