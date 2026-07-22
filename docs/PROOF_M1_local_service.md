@@ -85,10 +85,19 @@ ventures — is the honest next slice, not a bigger claim.
 - ScrapingDog URL → parsed evidence → price/review provenance is a real, timestamped chain
 - non-eBay observations reach generator routing
 
-**IMPLEMENTED, TESTED, NOT YET LIVE-PROVEN (v1.6.1 pushed, droplet still on v1.6.0):**
-- the rejection-label split (`research_required` / `insufficient_demand` /
-  `high_competition`) — proven by classifier- and council-level tests; live proof
-  requires deploying v1.6.1 and re-reading the funnel.
+**IMPLEMENTED AND LIVE-PROVEN (v1.6.1 deployed, droplet tick 446, 2026-07-22):**
+- the rejection-label split now fires live. A fresh cycle rejected the same
+  `bkk_airbnb_cleaning` niche with the new self-classifying reason and the
+  correct category:
+  > `type=local  category=insufficient_demand`
+  > `Demand seen by ≥2 independent sources failed — 13 observations but only 1 of
+  > 3 independent signals (need ≥2): trend ✗ (0%/mo), social ✗ (10/day mentions),
+  > demand:supply ✓ (75:1). Demand is real but not corroborated as growing.`
+- i.e. a real 75:1 supply gap with 13 accumulated points is now named
+  `insufficient_demand` (weak, flat demand), no longer the false
+  `insufficient_supply`. (The aggregate `/api/diagnostics/funnel` still shows
+  historical v1.6.0 records classified at rejection time; only *new* rejections
+  carry the v1.6.1 category, so the funnel shifts as the 120-cycle window rolls.)
 
 **DESIGNED ONLY (Milestone 2):**
 - a steady-demand generation path so well-observed b2b/digital/info niches are
