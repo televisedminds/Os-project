@@ -129,6 +129,15 @@ async function loadBriefing() {
     badge.title = degraded.length
       ? "Live connectors with issues: " + degraded.map((a) => `${a.id} (${a.note})`).join("; ")
       : "All live connectors healthy.";
+    // The footer's demo explainer is hardcoded in index.html — in live mode it
+    // would misdescribe real data as simulated, so swap it for the truth.
+    const foot = document.querySelector(".foot");
+    if (foot) {
+      foot.innerHTML = "Opportunity OS · <b>live mode</b> — prices, listings and demand series come " +
+        "from real connectors (eBay Browse, Serper/Google, Shopee via ScrapingDog, news, FX). " +
+        "Anything the fleet could not observe is labelled unknown/estimated in each opportunity's " +
+        "evidence — never invented. Reference fee/duty values; not financial advice.";
+    }
   }
   $("#tick-label").textContent = h.mode === "live"
     ? `pass ${s.tick} · observing every cycle`
