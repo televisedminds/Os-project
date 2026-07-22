@@ -75,6 +75,8 @@ ventures — is the honest next slice, not a bigger claim.
 
 ## Capability status (truth contract)
 
+**Full test suite:** `290 passed, 1 skipped` (pytest, whole repo, 2026-07-22).
+
 **IMPLEMENTED AND LIVE-PROVEN (v1.6.0 on the droplet):**
 - venture candidates enter `niche_state` (3 niches, 13/6 points, `niche_state_error: null`)
 - local-service candidates remain in the `local_service` family (not leaked to physical)
