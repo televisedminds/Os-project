@@ -28,6 +28,10 @@
     </label>
     <button id="cycle-btn" class="btn btn-primary"><span class="btn-full">▶ Run research cycle</span><span class="btn-short">▶ Run</span></button>
   </div>
+  <div id="cycle-progress" class="cycle-progress" hidden>
+    <div class="cp-bar"><span id="cp-fill"></span></div>
+    <div class="cp-label"><span id="cp-stage">Starting research cycle…</span><span id="cp-elapsed"></span></div>
+  </div>
 </header>
 
 <main>
@@ -58,6 +62,26 @@
           <option value="invalidated">invalidated</option>
           <option value="executed">executed</option>
           <option value="expired">expired</option>
+        </select>
+        <select id="f-type">
+          <option value="">all types</option>
+          <option value="flip">flip</option>
+          <option value="wholesale">wholesale</option>
+          <option value="refurbishment">refurbish</option>
+          <option value="import_export">import/export</option>
+          <option value="seasonal">seasonal</option>
+          <option value="local_service">local service</option>
+          <option value="b2b_service">B2B</option>
+          <option value="lead_generation">lead-gen</option>
+          <option value="digital_product">digital</option>
+          <option value="micro_saas">micro-SaaS</option>
+          <option value="info_product">info product</option>
+        </select>
+        <select id="f-sort" title="How to rank the feed">
+          <option value="score">sort: best score</option>
+          <option value="roi">sort: most cost-effective (ROI)</option>
+          <option value="profit">sort: most profit ($)</option>
+          <option value="capital">sort: least capital</option>
         </select>
         <select id="f-category"><option value="">all categories</option></select>
         <select id="f-minscore">

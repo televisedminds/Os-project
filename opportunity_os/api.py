@@ -392,11 +392,18 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
     @app.get("/api/opportunities")
     def list_opportunities(status: str | None = None, category: str | None = None,
                            min_score: float = 0.0, q: str | None = None,
+                           opp_type: str | None = None, sort: str = "score",
                            plan: str | None = None, cluster: bool = True,
                            limit: int = Query(default=100, le=500)):
         p = plan_of(plan)
         from . import clustering
         raw = store.list_opportunities(status, category, min_score, q, limit)
+        # Opportunity-type filter (flip / wholesale / import_export / seasonal /
+        # local_service / ...). 'flip' is an alias for the product_arbitrage
+        # family so the UI chip reads plainly.
+        if opp_type:
+            fam = {"flip": ("product_arbitrage",)}.get(opp_type, (opp_type,))
+            raw = [o for o in raw if o.get("type") in fam]
         metrics = clustering.cluster_metrics(len(raw), [o for o in raw if o["status"] == "active"])
 
         if cluster:
@@ -415,8 +422,22 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         else:
             rows = [_row(o, orch.learning.category_affinity(o["category"])) for o in raw]
 
-        rows.sort(key=lambda r: (r["status"] != "active",
-                                 -(r["score"] + 2 * ((r.get("personal") or {}).get("boost", 0)))))
+        # ROI = expected net per dollar of capital tied up — the "least cost,
+        # most profit" ranking. Guard against zero-capital ventures.
+        def _roi(r):
+            cap = r.get("capital_usd") or 0.0
+            return (r.get("net_usd", 0.0) / cap) if cap > 0 else 0.0
+
+        for r in rows:
+            r["roi_pct"] = round(100 * _roi(r), 1)
+        sort_key = {
+            "profit": lambda r: -r.get("net_usd", 0.0),          # most total profit
+            "roi": lambda r: -_roi(r),                            # most cost-effective
+            "capital": lambda r: r.get("capital_usd", 0.0),       # least capital first
+            "soonest": lambda r: r.get("window_days", 9999),      # closing soonest
+        }.get(sort, lambda r: -(r["score"] + 2 * ((r.get("personal") or {}).get("boost", 0))))
+        # Active always ranks above closed; the chosen key orders within each.
+        rows.sort(key=lambda r: (r["status"] != "active", sort_key(r)))
         locked = 0
         if p["max_opportunities"] is not None:
             keep = [r for r in rows if r["status"] == "active"][:p["max_opportunities"]]

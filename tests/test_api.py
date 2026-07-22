@@ -275,3 +275,24 @@ def test_briefing_agents_thailand(client):
     t = client.get("/api/thailand").json()
     assert t["venue_access"]["mercari_jp"]["sell"] is False
     assert client.get("/api/opportunities/nope").status_code == 404
+
+
+def test_type_filter_and_sorts(client):
+    # opp_type filter narrows to one family
+    flips = client.get("/api/opportunities?opp_type=flip&plan=pro").json()["opportunities"]
+    assert flips and all(o["type"] == "product_arbitrage" for o in flips)
+    whole = client.get("/api/opportunities?opp_type=wholesale&plan=pro").json()
+    assert all(o["type"] == "wholesale" for o in whole["opportunities"])
+
+    # sort=profit → non-increasing net among actives; roi field present
+    prof = [o for o in client.get("/api/opportunities?sort=profit&plan=pro").json()["opportunities"]
+            if o["status"] == "active"]
+    nets = [o["net_usd"] for o in prof]
+    assert nets == sorted(nets, reverse=True)
+    assert all("roi_pct" in o for o in prof)
+
+    # sort=roi → non-increasing ROI among actives
+    roi = [o for o in client.get("/api/opportunities?sort=roi&plan=pro").json()["opportunities"]
+           if o["status"] == "active"]
+    rois = [o["roi_pct"] for o in roi]
+    assert rois == sorted(rois, reverse=True)

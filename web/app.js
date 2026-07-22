@@ -9,7 +9,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
 const state = {
   plan: "pro",
   selectedId: null,
-  filters: { q: "", status: "active", category: "", min_score: 0 },
+  filters: { q: "", status: "active", category: "", min_score: 0, opp_type: "", sort: "score" },
   opsTab: "activity",
 };
 
@@ -109,6 +109,39 @@ function toast(msg, ms = 5000) {
   toastTimer = setTimeout(() => { t.hidden = true; }, ms);
 }
 
+/* A research cycle is one blocking call that can take a couple of minutes on a
+   live server. The bar can't know true per-stage progress without streaming,
+   so it animates optimistically toward ~92% over an estimate while cycling the
+   REAL pipeline stage names (honest labels, estimated timing), then snaps to
+   100% the instant the server actually responds. */
+function startCycleProgress() {
+  const wrap = $("#cycle-progress"), fill = $("#cp-fill"),
+        stage = $("#cp-stage"), elapsed = $("#cp-elapsed");
+  const stages = ["Scanning markets…", "Detecting anomalies…", "Investigating candidates…",
+                  "Running the verification council…", "Pricing & publishing…",
+                  "Re-verifying live opportunities…"];
+  // Estimate from the last live cycle if we've seen one, else 90s.
+  const estMs = Math.max(8000, (state.lastCycleMs || (state.mode === "live" ? 90000 : 6000)));
+  const t0 = Date.now();
+  wrap.hidden = false; fill.style.background = ""; fill.style.width = "2%";
+  const timer = setInterval(() => {
+    const dt = Date.now() - t0;
+    const pct = Math.min(92, 100 * (1 - Math.exp(-dt / (estMs * 0.5))));  // ease toward 92%
+    fill.style.width = pct.toFixed(1) + "%";
+    stage.textContent = stages[Math.min(stages.length - 1, Math.floor(dt / (estMs / stages.length)))];
+    elapsed.textContent = (dt / 1000).toFixed(0) + "s" + (dt > estMs * 1.3 ? " (almost there…)" : "");
+  }, 200);
+  return (ok) => {
+    clearInterval(timer);
+    state.lastCycleMs = Date.now() - t0;                 // learn the real duration for next time
+    fill.style.width = "100%";
+    fill.style.background = ok ? "var(--good, #38c172)" : "var(--bad, #e3342f)";
+    stage.textContent = ok ? "Done." : "Cycle failed.";
+    elapsed.textContent = (state.lastCycleMs / 1000).toFixed(0) + "s";
+    setTimeout(() => { wrap.hidden = true; }, ok ? 900 : 2500);
+  };
+}
+
 /* ------------------------------------------------------------- briefing */
 
 async function loadBriefing() {
@@ -121,6 +154,7 @@ async function loadBriefing() {
     const el = document.getElementById("lock-state");
     if (el) { el.textContent = "🔓 open"; el.classList.add("unlocked"); }
   }
+  state.mode = h.mode;
   const badge = document.querySelector(".badge-demo");
   if (badge && h.mode === "live") {
     badge.textContent = "LIVE FEED";
@@ -221,9 +255,10 @@ const tile = (label, value, sub) =>
 
 async function loadFeed() {
   const f = state.filters;
-  const qs = new URLSearchParams({ plan: state.plan, min_score: f.min_score });
+  const qs = new URLSearchParams({ plan: state.plan, min_score: f.min_score, sort: f.sort || "score" });
   if (f.status) qs.set("status", f.status);
   if (f.category) qs.set("category", f.category);
+  if (f.opp_type) qs.set("opp_type", f.opp_type);
   if (f.q) qs.set("q", f.q);
   const r = await api(`/api/opportunities?${qs}`);
 
@@ -1142,15 +1177,17 @@ function init() {
 
   $("#cycle-btn").addEventListener("click", async () => {
     const btn = $("#cycle-btn");
-    btn.disabled = true; btn.textContent = "⏳ agents researching…";
+    btn.disabled = true;
+    const stop = startCycleProgress();
     try {
       const r = await api("/api/cycle", { method: "POST" });
+      stop(true);
       toast(`Cycle ${r.tick}: ${r.signals} signals → ${r.anomalies} anomalies → ${r.candidates} investigated → `
         + `${r.published.length} published, ${r.rejected.length} rejected, ${r.invalidated.length} invalidated.`);
       await refreshAll();
       if (state.selectedId) selectOpportunity(state.selectedId).catch(() => {});
-    } catch (err) { toast("Cycle failed: " + err.message); }
-    btn.disabled = false; btn.textContent = "▶ Run research cycle";
+    } catch (err) { stop(false); toast("Cycle failed: " + err.message); }
+    btn.disabled = false;
   });
 
   const f = state.filters;
@@ -1158,6 +1195,8 @@ function init() {
   $("#f-status").addEventListener("change", (e) => { f.status = e.target.value; loadFeed(); });
   $("#f-category").addEventListener("change", (e) => { f.category = e.target.value; loadFeed(); });
   $("#f-minscore").addEventListener("change", (e) => { f.min_score = e.target.value; loadFeed(); });
+  $("#f-type").addEventListener("change", (e) => { f.opp_type = e.target.value; loadFeed(); });
+  $("#f-sort").addEventListener("change", (e) => { f.sort = e.target.value; loadFeed(); });
 
   document.querySelectorAll(".ops-tab").forEach((b) =>
     b.addEventListener("click", () => {

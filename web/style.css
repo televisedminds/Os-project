@@ -612,3 +612,12 @@ ul { margin: 6px 0; padding-left: 18px; }
 .div-under { color: var(--orange); font-weight: 600; }
 .div-bar { height: 5px; background: var(--line); border-radius: 3px; margin-top: 3px; overflow: hidden; }
 .div-bar span { display: block; height: 100%; background: var(--violet); border-radius: 3px; }
+
+/* ------------------------------------------------- run-cycle progress bar */
+.cycle-progress { width: 100%; padding: 8px 16px 10px; box-sizing: border-box; }
+.cp-bar { height: 6px; background: var(--line); border-radius: 4px; overflow: hidden; }
+.cp-bar span { display: block; height: 100%; width: 2%; background: var(--accent);
+  border-radius: 4px; transition: width .25s ease, background .3s ease; }
+.cp-label { display: flex; justify-content: space-between; margin-top: 5px;
+  font-size: 11.5px; color: var(--muted); }
+.cp-label #cp-elapsed { font-variant-numeric: tabular-nums; }
