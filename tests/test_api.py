@@ -21,6 +21,19 @@ def test_health_declares_demo_mode(client):
     assert h["ok"] and h["demo_mode"] and h["tick"] >= 14
 
 
+def test_diversity_endpoint_reports_family_allocation(client):
+    d = client.get("/api/diversity").json()
+    assert d["enabled"] and d["watch_budget"] > 0
+    fams = {f["family"] for f in d["families"]}
+    assert {"physical", "local_service", "b2b", "digital", "info"} <= fams
+    for f in d["families"]:
+        assert set(f) >= {"target_slots", "watched", "verified_opportunities",
+                          "under_filled", "adapted_weight"}
+    # physical has verified opportunities in demo; every family is represented.
+    phys = next(f for f in d["families"] if f["family"] == "physical")
+    assert phys["verified_opportunities"] >= 1
+
+
 def test_feed_and_filters(client):
     r = client.get("/api/opportunities").json()
     assert r["count"] > 0

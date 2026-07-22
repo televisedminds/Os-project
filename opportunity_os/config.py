@@ -127,6 +127,15 @@ class Config:
     scan_hot_anomaly_window: int = field(default_factory=lambda: int(os.environ.get("OOS_SCAN_HOT_WINDOW", "6")))
     discovery_ttl_days: float = field(default_factory=lambda: float(os.environ.get("OOS_DISCOVERY_TTL_DAYS", "10")))
     discovery_trends_geo: str = _env("OOS_DISCOVERY_GEO", "US")
+    # Type-diversity budget: reserve a floor share of the watched set for each
+    # opportunity family, so the rich-evidence physical flips can't expire every
+    # gap-mined Thai niche out of existence. Weights adapt toward families that
+    # actually VERIFY, but never below the exploration floor — and a floor only
+    # governs how much we WATCH a family, never lowers the bar to publish it.
+    diversity_enabled: bool = field(
+        default_factory=lambda: os.environ.get("OOS_DIVERSITY", "1") not in ("0", "false", "no"))
+    diversity_min_floor: int = field(default_factory=lambda: int(os.environ.get("OOS_DIVERSITY_MIN_FLOOR", "8")))
+    diversity_adapt: float = field(default_factory=lambda: float(os.environ.get("OOS_DIVERSITY_ADAPT", "0.5")))
 
     # Home base: the operator is in Thailand. Every opportunity is assessed
     # for buy/sell feasibility from Thailand.

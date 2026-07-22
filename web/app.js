@@ -919,6 +919,25 @@ async function loadOps() {
           : ""}
       </div>`).join("");
     const lr = d.last_run || {};
+    let divHtml = "";
+    try {
+      const dv = await api("/api/diversity");
+      if (dv.enabled) {
+        const rows = dv.families.map((f) => {
+          const fill = f.target_slots ? Math.min(100, Math.round(100 * f.watched / f.target_slots)) : 0;
+          return `<div class="div-row">
+            <div class="div-head"><b>${esc(f.label)}</b>
+              <span class="r">${f.watched}/${f.target_slots} watched · ${f.verified_opportunities} verified
+              ${f.under_filled ? '· <span class="div-under">buying info</span>' : ""}</span></div>
+            <div class="div-bar"><span style="width:${fill}%"></span></div></div>`;
+        }).join("");
+        divHtml = `<div style="grid-column: 1 / -1"><h4>Type-diversity budget</h4>
+          <p class="wf-note" style="margin:0 0 8px">The watch set is split across opportunity families
+          so rich-evidence flips can't crowd out gap-mined niches. A family below its target isn't
+          failing — it just hasn't surfaced enough candidates yet. Budget never lowers the bar to publish.</p>
+          ${rows}</div>`;
+      }
+    } catch (e) { /* diversity optional */ }
     body.innerHTML = `<div class="learn-cols">
       <div><h4>Discovery sources</h4>${srcRows}
         <div class="kv" style="margin-top:10px"><span>auto-found, being watched</span><b>${d.counts.active}</b></div>
@@ -929,6 +948,7 @@ async function loadOps() {
       <div style="grid-column: span 2"><h4>What the fleet found on its own</h4>
         ${items || '<div class="wf-note">Nothing yet — sweeps run every few cycles; candidates appear here, then must verify like everything else before reaching your feed.</div>'}
       </div>
+      ${divHtml}
     </div>`;
   } else if (state.opsTab === "agents") {
     const r = await api("/api/agents");

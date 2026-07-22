@@ -604,3 +604,11 @@ ul { margin: 6px 0; padding-left: 18px; }
   .ac-flow { flex-direction: column; }
   .ac-arrow { transform: rotate(90deg); align-self: center; }
 }
+
+/* ------------------------------------------------- type-diversity budget */
+.div-row { margin: 6px 0; }
+.div-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.div-head .r { font-size: 11px; color: var(--muted); }
+.div-under { color: var(--orange); font-weight: 600; }
+.div-bar { height: 5px; background: var(--line); border-radius: 3px; margin-top: 3px; overflow: hidden; }
+.div-bar span { display: block; height: 100%; background: var(--violet); border-radius: 3px; }

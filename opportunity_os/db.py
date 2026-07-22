@@ -453,6 +453,53 @@ class Store:
                 retired += cur.rowcount or 0
         return retired
 
+    def retain_discovered(self, keep_ids: list[str], ttl_days: float) -> int:
+        """Family-aware retention (Phase 10): expire stale discoveries and any
+        active one NOT in the explicit `keep_ids` set chosen by the diversity
+        allocator. Unlike `expire_discovered`, the keep-set is decided upstream
+        so a low-scored gap-mined niche can be retained over a higher-scored
+        physical product to honour a family floor."""
+
+        cutoff = time.time() - ttl_days * 86400
+        keep = list(dict.fromkeys(keep_ids))
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE discovered SET status='expired' WHERE status='active' AND last_ts < ?",
+                (cutoff,))
+            retired = cur.rowcount or 0
+            if keep:
+                placeholders = ",".join("?" * len(keep))
+                cur = self._conn.execute(
+                    f"UPDATE discovered SET status='expired' WHERE status='active' "
+                    f"AND id NOT IN ({placeholders})", keep)
+            else:
+                cur = self._conn.execute(
+                    "UPDATE discovered SET status='expired' WHERE status='active'")
+            retired += cur.rowcount or 0
+        return retired
+
+    def active_discovered_family_counts(self) -> dict[str, int]:
+        """How many active discovered candidates each family currently holds —
+        product vs each niche kind — for the diversity report."""
+
+        from .diversity import candidate_family
+        out: dict[str, int] = {}
+        for row in self.list_discovered(active_only=True, limit=10000):
+            fam = candidate_family(row)
+            out[fam] = out.get(fam, 0) + 1
+        return out
+
+    def opportunity_family_yield(self) -> dict[str, int]:
+        """Verified (active) opportunities per family — the honest 'did watching
+        this family produce anything' signal the allocator adapts toward."""
+
+        from .diversity import opp_type_family
+        out: dict[str, int] = {}
+        for o in self.list_opportunities(status="active", limit=2000):
+            fam = opp_type_family(o.get("type", ""))
+            out[fam] = out.get(fam, 0) + 1
+        return out
+
     # ----------------------------------------------------------- selling kits
 
     def save_kit(self, opportunity_id: str, model: str, kit: dict) -> None:

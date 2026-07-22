@@ -709,14 +709,42 @@ class DiscoveryEngine:
                     c.queries["shopee_th"] = clean_query(c.name)
                     budget -= 1
 
-        promoted = 0
-        for c in sorted(candidates, key=lambda x: x.score, reverse=True)[:self.cfg.discovery_scan_cap]:
-            if self.store.upsert_discovered(asdict(c)):
-                promoted += 1
-        self.store.expire_discovered(self.cfg.discovery_ttl_days,
-                                     self.cfg.discovery_max_active)
+        # Promotion + retention are BOTH family-aware when diversity is on, so a
+        # flood of high-scored physical products can neither out-promote nor
+        # out-live the gap-mined niches. The allocator reserves a floor per
+        # opportunity family, adapting shares toward the families that actually
+        # verify. Off → plain top-by-score, as before.
+        diversity_report = None
+        if getattr(self.cfg, "diversity_enabled", False):
+            from .diversity import DiversityAllocator
+            allocator = DiversityAllocator(self.cfg)
+            yield_by_family = self.store.opportunity_family_yield()
+            # Promote this sweep's candidates family-aware (so low-scored niches
+            # aren't dropped before they're ever stored).
+            cand_rows = [asdict(c) for c in candidates]
+            promote_ids, _ = allocator.select(cand_rows, self.cfg.discovery_scan_cap, yield_by_family)
+            promote_set = set(promote_ids)
+            promoted = 0
+            for row in cand_rows:
+                if row["id"] in promote_set and self.store.upsert_discovered(row):
+                    promoted += 1
+            # Retain the watch set family-aware across all active discoveries.
+            active = self.store.list_discovered(active_only=True, limit=10000)
+            keep_ids, diversity_report = allocator.select(
+                active, self.cfg.discovery_max_active, yield_by_family)
+            self.store.retain_discovered(keep_ids, self.cfg.discovery_ttl_days)
+        else:
+            promoted = 0
+            for c in sorted(candidates, key=lambda x: x.score, reverse=True)[:self.cfg.discovery_scan_cap]:
+                if self.store.upsert_discovered(asdict(c)):
+                    promoted += 1
+            self.store.expire_discovered(self.cfg.discovery_ttl_days,
+                                         self.cfg.discovery_max_active)
+
         report = {"sources": per_source, "found": len(candidates),
                   "promoted": promoted, "errors": self.errors}
+        if diversity_report is not None:
+            report["diversity"] = diversity_report
         if self.ai is not None and self.ai.configured():
             report["ai"] = self.ai.last_summary or f"screened {raw_count} candidates"
         return report

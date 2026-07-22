@@ -769,6 +769,43 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
             "found": store.list_discovered(active_only=active_only, limit=limit),
         }
 
+    @app.get("/api/diversity")
+    def diversity():
+        """The type-diversity budget: how the finite watch set is allocated
+        across opportunity families, which are under-filled (buying information,
+        not failing), and how the shares have adapted toward what verifies."""
+
+        from . import diversity as dv
+        active_by_family = store.active_discovered_family_counts()
+        yield_by_family = store.opportunity_family_yield()
+        alloc = dv.DiversityAllocator(cfg)
+        targets = alloc.targets(cfg.discovery_max_active, yield_by_family)
+        weights = dv.adapt_weights(yield_by_family, alloc.adapt)
+        families = []
+        for f, spec in dv.FAMILIES.items():
+            watched = active_by_family.get(f, 0)
+            families.append({
+                "family": f, "label": spec["label"],
+                "base_weight": round(spec["weight"], 3),
+                "adapted_weight": round(weights[f], 3),
+                "target_slots": targets.get(f, 0),
+                "watched": watched,
+                "verified_opportunities": yield_by_family.get(f, 0),
+                "under_filled": watched < targets.get(f, 0),
+                "opp_types": list(spec["opp_types"]),
+            })
+        return {
+            "enabled": bool(getattr(cfg, "diversity_enabled", False)),
+            "watch_budget": cfg.discovery_max_active,
+            "min_floor_per_family": alloc.min_floor,
+            "adapt": alloc.adapt,
+            "families": families,
+            "note": "A family's budget governs how much it is WATCHED, never whether a "
+                    "candidate publishes — publishing still requires passing the council. "
+                    "An under-filled family isn't failing; it just hasn't surfaced enough "
+                    "candidates yet (buy more information).",
+        }
+
     @app.get("/api/learning")
     def learning():
         st = orch.learning.state

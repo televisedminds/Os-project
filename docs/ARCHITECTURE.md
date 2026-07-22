@@ -452,3 +452,44 @@ the dislocation/refurbishment demo evidence.
 **Still missing from Phase 9** (honest): lead-generation and seasonal/event
 generators, the adaptive type-diversity discovery budget (Phase 10), and
 ScrapingDog as a general evidence collector (Phase 7). Those remain real gaps.
+
+## 9. v1.3.0 — the type-diversity budget (Phase 10)
+
+The eBay-US-only bias had a third root cause beyond fabricated data (v1.1.0)
+and missing generators (v1.2.0): **the watch set itself was monopolized.**
+Physical products carry the richest evidence and score highest at discovery, so
+the plain top-by-score promotion + expiry (`expire_discovered`) dropped every
+gap-mined Thai niche the moment the watch set filled. Non-flip types were
+starved of coverage before they could ever verify — measured directly:
+
+```
+diversity OFF : watched=50  physical=50  non-physical=0
+diversity ON  : watched=50  physical=44  non-physical=6  (local/b2b/digital/info)
+```
+
+`diversity.py` allocates the watch budget across opportunity **families**
+(physical trade / local service / B2B / digital / info), each with a reserved
+floor, adapting the shares toward families that actually verify. Wired into
+`DiscoveryEngine.run` at BOTH stages — promotion (which candidates get stored)
+and retention (which occupy the finite `discovery_max_active` set) — so a flood
+of products can neither out-promote nor out-live the niches.
+
+Two rules are load-bearing:
+
+1. **A family's budget governs how much it is WATCHED, never whether a candidate
+   PUBLISHES.** Publishing still requires the full council + pessimistic gate. A
+   family with a floor but no qualifying candidates simply under-fills, and the
+   report says so (`under_filled: found < target`) — a buying-information state,
+   never a weak opportunity waved through to hit a quota.
+2. **Adaptation never zeroes a family** (`adapt_weights` floors each at half its
+   base weight), so the system keeps buying information on the quiet families
+   instead of collapsing onto today's winner. Surplus from under-filled families
+   is redistributed by score, so no watch slot is wasted.
+
+Surfaced at `GET /api/diversity` and in the dashboard Discovery tab (per-family
+target vs watched vs verified, with an honest "buying info" flag). Knobs:
+`OOS_DIVERSITY`, `OOS_DIVERSITY_MIN_FLOOR`, `OOS_DIVERSITY_ADAPT`.
+
+**Remaining Phase-9/10 gaps** (honest): lead-generation and seasonal generators
+(2 of the 4 missing types still unbuilt), and ScrapingDog as a general evidence
+collector (Phase 7).
