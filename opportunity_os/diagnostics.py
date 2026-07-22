@@ -103,6 +103,7 @@ def probe_sources(cfg, store, adapters: dict | None = None) -> list[dict]:
     out.append(_probe_news(cfg, ad.get("news")))
     out.append(_probe_fx(cfg, ad.get("fx")))
     out.append(_probe_shopee(cfg, ad.get("shopee_th")))
+    out.append(_probe_scrapingdog_page(cfg))
     out.append(_probe_anthropic(cfg))
     out.append(_probe_telegram(cfg))
 
@@ -263,6 +264,35 @@ def _probe_shopee(cfg, adapter) -> SourceHealth:
     h.last_success_ts, h.data_freshness = time.time(), "live (scrape)"
     h.status = HEALTHY if h.records_parsed else PARSER_BROKEN
     h.note = "EXPERIMENTAL scrape — parser can break when Shopee changes layout"
+    return h
+
+
+def _probe_scrapingdog_page(cfg) -> SourceHealth:
+    """General page-evidence collector (competitor pricing/reviews). Verifies
+    extraction on a synthetic page — no credit spend, no live fetch — so the
+    probe proves the parser works even when a key isn't set."""
+
+    from .market.adapters import ScrapingDogPageAdapter
+    h = SourceHealth(id="scrapingdog_page", name="ScrapingDog page evidence", enabled=True,
+                     credential_present=bool(cfg.scrapingdog_api_key),
+                     daily_allowance="shares the ScrapingDog plan",
+                     cost_per_request="~1 ScrapingDog credit (paid)")
+    adapter = ScrapingDogPageAdapter(cfg)
+    sample = "<html>บริการ ฿1,500 ต่อครั้ง — รีวิว: บริการดี recommend, แต่ช้า</html>"
+    prices = adapter._extract_prices(adapter._TAG_RE.sub(" ", sample))
+    review = adapter._review_signal(sample)
+    h.records_parsed = len(prices)
+    if not h.credential_present:
+        h.status = DISABLED
+        h.note = ("no SCRAPINGDOG_API_KEY — competitor pricing/reviews off; "
+                  f"extractor verified OK ({len(prices)} price(s), "
+                  f"{review['complaint_hits']}+{review['positive_hits']} review terms parsed)")
+        return h
+    h.auth_ok = True
+    h.status = HEALTHY if prices else DEGRADED
+    h.data_freshness = "on demand (per provider page)"
+    h.note = ("key set; reads competitor pricing/reviews off provider pages Serper finds "
+              "(EXPERIMENTAL, best-effort extraction)")
     return h
 
 

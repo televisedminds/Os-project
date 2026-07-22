@@ -136,6 +136,17 @@ def build_ledger(cand: dict, verification, mode: str = "demo",
         items.append(EvidenceItem(
             "supply", supply_val, supply_kind, supply_src,
             independent=supply_kind == OBSERVED, ts=latest_ts, freshness=fresh))
+        # Phase 7: competitor pricing scraped off a real provider page grounds
+        # the price point — an INDEPENDENT observed source (ScrapingDog), tagged
+        # experimental so nobody mistakes a scrape for an official feed.
+        if prov.get("price") == "observed":
+            review = m.get("competitor_review") or {}
+            cr = review.get("complaint_ratio")
+            note = (f"; reviews {int(cr * 100)}% complaints" if cr is not None else "")
+            items.append(EvidenceItem(
+                "competitor_pricing",
+                f"provider page priced ≈${niche.get('price_point_usd', 0):.2f} (scraped){note}",
+                OBSERVED, "scrapingdog", independent=True, ts=latest_ts, freshness=fresh))
 
     # economics — always CALCULATED, never observed
     if econ is not None:

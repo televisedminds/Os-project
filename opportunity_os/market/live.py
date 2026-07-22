@@ -272,6 +272,11 @@ class LiveMarket:
                                                    sq, sup, geo=gl, lang=hl)
                         else:
                             self._err(f"{n.id}/serper-supply: {serper.last_error}")
+            # Phase 7: with a ScrapingDog key, read the TOP provider page Serper
+            # found and extract competitor pricing + a review signal — grounding
+            # this niche's price point in what real providers charge. Budgeted
+            # and stale-gated so a trial key lasts.
+            self._scrape_competitor(n, t)
             self.db.add_live_niche(n.id, t, self._niche_metrics(n, count))
             if news and n.news_query:
                 headlines += self._fresh_headlines(news, n.id, n.news_query)
@@ -337,6 +342,33 @@ class LiveMarket:
             est = max(est, float(p.bootstrap_sold_7d.get(venue, 0)))
         return round(est)
 
+    def _scrape_competitor(self, n: wl.WatchNiche, t: int) -> None:
+        """Fetch the top provider page from this niche's supply observation and
+        store extracted competitor pricing + review signal. Budgeted (every Nth
+        cycle), stale-gated (>7 days), and fully degrading — a scrape failure
+        just means no competitor evidence this pass."""
+
+        page = self.adapters.get("scrapingdog_page")
+        if not page or not getattr(page, "configured", lambda: False)():
+            return
+        every = max(1, getattr(page, "every_n_ticks", 4))
+        if every > 1 and (t % every) != 1:
+            return
+        prev = self.db.latest_search_obs(n.id, "competitor")
+        if prev is not None and (time.time() - prev["ts"]) <= 7 * 86400:
+            return                                  # fresh enough — don't re-spend
+        supply = self.db.latest_search_obs(n.id, "supply")
+        providers = ((supply or {}).get("payload") or {}).get("providers") or []
+        url = next((p.get("url") for p in providers if p.get("url")), None)
+        if not url:
+            return                                  # no provider page to read yet
+        ev = page.page_evidence(url)
+        if ev is None:
+            self._err(f"{n.id}/scrapingdog: {page.last_error}")
+            return
+        self.db.add_search_obs(n.id, "scrapingdog", "competitor", t, url, ev,
+                               geo=n.geo or "TH", lang="th" if n.serper_query_th else "en")
+
     def _niche_metrics(self, n: wl.WatchNiche, mentions_today: int | None) -> dict:
         """Honest niche metrics: every number is observed, user-supplied, or
         explicitly unknown — never an invented constant.
@@ -391,6 +423,17 @@ class LiveMarket:
         else:
             supply_n, supply_src, supply_domains = 0, "unknown", []
 
+        # Phase 7: ground the price point in an OBSERVED competitor price when
+        # ScrapingDog has read a provider page; else fall back to the niche's
+        # own (user-supplied or default) price point.
+        price_usd, price_src, review = n.price_point_usd, "estimated", None
+        comp = self.db.latest_search_obs(n.id, "competitor")
+        if comp:
+            block = (comp["payload"].get("prices") or {})
+            if block.get("median_usd"):
+                price_usd, price_src = float(block["median_usd"]), "observed"
+            review = comp["payload"].get("review")
+
         return {
             "volume": volume,
             "growth_pct": round(growth, 1),
@@ -398,8 +441,10 @@ class LiveMarket:
             "demand_posts": round(posts, 1),
             "providers": supply_n if supply_src != "user_supplied" else n.providers,
             "observed": {"demand": demand_src, "supply": supply_src,
-                         "demand_series": demand_src_series},
+                         "demand_series": demand_src_series, "price": price_src},
             "supply_domains": supply_domains,
+            "price_point_usd": round(price_usd, 2),
+            "competitor_review": review,
         }
 
     # ------------------------------------------------------- DataSource impl
@@ -460,8 +505,11 @@ class LiveMarket:
         for n in sorted(self._all_niches(), key=lambda x: x.id):
             hist = self.db.live_niche_series(n.id, 1)
             metrics = hist[-1] if hist else self._niche_metrics(n, None)
+            # Prefer the observed competitor price the metrics grounded (Phase 7),
+            # falling back to the niche's own price point.
+            price = metrics.get("price_point_usd", n.price_point_usd)
             out.append({"id": n.id, "name": n.name, "kind": n.kind, "geo": n.geo,
-                        "price_point_usd": n.price_point_usd, "metrics": metrics})
+                        "price_point_usd": price, "metrics": metrics})
         return out
 
     def niche_history(self, niche_id: str) -> list[dict]:

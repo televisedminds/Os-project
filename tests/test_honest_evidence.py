@@ -102,7 +102,8 @@ def test_niche_metrics_provenance(tmp_path):
     disc = Candidate(kind="niche", id="disc_n_y", name="Y", source="serper_gaps",
                      niche_kind="local", geo="TH").to_watch_niche()
     m = lm._niche_metrics(disc, None)
-    assert m["observed"] == {"demand": "unknown", "supply": "unknown", "demand_series": "serper"}
+    assert m["observed"] == {"demand": "unknown", "supply": "unknown",
+                             "demand_series": "serper", "price": "estimated"}
     assert m["volume"] == 0.0 and m["solution_count"] == 0
 
     # A measured mention series + a stored supply scan flip provenance to observed.

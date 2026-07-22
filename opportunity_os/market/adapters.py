@@ -488,12 +488,137 @@ class ScrapingDogShopeeAdapter(BaseAdapter):
                       f"(EXPERIMENTAL — parser can break when Shopee changes)")
 
 
+class ScrapingDogPageAdapter(BaseAdapter):
+    """General page-evidence collector through scrapingdog.com (Phase 7).
+
+    Where the Shopee adapter scrapes ONE known JSON endpoint, this fetches an
+    ARBITRARY page (a competitor's site, a supplier page, a directory listing —
+    typically a provider URL Serper already surfaced) and extracts normalized
+    evidence from the HTML:
+
+    * **competitor pricing** — THB/USD amounts on the page, so a venture's price
+      point is grounded in what real providers actually charge instead of an
+      estimate;
+    * **review/complaint signal** — a coarse count of satisfaction vs
+      complaint language (Thai + English), a weak-but-real read on how well the
+      incumbent solutions serve the market.
+
+    EXPERIMENTAL, eyes open, same as Shopee: paid, brittle, credit-metered.
+    Every extraction is labelled scraped; a fetch failure degrades to no
+    evidence, never a crash. Budgeted per pass so a trial key lasts."""
+
+    id = "scrapingdog_page"
+    name = "ScrapingDog page evidence"
+
+    # Plausible service/product price bands (drop phone numbers, years, IDs).
+    _THB_MIN, _THB_MAX = 50.0, 2_000_000.0
+    _USD_MIN, _USD_MAX = 2.0, 60_000.0
+
+    _THB_RE = re.compile(r"(?:฿|บาท|baht|thb)\s?([\d][\d,]{1,9}(?:\.\d{1,2})?)"
+                         r"|([\d][\d,]{1,9}(?:\.\d{1,2})?)\s?(?:฿|บาท|baht|thb)", re.I)
+    _USD_RE = re.compile(r"(?:\$|usd)\s?([\d][\d,]{1,9}(?:\.\d{1,2})?)", re.I)
+    _TAG_RE = re.compile(r"<[^>]+>")
+
+    COMPLAINT_TERMS = ("แพง", "ช้า", "แย่", "ไม่ดี", "ห่วย", "หลอก", "โกง", "รอนาน",
+                       "expensive", "overpriced", "slow", "late", "bad", "poor", "awful",
+                       "terrible", "avoid", "scam", "rude", "disappointed", "waste")
+    POSITIVE_TERMS = ("ดีมาก", "เยี่ยม", "ประทับใจ", "แนะนำ", "คุ้ม", "บริการดี",
+                      "great", "excellent", "recommend", "reliable", "fast", "friendly",
+                      "professional", "worth", "helpful", "quality")
+
+    def __init__(self, cfg, client: httpx.Client | None = None):
+        super().__init__(cfg, client)
+        self.every_n_ticks = max(1, cfg.scrape_every_n_ticks)
+
+    def configured(self) -> bool:
+        return bool(self.cfg.scrapingdog_api_key)
+
+    def fetch(self, url: str, dynamic: bool = False) -> str | None:
+        """Fetch a URL's rendered text via ScrapingDog, or None on failure."""
+
+        if not self.configured():
+            return self._fail("SCRAPINGDOG_API_KEY not set")
+        try:
+            r = self.client.get("https://api.scrapingdog.com/scrape",
+                                params={"api_key": self.cfg.scrapingdog_api_key,
+                                        "url": url, "dynamic": "true" if dynamic else "false"})
+            r.raise_for_status()
+            self.last_error = ""
+            return r.text
+        except Exception as e:  # noqa: BLE001
+            return self._fail(f"ScrapingDog fetch failed: {e}")
+
+    def _extract_prices(self, text: str) -> dict:
+        from .. import economics
+        usd: list[float] = []
+        for m in self._THB_RE.finditer(text):
+            raw = m.group(1) or m.group(2)
+            try:
+                v = float(raw.replace(",", ""))
+            except (ValueError, AttributeError):
+                continue
+            if self._THB_MIN <= v <= self._THB_MAX:
+                usd.append(round(v / economics.USD_THB, 2))
+        for m in self._USD_RE.finditer(text):
+            try:
+                v = float(m.group(1).replace(",", ""))
+            except (ValueError, AttributeError):
+                continue
+            if self._USD_MIN <= v <= self._USD_MAX:
+                usd.append(round(v, 2))
+        usd.sort()
+        return usd
+
+    def _review_signal(self, text: str) -> dict:
+        low = text.lower()
+        complaints = sum(low.count(t) for t in self.COMPLAINT_TERMS)
+        positives = sum(low.count(t) for t in self.POSITIVE_TERMS)
+        total = complaints + positives
+        return {"complaint_hits": complaints, "positive_hits": positives,
+                "complaint_ratio": round(complaints / total, 2) if total else None}
+
+    def page_evidence(self, url: str, dynamic: bool = False) -> dict | None:
+        """Fetch a provider/competitor page and return normalized evidence:
+        the observed price range and a review/complaint signal. None on any
+        fetch/parse failure (the caller treats missing evidence honestly)."""
+
+        html = self.fetch(url, dynamic=dynamic)
+        if html is None:
+            return None
+        text = self._TAG_RE.sub(" ", html)
+        prices = self._extract_prices(text)
+        n = len(prices)
+        price_block = None
+        if n:
+            price_block = {
+                "n": n,
+                "low_usd": prices[0],
+                "median_usd": prices[n // 2],
+                "high_usd": prices[-1],
+            }
+        review = self._review_signal(text)
+        if price_block is None and review["complaint_hits"] == 0 and review["positive_hits"] == 0:
+            return self._fail(f"no price or review signal parsed from {url} "
+                              f"(page layout unfamiliar — evidence not extractable)")
+        self.last_error = ""
+        return {"url": url, "prices": price_block, "review": review,
+                "experimental": True}
+
+    def check(self) -> tuple[bool, str]:
+        if not self.configured():
+            return False, ("optional — set SCRAPINGDOG_API_KEY to let the fleet read competitor "
+                           "pricing/reviews off provider pages Serper finds; ventures work without it")
+        return True, (f"key set; provider pages scraped every {self.every_n_ticks} cycles "
+                      f"(EXPERIMENTAL — extraction is best-effort, degrades to no evidence)")
+
+
 def build_adapters(cfg, client: httpx.Client | None = None) -> dict[str, BaseAdapter]:
     """The default live adapter set, keyed by venue/source id."""
 
     out: dict[str, BaseAdapter] = {
         "ebay_us": EbayAdapter(cfg, client),
         "shopee_th": ScrapingDogShopeeAdapter(cfg, client),
+        "scrapingdog_page": ScrapingDogPageAdapter(cfg, client),
         "reddit": RedditAdapter(cfg, client),
         "serper": SerperAdapter(cfg, client),
         "news": NewsAdapter(cfg, client),

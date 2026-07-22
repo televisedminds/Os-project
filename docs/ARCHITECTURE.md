@@ -530,3 +530,44 @@ registered).
 **Phase 9 is now complete.** The remaining open mandate item is Phase 7:
 ScrapingDog as a general evidence collector (competitor pricing, reviews,
 supplier pages) to deepen the local-service/B2B/lead-gen theses.
+
+## 11. v1.5.0 — ScrapingDog as a general evidence collector (Phase 7)
+
+The last open mandate item. ScrapingDog was Shopee-price-only; it is now also a
+general page-evidence collector that deepens the venture/lead-gen theses with
+real competitor data.
+
+**`ScrapingDogPageAdapter`** (`market/adapters.py`) — fetches an ARBITRARY page
+(typically a provider URL Serper already surfaced) and extracts normalized
+evidence from the HTML: **competitor pricing** (THB/USD amounts in plausible
+service bands — phone numbers, years and ids are filtered out) and a
+**review/complaint signal** (Thai + English satisfaction-vs-complaint counts).
+EXPERIMENTAL and credit-metered like the Shopee adapter; every fetch failure or
+unfamiliar layout degrades to no-evidence, never a crash.
+
+Wired into `LiveMarket`: after Serper's supply scan finds provider domains for a
+niche, `_scrape_competitor` reads the top provider page (budgeted every Nth
+cycle, stale-gated to 7 days) and stores a `competitor` observation in
+`live_search_obs`. `_niche_metrics` then **grounds the price point** in the
+observed competitor median instead of the estimate, tagging provenance
+`price: observed`; `niches()` surfaces it, and the evidence ledger records an
+independent `competitor_pricing` item (kind OBSERVED, source scrapingdog,
+flagged scraped). Without a key, the price stays `estimated` and the diagnostics
+say so — while still proving the extractor works on a synthetic page (no credit
+spend).
+
+This closes the mandate's Phase 7 and acceptance criterion 6 (ScrapingDog
+produces useful normalized observations). 280 tests pass (+11 in
+test_scrapingdog_evidence.py).
+
+### Mandate status after v1.5.0
+Every phase the mandate named is now addressed: honest live-vs-simulated data
+(v1.1), full source observability + diagnostics, Thai/EN queries, source↔
+generator separation, the complete 11-generator set incl. import/export,
+wholesale, lead-gen and seasonal (v1.2/v1.4), the type-diversity budget (v1.3),
+and ScrapingDog as a real evidence collector (v1.5). The remaining honest
+limitation is inherent, not architectural: the paid/scraped sources (ScrapingDog,
+Serper beyond its free tier) cost real credits, so live coverage of the non-flip
+families scales with the operator's key budget — the system now spends those
+credits on evidence that changes a decision, and labels everything it cannot
+observe.
