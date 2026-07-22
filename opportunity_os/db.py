@@ -357,6 +357,31 @@ class Store:
             out.append(d)
         return out
 
+    def recent_search_obs(self, source: str | None = None, kind: str | None = None,
+                          limit: int = 20) -> list[dict]:
+        """Latest search-derived observations across all entities — the query
+        log the observability layer shows (what was asked, where, with how many
+        results), newest first."""
+
+        sql, args = "SELECT * FROM live_search_obs", []
+        conds = []
+        if source:
+            conds.append("source=?"); args.append(source)
+        if kind:
+            conds.append("kind=?"); args.append(kind)
+        if conds:
+            sql += " WHERE " + " AND ".join(conds)
+        sql += " ORDER BY id DESC LIMIT ?"
+        args.append(limit)
+        with self._lock:
+            rows = self._conn.execute(sql, args).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["payload"] = json.loads(d["payload"] or "{}")
+            out.append(d)
+        return out
+
     def search_obs_counts(self) -> dict[str, int]:
         """observations stored per source in live_search_obs (for diagnostics)."""
 

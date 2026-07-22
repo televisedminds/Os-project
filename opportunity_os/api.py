@@ -757,16 +757,24 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         return {"anomalies": store.recent_anomalies(limit)}
 
     @app.get("/api/discovery")
-    def discovery(limit: int = Query(default=60, le=200), active_only: bool = True):
-        """What the discovery engine has auto-found and is watching."""
+    def discovery(limit: int = Query(default=60, le=200), active_only: bool = True,
+                  kind: str | None = Query(default=None)):
+        """What the discovery engine has auto-found and is watching. `kind`
+        filters to 'product' or 'niche' — without it, high-scoring products
+        push the diversity-reserved niches below any sane limit, making them
+        invisible exactly when you want to inspect them."""
 
         disc = getattr(orch.world, "discovery", None)
+        found = store.list_discovered(active_only=active_only,
+                                      limit=10000 if kind else limit)
+        if kind:
+            found = [r for r in found if r.get("kind") == kind][:limit]
         return {
             "enabled": disc is not None,
             "counts": store.discovered_counts(),
             "sources": disc.status() if disc is not None else [],
             "last_run": getattr(orch.world, "discovery_report", {}),
-            "found": store.list_discovered(active_only=active_only, limit=limit),
+            "found": found,
         }
 
     @app.get("/api/diversity")
@@ -804,6 +812,148 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
                     "candidate publishes — publishing still requires passing the council. "
                     "An under-filled family isn't failing; it just hasn't surfaced enough "
                     "candidates yet (buy more information).",
+        }
+
+    @app.get("/api/observability")
+    def observability(cycles: int = Query(default=60, le=400)):
+        """Production evidence, per opportunity family and per evidence source:
+        what was queried, what came back, what each generator produced, why
+        candidates died. Read-only — the instrument for 'prove it live'."""
+
+        from . import diversity as dv
+        from .evidence import classify_rejection
+
+        # Per-family funnel across recent cycle reports. candidates_by_type
+        # exists on cycles run since v1.5.1; older cycles contribute
+        # published/rejected only (counted from the id/type they carry).
+        fams = {f: {"candidates": 0, "published_new": 0, "rejected": 0,
+                    "research_required": 0, "rejections": {}} for f in dv.FAMILIES}
+        cycles_seen = 0
+        with_cbt = 0
+        for c in store.recent_cycles(cycles):
+            rep = c["report"]
+            cycles_seen += 1
+            cbt = rep.get("candidates_by_type")
+            if cbt:
+                with_cbt += 1
+                for t, n in cbt.items():
+                    fams[dv.opp_type_family(t)]["candidates"] += n
+            for p in rep.get("published", []):
+                if p.get("new"):
+                    # opportunity ids embed the type: opp_<type>_<entity>_...
+                    t = next((t for t in dv._OPP_TYPE_TO_FAMILY if t in p.get("id", "")), "product_arbitrage")
+                    fams[dv.opp_type_family(t)]["published_new"] += 1
+            for r in rep.get("rejected", []):
+                t = r.get("type") or "product_arbitrage"
+                # route kinds map onto types loosely; normalize the knowns
+                t = {"dislocation": "product_arbitrage", "refurbish": "refurbishment",
+                     "import": "import_export", "export": "import_export"}.get(t, t)
+                fam = dv.opp_type_family(t if t in dv._OPP_TYPE_TO_FAMILY else "product_arbitrage")
+                cat = r.get("category") or classify_rejection(r.get("reason", ""))
+                fams[fam]["rejected"] += 1
+                fams[fam]["rejections"][cat] = fams[fam]["rejections"].get(cat, 0) + 1
+                if cat == "research_required":
+                    fams[fam]["research_required"] += 1
+
+        active_by_family = store.active_discovered_family_counts()
+        yield_by_family = store.opportunity_family_yield()
+        # Niche measurement state: how much observed evidence each venture lane
+        # has accumulated (series length is the 'insufficient repeated
+        # observations' meter — ventures need ≥6 points to corroborate).
+        niche_state = []
+        try:
+            niches = orch.world.niches() if hasattr(orch.world, "niches") else []
+            for n in niches:
+                m = n.get("metrics", {})
+                prov = m.get("observed") or {}
+                series = []
+                if hasattr(orch.world, "mentions"):
+                    for src in ("reddit", "serper"):
+                        s = orch.world.mentions(n["id"], src)
+                        if len(s) > len(series):
+                            series = s
+                niche_state.append({
+                    "id": n["id"], "name": n.get("name", "")[:60], "kind": n.get("kind"),
+                    "geo": n.get("geo"), "demand_series_points": len(series),
+                    "points_needed": 6, "provenance": prov,
+                    "supply_domains": m.get("supply_domains", []),
+                    "price_point_usd": n.get("price_point_usd"),
+                })
+        except Exception:  # noqa: BLE001 - observability must never crash
+            pass
+
+        return {
+            "cycles_scanned": cycles_seen,
+            "cycles_with_type_breakdown": with_cbt,
+            "families": {f: {**fams[f],
+                             "watched_discovered": active_by_family.get(f, 0),
+                             "verified_active": yield_by_family.get(f, 0)}
+                         for f in fams},
+            "serper_log": [{
+                "ts": r["ts"], "kind": r["kind"], "entity_id": r["entity_id"],
+                "query": r["query"], "lang": r["lang"],
+                "results": (r["payload"].get("results")
+                            if r["kind"] == "demand" else r["payload"].get("provider_count")),
+            } for r in store.recent_search_obs(source="serper", limit=20)],
+            "scrapingdog_log": [{
+                "ts": r["ts"], "entity_id": r["entity_id"], "url": r["query"],
+                "prices": r["payload"].get("prices"),
+                "review": r["payload"].get("review"),
+            } for r in store.recent_search_obs(source="scrapingdog", limit=20)],
+            "note": "candidates counts populate on cycles run after v1.5.1; "
+                    "research_required = the council named a missing observation, "
+                    "not a defect. Ventures corroborate at ≥6 demand series points.",
+        }
+
+    @app.get("/api/trace/{opp_id}")
+    def trace(opp_id: str):
+        """One complete chain for a stored opportunity: source request → raw
+        record → parsed observation → generator → candidate reasoning →
+        verification → the feed row. Assembled read-only from what is stored."""
+
+        o = store.get_opportunity(opp_id)
+        if not o:
+            raise HTTPException(404, "no such opportunity")
+        route = o.get("route", {}) or {}
+        venue = route.get("buy_venue") or route.get("sell_venue")
+        pid = o.get("entity_id")
+        snap = None
+        raw_listing = None
+        query = None
+        if venue and pid:
+            rows = store.live_snapshot_series(pid, venue, 1)
+            if rows:
+                snap = {k: rows[-1].get(k) for k in ("tick", "ts", "price", "stock",
+                                                     "sellers", "sold_7d")}
+                query = (rows[-1].get("extra") or {}).get("query")
+            item_id = route.get("item_id")
+            if item_id:
+                sample, _ = store.get_listing_sample(pid, venue)
+                raw_listing = next((s for s in sample if s.get("item_id") == item_id), None)
+        gen_by_kind = {"dislocation": "dislocation", "refurbish": "bundle_repair",
+                       "wholesale": "wholesale", "import": "import_export",
+                       "export": "import_export", "seasonal": "seasonal",
+                       "lead_generation": "lead_generation"}
+        generator = gen_by_kind.get(route.get("kind"),
+                                    "cross_market_flip" if o["type"] == "product_arbitrage"
+                                    else o["type"])
+        return {
+            "1_source_request": {"venue": venue, "query": query,
+                                 "entity_id": pid, "mode": cfg.mode},
+            "2_raw_record": raw_listing or {"note": "aggregate snapshot (no single listing "
+                                                    "for this route kind)"},
+            "3_parsed_observation": snap,
+            "4_generator": {"id": generator, "route_kind": route.get("kind"),
+                            "opp_type": o["type"]},
+            "5_candidate_reasoning": o.get("why_chain", []),
+            "6_verification": {"level": o.get("verification_level"),
+                               "confidence": o.get("confidence"),
+                               "checks": (o.get("verification") or {}).get("checks", [])},
+            "7_frontend_record": {"id": o["id"], "title": o["title"],
+                                  "subtitle": o.get("subtitle"),
+                                  "status": o.get("status"),
+                                  "net_usd": (o.get("economics") or {}).get("total_net_usd"),
+                                  "evidence_items": len(o.get("evidence") or [])},
         }
 
     @app.get("/api/learning")

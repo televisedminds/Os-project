@@ -65,7 +65,7 @@ CLI, for the cron-driven lifestyle:
 python run.py cycle -n 3       # run three research cycles right now
 python run.py brief            # print the morning briefing to the terminal
 python run.py reset            # wipe state and re-seed the demo world
-python -m pytest tests/ -q     # 280 tests
+python -m pytest tests/ -q     # 285 tests
 ```
 
 No database server, no build step, no API keys needed to try it: state is SQLite

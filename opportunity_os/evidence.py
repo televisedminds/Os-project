@@ -235,6 +235,7 @@ def compute_level(ledger: list[dict], verification, feasibility,
 # ---- rejection taxonomy (Phase 8) -----------------------------------------
 
 # Fixed categories so the funnels can aggregate "why candidates die".
+RESEARCH_REQUIRED = "research_required"      # evidence gap named by the council, not a defect
 INSUFFICIENT_DEMAND = "insufficient_demand"
 NO_SOLD_COMPS = "no_sold_comps"
 MARGIN_BELOW_THRESHOLD = "margin_below_threshold"
@@ -256,6 +257,8 @@ def classify_rejection(reason: str) -> str:
     """Map a free-text rejection reason to a fixed taxonomy category."""
 
     r = (reason or "").lower()
+    if "research required" in r or "never observed" in r:
+        return RESEARCH_REQUIRED
     if "avoid list" in r or "operator profile" in r:
         return EXCLUDED_BY_OPERATOR
     if "blocked from th" in r or "thailand" in r or "customs" in r or "tax_auditor" in r:

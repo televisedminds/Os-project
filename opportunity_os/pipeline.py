@@ -153,12 +153,16 @@ class Orchestrator:
                 invalidated.append({"id": stored["id"], "title": stored["title"], "reason": reason,
                                     "category": evidence.classify_rejection(reason)})
 
+        from collections import Counter
         report = {
             "tick": tick,
             "signals": n_signals,
             "agents": len(self.fleet),
             "anomalies": len(anomalies),
             "candidates": len(candidates),
+            # Per-type candidate counts — the observability layer's raw
+            # material for "which generator produced work this cycle".
+            "candidates_by_type": dict(Counter(c["opp_type"].value for c in candidates)),
             "published": published,
             "rejected": rejected,
             "reverified": reverified,
