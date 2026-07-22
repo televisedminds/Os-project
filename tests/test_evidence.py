@@ -104,23 +104,39 @@ def test_rejection_classifier_maps_reasons_to_categories():
     assert EV.classify_rejection("Listing disappeared on re-check") == EV.STALE_DATA
 
 
-def test_venture_research_gaps_are_research_required_not_hard_rejections():
-    """Regression: the council writes venture rejections as
-    '<check_name> failed — <evidence>'. A demand_corroboration failure used to
-    match the generic 'supply' branch (because its evidence contains
-    'demand:supply ✗') and be mislabelled INSUFFICIENT_SUPPLY. An
-    under-corroborated or never-scanned venture is a research gap, not a defect."""
+def test_venture_verdicts_are_named_honestly_not_as_supply_defects():
+    """Regression (v1.6.1): the council writes a failed check as
+    '<label> failed — <evidence>', using the LABEL ('Demand seen by ≥2
+    independent sources'), not the check name. Its evidence contains
+    'demand:supply', which used to trip the generic 'supply' branch and
+    mislabel every venture demand failure as INSUFFICIENT_SUPPLY. Each verdict
+    must now be named for what it is."""
 
-    # Exactly the string _gates() produces for a failing demand check.
-    demand = ("demand_corroboration failed — Trend ✗ (5%/mo), social ✗ "
-              "(0/day mentions), demand:supply ✗ (12:1).")
-    assert EV.classify_rejection(demand) == EV.RESEARCH_REQUIRED
+    # Too few observations yet → still a research gap (keep watching).
+    research = ("Demand seen by ≥2 independent sources failed — Research required "
+                "— only 3/6 demand observations so far; trend ✗ (0%/mo), social ✗ "
+                "(0/day mentions), demand:supply ✗ (12:1). Keep watching.")
+    assert EV.classify_rejection(research) == EV.RESEARCH_REQUIRED
+
+    # Enough data, weak signal → soft demand, NOT a supply fault (note the gap
+    # here is a healthy 75:1 — supply is plentiful, demand just isn't growing).
+    weak = ("Demand seen by ≥2 independent sources failed — 12 observations but "
+            "only 1 of 3 independent signals (need ≥2): trend ✗ (0%/mo), social ✗ "
+            "(10/day mentions), demand:supply ✓ (75:1). Demand is real but not "
+            "corroborated as growing.")
+    assert EV.classify_rejection(weak) == EV.INSUFFICIENT_DEMAND
+
     # A supply side that was never scanned is research, not a real 'no supply'.
-    never = ("competition_gap failed — Supply side never observed — no Serper "
-             "supply scan and no watchlist value. Research required before this "
-             "can verify.")
+    never = ("Supply-side gap confirmed failed — Supply side never observed — no "
+             "Serper supply scan and no watchlist value. Research required.")
     assert EV.classify_rejection(never) == EV.RESEARCH_REQUIRED
-    # But a MEASURED thin/exhausted supply is still a hard supply verdict.
+
+    # A MEASURED served market (providers exist, gap too thin) is competition.
+    served = ("Supply-side gap confirmed failed — 40 providers vs 200 demand "
+              "posts/mo. Observed via Google supply scan: a.com, b.com.")
+    assert EV.classify_rejection(served) == EV.HIGH_COMPETITION
+
+    # But a genuinely exhausted inventory is still a hard supply verdict.
     assert EV.classify_rejection("source inventory exhausted") == EV.INSUFFICIENT_SUPPLY
 
 

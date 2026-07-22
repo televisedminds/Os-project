@@ -257,15 +257,23 @@ def classify_rejection(reason: str) -> str:
     """Map a free-text rejection reason to a fixed taxonomy category."""
 
     r = (reason or "").lower()
-    if ("research required" in r or "never observed" in r
-            or "demand_corroboration" in r):
-        # An under-corroborated venture hasn't FAILED — its demand evidence is
-        # still accumulating (too few repeated observations to see ≥2
-        # independent signals yet), and an unobserved supply side is a scan we
-        # haven't run. Both are research/validation gaps, not defects. The
-        # council names these by the failing check ("demand_corroboration
-        # failed — …") or the phrase "never observed / research required".
+    # Venture verdicts first. The council writes a failed check as
+    # "<label> failed — <evidence>", and the demand check's evidence literally
+    # contains "demand:supply" — so these MUST resolve before the generic
+    # 'supply' keyword branch, or a demand failure is mislabelled as a supply
+    # defect (exactly the bug the live funnel exposed).
+    if "research required" in r or "never observed" in r:
+        # Still accumulating observations, or a supply side never scanned — an
+        # evidence gap the council named, not a defect.
         return RESEARCH_REQUIRED
+    if "demand seen by" in r or "independent signals" in r or "independent sources" in r:
+        # demand_corroboration failed with ENOUGH data: demand is real but not
+        # corroborated as growing by ≥2 signals — soft demand, not a supply fault.
+        return INSUFFICIENT_DEMAND
+    if "gap confirmed" in r and ("providers vs" in r or "credible solutions" in r):
+        # A measured, served market — providers/solutions exist and the gap is
+        # too thin to enter. That is competition, not missing supply.
+        return HIGH_COMPETITION
     if "avoid list" in r or "operator profile" in r:
         return EXCLUDED_BY_OPERATOR
     if "blocked from th" in r or "thailand" in r or "customs" in r or "tax_auditor" in r:

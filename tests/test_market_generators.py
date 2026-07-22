@@ -137,6 +137,45 @@ def test_verify_venture_rejects_lead_gen_with_too_many_providers():
     assert not gap.passed
 
 
+def _local_venture_cand(ds):
+    """A minimal local-service venture candidate, enough to face the council."""
+    niche = ds.niches()[0]
+    return {"kind": "venture", "opp_type": OppType.LOCAL_SERVICE, "entity_id": niche["id"],
+            "economics": eco.compute_venture(niche),
+            "feasibility": th.feasibility("local_service", "local_services", None, None)}
+
+
+def test_verify_venture_names_demand_verdict_research_vs_weak():
+    """v1.6.1: an uncorroborated venture must be named honestly — a research gap
+    while the demand series is still short (<6 points), soft demand once enough
+    data has accumulated — never mislabelled as a supply defect. This is the
+    exact production case: a real 75:1 supply gap, flat trend, no social spike."""
+
+    from opportunity_os.agents.verifiers import VerificationCouncil
+    from opportunity_os.evidence import (classify_rejection, RESEARCH_REQUIRED,
+                                         INSUFFICIENT_DEMAND, INSUFFICIENT_SUPPLY)
+    council = VerificationCouncil(Config())
+
+    def demand_reason(ds):
+        cand = _local_venture_cand(ds)
+        v = council.verify_venture(ds, cand)
+        dc = next(c for c in v.checks if c.verifier == "demand_corroboration")
+        assert not dc.passed            # flat trend + no social spike → uncorroborated
+        return f"{dc.name} failed — {dc.evidence}"
+
+    # providers=2 → demand:supply 75/2 ≈ 37:1 (✓, a real gap); growth 0 + flat
+    # mentions → the OTHER two signals fail, so corroboration < 2.
+    young = _NicheDS(_niche(kind="local", providers=2, growth=0), mentions=[9, 10, 11])
+    mature = _NicheDS(_niche(kind="local", providers=2, growth=0), mentions=[10] * 12)
+
+    r_young, r_mature = demand_reason(young), demand_reason(mature)
+    # Short series → research gap; long series → soft demand. Neither is a supply defect.
+    assert classify_rejection(r_young) == RESEARCH_REQUIRED
+    assert classify_rejection(r_mature) == INSUFFICIENT_DEMAND
+    assert classify_rejection(r_mature) != INSUFFICIENT_SUPPLY
+    assert "6 demand observations" in r_young and "of 3 independent signals" in r_mature
+
+
 # ------------------------------------------------ seasonal generator
 
 class _SeasonalDS:

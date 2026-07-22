@@ -78,27 +78,30 @@ def test_venture_rejections_attribute_to_their_family_not_physical(tmp_path):
     app = create_app(cfg, auto_cycle_seconds=0, seed_cycles=0)
     with TestClient(app) as c:
         s = Store(cfg.db_path)
+        # Realistic reasons with NO pre-set category, so the endpoint must
+        # derive it via classify_rejection — proving the funnel end to end.
         s.add_cycle(1, 1.0, {
             "candidates_by_type": {"local_service": 2, "b2b_service": 1},
             "published": [],
             "rejected": [
                 {"title": "TH furniture repair", "type": "local",
-                 "reason": "demand_corroboration failed — Trend ✗ (5%/mo), social ✗ "
-                           "(0/day mentions), demand:supply ✗ (12:1).",
-                 "category": "research_required"},
+                 "reason": "Demand seen by ≥2 independent sources failed — Research "
+                           "required — only 3/6 demand observations so far; trend ✗ "
+                           "(0%/mo), social ✗, demand:supply ✗ (4:1). Keep watching."},
                 {"title": "TH parts sourcing", "type": "b2b",
-                 "reason": "competition_gap failed — Supply side never observed. "
-                           "Research required before this can verify.",
-                 "category": "research_required"},
+                 "reason": "Supply-side gap confirmed failed — Supply side never "
+                           "observed. Research required before this can verify."},
             ],
         })
         fams = c.get("/api/observability").json()["families"]
+        # Venture rejections attribute to their own family, not physical...
         assert fams["local_service"]["rejected"] == 1
-        assert fams["local_service"]["research_required"] == 1
         assert fams["b2b"]["rejected"] == 1
-        assert fams["b2b"]["research_required"] == 1
-        # None of the venture rejections leaked into physical.
         assert fams["physical"]["rejected"] == 0
+        # ...and a demand failure is filed as a research gap, never a supply defect.
+        assert fams["local_service"]["research_required"] == 1
+        assert fams["b2b"]["research_required"] == 1
+        assert "insufficient_supply" not in fams["local_service"]["rejections"]
 
 
 def test_discovery_kind_filter_surfaces_buried_niches(tmp_path):

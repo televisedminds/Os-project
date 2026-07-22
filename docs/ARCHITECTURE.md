@@ -620,3 +620,49 @@ shows venture rejections attributed to their own families with
 this publishes more ventures — it makes the *funnel honest* so the real
 bottleneck (ventures need ≥6 accumulated demand-series points to corroborate) is
 visible rather than mislabelled. All 34 tests in the affected suites pass.
+
+### v1.6.0 live-proof result (droplet, tick 431)
+Deployed and verified read-only. **Proven:** `niche_state` populates (3 niches,
+12/6 demand points, `niche_state_error: null`); venture rejections attribute to
+their own family — `local_service` shows `rejected: 23` instead of leaking into
+physical; the Thai niche "Airbnb turnover cleaning — Sukhumvit" classifies as
+`local`. **Exposed a miss in the same change:** the 23 local rejections were
+still labelled `insufficient_supply`, and `research_required` stayed 0. The live
+reason string is *"Demand seen by ≥2 independent sources failed — …demand:supply
+✓ (75:1)."* — i.e. `_gates()` prints the check's **label**, not its name, so the
+v1.6.0 `classify_rejection` match on `"demand_corroboration"` never fired, and
+`"demand:supply"` still tripped the generic supply branch. Fixed in v1.6.1.
+
+## 13. v1.6.1 — honest venture verdicts (Milestone 1)
+
+The live funnel redirected Milestone 1. Accumulation was *not* the bottleneck
+(niches already had 12/6 points); the bottleneck was that a venture that died on
+demand corroboration was **named as a supply defect**. v1.6.1 makes the verdict
+honest, split three ways by what the evidence actually shows:
+
+* **`demand_corroboration` now emits a self-classifying reason.** It computes
+  `demand_points` = the longest measured mention series (the *same* meter
+  niche_state shows as "N/6") and writes one of: *"Research required — only N/6
+  demand observations so far…"* when the series is still short (<6); *"N
+  observations but only K of 3 independent signals (need ≥2)… Demand is real but
+  not corroborated as growing."* when there is enough data but the signal is
+  soft; or a pass when ≥2 signals agree.
+* **`classify_rejection` resolves venture verdicts before the generic keyword
+  branches** (critical, because the demand evidence literally contains
+  `demand:supply`): `research required / never observed → RESEARCH_REQUIRED`;
+  `demand seen by / independent signals → INSUFFICIENT_DEMAND`; a measured served
+  market (`gap confirmed … providers vs / credible solutions`) →
+  `HIGH_COMPETITION`. A genuinely exhausted inventory still reads
+  `INSUFFICIENT_SUPPLY`.
+
+Net effect: the funnel now tells the operator the truth about *why* a venture
+didn't publish — "keep watching, still gathering data", "demand is real but flat",
+or "the market is already served" — instead of a false "not enough supply". No
+behavioural change to what verifies; this is a **truth-in-labelling** fix.
+
+**Capability status:** IMPLEMENTED with deterministic tests at both the
+classifier and the council level (verify_venture emits the research-vs-weak split
+on crafted young/mature niches). **Live-proof gate:** the droplet on v1.6.1 shows
+`local_service` rejections as `research_required` / `insufficient_demand` /
+`high_competition` and `insufficient_supply` no longer appearing for a niche with
+an observed demand:supply gap.

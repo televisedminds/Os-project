@@ -257,9 +257,15 @@ class VerificationCouncil:
 
         m = niche["metrics"]
         mentions = []
+        # Demand-series points: the longest single measured mention series —
+        # the SAME meter the observability niche_state panel shows as "N/6". A
+        # venture needs ≥6 repeated observations before "no corroboration" means
+        # "weak demand" rather than "we haven't watched long enough".
+        demand_points = 0
         for src in ds.social_sources():
             h = ds.mentions(nid, src)
             if h:
+                demand_points = max(demand_points, len(h))
                 mentions = [a + b for a, b in zip(mentions, h)] if mentions else list(h)
         social_up = len(mentions) >= 4 and mentions[-1] > 1.3 * max(1.0, fmean(mentions[-8:-1]))
         ratio = m["demand_posts"] / max(1, m["providers"])
@@ -275,12 +281,25 @@ class VerificationCouncil:
         # volume floor, not the ratio.
         posts_up = ratio >= 25 or (opp_val == "lead_generation" and m.get("volume", 0) >= 150)
         corroborations = sum([social_up, trend_up, posts_up])
+        signals = (f"trend {'✓' if trend_up else '✗'} ({m['growth_pct']:.0f}%/mo), "
+                   f"social {'✓' if social_up else '✗'} "
+                   f"({mentions[-1] if mentions else 0}/day mentions), "
+                   f"demand:supply {'✓' if posts_up else '✗'} ({ratio:.0f}:1)")
+        # Honest verdict split: too little data yet = a research gap (keep
+        # watching); enough data + weak signal = genuinely soft demand. The
+        # rejection classifier keys off "research required" vs "independent
+        # signals" to file these correctly instead of as a supply defect.
+        if corroborations >= 2:
+            dc_ev = f"Corroborated by {corroborations} of 3 independent signals: {signals}."
+        elif demand_points < 6:
+            dc_ev = (f"Research required — only {demand_points}/6 demand observations so far; "
+                     f"{signals}. Keep watching before this can verify.")
+        else:
+            dc_ev = (f"{demand_points} observations but only {corroborations} of 3 independent "
+                     f"signals (need ≥2): {signals}. Demand is real but not corroborated as growing.")
         checks.append(Check("demand_corroboration", "Demand seen by ≥2 independent sources",
                             corroborations >= 2, min(0.95, 0.55 + 0.15 * corroborations),
-                            f"Trend {'✓' if trend_up else '✗'} ({m['growth_pct']:.0f}%/mo), "
-                            f"social {'✓' if social_up else '✗'} "
-                            f"({mentions[-1] if mentions else 0}/day mentions), "
-                            f"demand:supply {'✓' if posts_up else '✗'} ({ratio:.0f}:1).", critical=True))
+                            dc_ev, critical=True))
 
         # Supply-side honesty: metrics carry provenance in live mode. A supply
         # count that was never observed (no Serper scan, no watchlist value)
