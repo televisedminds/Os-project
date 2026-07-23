@@ -434,12 +434,27 @@ class Store:
                 (verdict, category, entity_id, tick))
 
     def last_venture_eval(self, entity_id: str) -> dict | None:
-        """Most recent evaluation of this niche (for the steady-state cooldown)."""
+        """Most recent ledger row for this niche — entered OR skipped. This is the
+        raw newest row; the steady-state cooldown must NOT key off it (a skip row
+        is written every cooled-down cycle and would reset the clock). Use
+        `last_entered_venture_eval` for the cooldown reference."""
 
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM venture_eval WHERE entity_id=? ORDER BY tick DESC LIMIT 1",
                 (entity_id,)).fetchone()
+        return dict(row) if row else None
+
+    def last_entered_venture_eval(self, entity_id: str) -> dict | None:
+        """Most recent row where this niche ACTUALLY entered evaluation
+        (eligible=1: anomaly, steady, or both), ignoring telemetry-only skip
+        rows. This is the honest cooldown reference — the last time the council
+        actually ran on the niche — so cooldown-skip rows can't starve it."""
+
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM venture_eval WHERE entity_id=? AND eligible=1 "
+                "ORDER BY tick DESC LIMIT 1", (entity_id,)).fetchone()
         return dict(row) if row else None
 
     def recent_venture_evals(self, limit: int = 60) -> list[dict]:

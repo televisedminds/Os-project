@@ -151,9 +151,17 @@ def _eligibility(cfg, store, nid, pts, supply_observed, demand_src, fresh, tick,
         return R_STALE, False
     if fresh > cfg.steady_freshness_days:
         return R_STALE, False
-    # Cooldown: don't re-evaluate an unchanged niche every cycle. New
-    # observations (a longer demand series) lift the cooldown immediately.
-    last = store.last_venture_eval(nid) if store is not None else None
+    # Cooldown: don't re-evaluate an unchanged niche every cycle. The reference
+    # is the last time the niche ACTUALLY entered evaluation (eligible=1), NOT
+    # the newest ledger row — a cooled-down cycle writes a skip row every tick,
+    # and keying off that would keep resetting the clock and starve the niche
+    # forever. New observations (a longer demand series) lift the cooldown
+    # immediately.
+    last = None
+    if store is not None:
+        last = (store.last_entered_venture_eval(nid)
+                if hasattr(store, "last_entered_venture_eval")
+                else store.last_venture_eval(nid))
     if last and (tick - int(last.get("tick", 0))) < cfg.steady_cooldown_ticks \
             and pts <= int(last.get("demand_points", 0)):
         return R_COOLDOWN, False

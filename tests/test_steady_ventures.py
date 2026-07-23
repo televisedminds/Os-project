@@ -133,6 +133,45 @@ def test_steady_only_entry_path(tmp_path):
     assert entries["bkk_clean"]["anomalies"] == []
 
 
+def _simulate_cycle(s, ds, cfg, tick):
+    """Replicate investigator.build_candidates' ledger writes for one cycle: it
+    records EVERY assessment (entered AND skipped)."""
+    a = st.assess_ventures(ds, s, cfg, tick)[0]
+    s.record_venture_eval(a.nid, tick, "steady_state", a.family, eligible=a.eligible,
+                          evidence=a.evidence, reason=(None if a.eligible else a.reason))
+    return a
+
+
+def test_cooldown_naturally_expires_despite_skip_rows(tmp_path):
+    """Regression: cooldown-skip rows are written to the ledger every cycle. If
+    the cooldown reference is the NEWEST row, each skip resets the clock and an
+    unchanged niche starves in cooldown forever. It must instead reference the
+    last ACTUAL evaluation, so a 6-tick cooldown from tick 18 expires at 24."""
+
+    s = _store(tmp_path, "bkk_clean")
+    ds = _NicheDS(_niche(), mentions=[10] * 12)          # unchanged observations
+    cfg = _cfg()                                         # cooldown = 6 ticks
+    a18 = _simulate_cycle(s, ds, cfg, 18)
+    assert a18.eligible                                  # first eval enters
+    for tick in range(19, 24):                          # 19..23: within cooldown
+        a = _simulate_cycle(s, ds, cfg, tick)
+        assert not a.eligible and a.reason == st.R_COOLDOWN, f"tick {tick}"
+    a24 = _simulate_cycle(s, ds, cfg, 24)               # 24-18 == 6 → expired
+    assert a24.eligible, "cooldown must expire at tick 24, not starve forever"
+
+
+def test_cooldown_skip_rows_do_not_reset_the_evaluation_clock(tmp_path):
+    s = _store(tmp_path, "bkk_clean")
+    ds = _NicheDS(_niche(), mentions=[10] * 12)
+    cfg = _cfg()
+    _simulate_cycle(s, ds, cfg, 18)                     # real eval at 18
+    for tick in range(19, 23):
+        _simulate_cycle(s, ds, cfg, tick)              # skips at 19..22
+    # The clock must still point at tick 18, so at tick 25 (>6 later) it's open.
+    a25 = st.assess_ventures(ds, s, cfg, 25)[0]
+    assert a25.eligible
+
+
 def test_cooldown_blocks_reevaluation_without_new_observations(tmp_path):
     s = _store(tmp_path, "bkk_clean")
     ds = _NicheDS(_niche(), mentions=[10] * 12)
@@ -241,3 +280,43 @@ def test_b2b_workflow_does_not_become_physical(tmp_path):
     a = st.assess_ventures(ds, _store(tmp_path, "ev_wallbox"), _cfg(), 20)[0]
     assert a.family == "b2b"
     assert a.family != dv.opp_type_family("product_arbitrage")   # never physical
+
+
+# ------------------------------------------------- ledger semantics (fix)
+
+def test_anomaly_only_entry_unaffected_when_not_steady_eligible(tmp_path):
+    from opportunity_os.models import Anomaly, AnomalyKind
+    # Only 3 demand points → NOT steady-eligible, but an anomaly fired.
+    ds = _NicheDS(_niche(), mentions=[9, 10, 11])
+    by_entity = {"bkk_clean": [Anomaly(AnomalyKind.DEMAND_ACCELERATION, "bkk_clean",
+                                       2.5, "spike", {})]}
+    entries, assessments = st.build_venture_entries(
+        ds, _store(tmp_path, "bkk_clean"), _cfg(), 20, by_entity)
+    assert entries["bkk_clean"]["entry_path"] == "anomaly"       # still enters via anomaly
+    assert entries["bkk_clean"]["steady_evidence"] is None
+    assert not assessments[0].eligible                          # steady path declined it
+
+
+def test_ledger_distinguishes_entered_from_skipped(tmp_path):
+    s = _store(tmp_path, "bkk_clean")
+    ds = _NicheDS(_niche(), mentions=[10] * 12)
+    cfg = _cfg()
+    _simulate_cycle(s, ds, cfg, 18)                    # entered (eligible=1)
+    _simulate_cycle(s, ds, cfg, 19)                    # cooldown skip (eligible=0)
+    _simulate_cycle(s, ds, cfg, 20)                    # cooldown skip (eligible=0)
+    newest = s.last_venture_eval("bkk_clean")
+    entered = s.last_entered_venture_eval("bkk_clean")
+    assert newest["tick"] == 20 and newest["eligible"] == 0     # newest is a skip
+    assert entered["tick"] == 18 and entered["eligible"] == 1   # last real eval
+
+
+def test_summary_counts_with_entered_and_skipped(tmp_path):
+    s = _store(tmp_path, "bkk_clean")
+    ds = _NicheDS(_niche(), mentions=[10] * 12)
+    cfg = _cfg()
+    for tick in range(18, 21):                          # 18 entered, 19-20 skipped
+        _simulate_cycle(s, ds, cfg, tick)
+    summ = s.venture_eval_summary(10)
+    assert summ["eligible"] == 1 and summ["skipped"] == 2
+    assert summ["entrants"]["steady_state"] == 1 and summ["deduped_total"] == 1
+    assert summ["verdicts"].get(st.R_COOLDOWN) == 2    # skips carry their reason

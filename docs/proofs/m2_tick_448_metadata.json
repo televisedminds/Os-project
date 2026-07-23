@@ -1,0 +1,21 @@
+{
+  "capture_utc": "2026-07-23T00:34:00Z",
+  "note": "Documentary proof of Milestone 2 steady-state BEHAVIOR, captured from production BEFORE the v1.7.1 cooldown fix. The cooldown-starvation fix has its own fresh-tick proof (see m2_tick_<new>_* after v1.7.1 deploy).",
+  "deployed_version": "1.7.0",
+  "deployed_commit": "6fdf597",
+  "production_tick": 448,
+  "droplet": "178.128.87.69 (open-mode HTTP API)",
+  "endpoints": {
+    "m2_tick_448_cycle.json": "POST http://178.128.87.69/api/cycle",
+    "m2_tick_448_observability.json": "GET http://178.128.87.69/api/observability?cycles=60"
+  },
+  "capture_commands": {
+    "m2_tick_448_cycle.json": "curl -s --max-time 300 -X POST http://178.128.87.69/api/cycle",
+    "m2_tick_448_observability.json": "curl -s --max-time 25 'http://178.128.87.69/api/observability?cycles=60'"
+  },
+  "redactions": "none \u2014 open-mode public API; responses contain market data, queries and public URLs, no credentials/tokens/keys",
+  "sha256": {
+    "m2_tick_448_cycle.json": "c348cf9f4e1510495eeb45ee2c1d1f48f2af09b4d5c4d370039a2e63c580b222",
+    "m2_tick_448_observability.json": "4e51e9bedb2b50e05dc33db2de206a83d1a59eb0b2a41d3dc25f3339ab98a297"
+  }
+}

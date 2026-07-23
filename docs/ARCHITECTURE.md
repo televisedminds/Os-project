@@ -709,6 +709,26 @@ council bar or manufactures a pass.
 `test_steady_ventures.py`: eligibility gates, dedup, cooldown, council rejection
 of flat demand, Thai-local/info/B2B routing, metadata persistence). Scope is the
 four core venture generators (`local`, `b2b`, `digital`, `info`); micro-SaaS,
-lead-gen and seasonal keep the anomaly path for now. **Live-proof gate:** at
-least one real production niche enters via `steady_state` (no anomaly) and
-receives a traceable council verdict.
+lead-gen and seasonal keep the anomaly path for now. Live-proven at tick 448
+(v1.7.0) — see `docs/PROOF_M2_steady_state.md` and `docs/proofs/m2_tick_448_*`.
+
+### v1.7.1 — cooldown-starvation fix (post-M2 audit)
+
+A strict post-completion audit found a **cooldown-starvation bug**. The
+steady-state cooldown keyed off `last_venture_eval` (the *newest* ledger row).
+But the investigator records a row for **every** assessment each cycle —
+including cooldown *skips* — so a cooled-down niche wrote a fresh skip row every
+tick, and `tick − newest_row.tick` was always ~1, never reaching the cooldown
+window. An unchanged niche therefore **starved in cooldown forever** (only a
+rising demand-point count could free it). Proven with a deterministic failing
+test before the fix (evaluate at tick 18, skip 19–23, must re-open at 24 — it did
+not).
+
+**Fix:** the cooldown now references `last_entered_venture_eval` — the newest row
+where the niche *actually entered* evaluation (`eligible=1`: anomaly, steady, or
+both) — so telemetry-only skip rows (`eligible=0`) can no longer reset the clock.
+The ledger already distinguishes the four states the audit asked for: *assessed*
+(every row), *entered* (`eligible=1`), *council-evaluated* (`verdict` set),
+*skipped* (`eligible=0` + reason). No column dropped, no telemetry hidden, no
+destructive migration. New observations still lift the cooldown immediately
+(the `pts <= last.demand_points` guard). 5 new tests (22 total in the file).
