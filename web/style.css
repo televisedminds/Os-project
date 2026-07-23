@@ -688,3 +688,46 @@ ul { margin: 6px 0; padding-left: 18px; }
 .eg-amt.neg { color: var(--warn, #b8860b); }
 /* today card: compact guide row */
 .today-guide { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }
+
+/* ------------------------------------------- outcome loop (Outcome learning) */
+.oc-form { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); padding: 12px 14px; }
+.oc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px 10px; }
+.oc-grid2 { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-top: 10px; }
+.oc-form label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
+.oc-form input, .oc-form select { padding: 6px 8px; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--border); border-radius: 6px; font-size: 13px; outline: none; }
+.oc-form input:focus, .oc-form select:focus { border-color: var(--accent); }
+.oc-reason { flex: 1; min-width: 200px; }
+.oc-reason .oc-req { color: var(--warn, #b8860b); font-weight: 600; }
+.oc-notes-l { flex: 1; min-width: 160px; }
+.oc-hint { margin-top: 10px; font-size: 11px; color: var(--muted); line-height: 1.4; }
+/* projected vs realized */
+.oc-compare { display: flex; align-items: stretch; gap: 10px; margin-top: 14px; }
+.oc-col { flex: 1; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--panel); }
+.oc-proj { border-style: dashed; }
+.oc-real { border-color: color-mix(in srgb, var(--good) 40%, var(--line)); }
+.oc-col-k { font-size: 9.5px; letter-spacing: 0.8px; color: var(--muted); text-transform: uppercase; }
+.oc-col-v { font-size: 22px; font-weight: 800; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
+.oc-col-v.pos { color: var(--good); } .oc-col-v.neg { color: var(--warn, #b8860b); }
+.oc-col-s { font-size: 11px; color: var(--muted); }
+.oc-vs { align-self: center; font-size: 11px; color: var(--muted); }
+.oc-status-badge { display: inline-block; margin-top: 10px; font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.5px; padding: 3px 10px; border-radius: 20px;
+  border: 1px solid var(--border); color: var(--ink); }
+.oc-status-badge.oc-sold, .oc-status-badge.oc-delivered { color: var(--good);
+  border-color: color-mix(in srgb, var(--good) 45%, transparent); background: color-mix(in srgb, var(--good) 12%, transparent); }
+.oc-status-badge.oc-failed, .oc-status-badge.oc-refunded, .oc-status-badge.oc-abandoned {
+  color: var(--warn, #b8860b); border-color: color-mix(in srgb, var(--warn, #b8860b) 45%, transparent);
+  background: color-mix(in srgb, var(--warn, #b8860b) 12%, transparent); }
+.oc-err { margin-top: 8px; font-size: 12px; color: var(--ink-2); }
+.oc-err b { font-variant-numeric: tabular-nums; }
+.oc-err.pos b { color: var(--good); } .oc-err.neg b { color: var(--warn, #b8860b); }
+.oc-scoring { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.oc-scoring-h { font-size: 12px; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
+.oc-note { font-size: 12px; color: var(--muted); line-height: 1.4; margin-bottom: 8px; }
+.oc-changes { width: 100%; border-collapse: collapse; font-size: 12px; }
+.oc-changes td { padding: 3px 6px; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.oc-changes td:first-child { color: var(--ink-2); }
+.oc-old { color: var(--muted); text-align: right; }
+.oc-arrow { color: var(--muted); text-align: center; width: 20px; }
+.oc-new { color: var(--good); font-weight: 600; }

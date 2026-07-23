@@ -154,6 +154,19 @@ class OutcomeIn(BaseModel):
     notes: str | None = None
 
 
+class RealizedOutcomeIn(BaseModel):
+    """A recorded REAL outcome — actual cash and time, not a projection."""
+
+    status: str                                  # bought|sold|delivered|abandoned|refunded|failed
+    actual_spend_usd: float | None = None
+    actual_revenue_usd: float | None = None
+    actual_fees_usd: float | None = None
+    actual_hours: float | None = None
+    days_taken: float | None = None
+    reason: str | None = None                    # REQUIRED for abandoned|refunded|failed
+    notes: str | None = None
+
+
 class ProgressIn(BaseModel):
     step: int
     done: bool = True
@@ -508,6 +521,8 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         # gated with the rest of the Pro execution layer.
         if (o.get("playbook") is not None) or p["playbooks"]:
             o["execution_guide"] = _execution_guide(o, action_card=o["action"])
+        # Any recorded real outcome (core honesty layer — not plan-gated).
+        o["recorded_outcome"] = store.get_realized_outcome(opp_id)
         return o
 
     def _next_step(o: dict) -> str:
@@ -594,6 +609,92 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         o["status"] = OppStatus.EXECUTED.value
         store.upsert_opportunity(o)
         return {"recorded": True, "learning": update}
+
+    # ---------------------------------------- realized-outcome loop (v1.14)
+
+    def _predicted_vs_realized(prov: dict, metrics: dict) -> dict:
+        """Projected (the original model promise) vs realized (recorded cash),
+        kept explicitly separate. Never merged into one 'profit' figure."""
+
+        pred = prov.get("predicted", {}) or {}
+        return {
+            "projected": {
+                "profit_usd": pred.get("total_net_usd"),
+                "base_net_usd": pred.get("base_net_usd"),
+                "pessimistic_net_usd": pred.get("pessimistic_net_usd"),
+                "confidence": pred.get("confidence"),
+                "window_days": pred.get("window_days"),
+                "label": "MODEL PROMISE — projected, unproven",
+            },
+            "realized": {
+                "profit_usd": metrics.get("realized_profit_usd"),
+                "roi": metrics.get("roi"),
+                "profit_per_hour_usd": metrics.get("profit_per_hour_usd"),
+                "capital_turnover": metrics.get("capital_turnover"),
+                "days_taken": metrics.get("days_taken"),
+                "label": "RECORDED CASH — actuals",
+            },
+            "prediction_error": metrics.get("prediction_error"),
+        }
+
+    @app.post("/api/opportunities/{opp_id}/outcome/record")
+    def record_realized_outcome(opp_id: str, body: RealizedOutcomeIn):
+        """Record a REAL outcome (actual cash + time) with the full taxonomy,
+        compute realized metrics + prediction error, freeze the recommendation's
+        provenance, and — only for a terminal outcome grounded in realized cash —
+        recalibrate confidence/weights with a structured before→after audit.
+        Interim 'bought' records the milestone but teaches nothing."""
+
+        from . import outcomes as oc
+        o = store.get_opportunity(opp_id)
+        if not o:
+            raise HTTPException(404, "unknown opportunity id")
+        if not oc.is_valid_status(body.status):
+            raise HTTPException(422, f"status must be one of {oc.STATUSES}")
+        if oc.needs_reason(body.status) and not (body.reason and body.reason.strip()):
+            raise HTTPException(422, f"an explicit reason is required to record '{body.status}'")
+
+        econ = o.get("economics") or {}
+        metrics = oc.realized_metrics(
+            actual_spend=body.actual_spend_usd, actual_revenue=body.actual_revenue_usd,
+            actual_fees=body.actual_fees_usd, actual_hours=body.actual_hours,
+            days_taken=body.days_taken, predicted_profit_usd=econ.get("total_net_usd"),
+            capital_usd=econ.get("capital_usd"))
+        prov = oc.provenance_snapshot(o)
+        store.add_realized_outcome(opp_id, body.status, body.reason,
+                                   body.actual_spend_usd, body.actual_revenue_usd,
+                                   body.actual_fees_usd, body.actual_hours, body.days_taken,
+                                   metrics, prov, body.notes)
+
+        scoring_change = None
+        signal = oc.recalibration_signal(body.status, metrics, body.reason)
+        if signal is not None:                       # terminal + realized-cash grounded
+            scoring_change = orch.learning.record_realized_outcome(prov, signal, opp_id=opp_id)
+            o["status"] = OppStatus.EXECUTED.value
+            store.upsert_opportunity(o)
+        return {
+            "recorded": True,
+            "status": body.status,
+            "complete": oc.is_complete(body.status, body.reason),
+            "metrics": metrics,
+            "comparison": _predicted_vs_realized(prov, metrics),
+            "scoring_change": scoring_change,        # None for interim 'bought'
+            "provenance": prov,
+        }
+
+    @app.get("/api/opportunities/{opp_id}/outcome")
+    def get_recorded_outcome(opp_id: str):
+        """The recorded real outcome for one opportunity + the projected-vs-realized
+        comparison. `recorded: false` if none has been logged yet."""
+
+        if not store.get_opportunity(opp_id):
+            raise HTTPException(404, "unknown opportunity id")
+        rec = store.get_realized_outcome(opp_id)
+        if not rec:
+            return {"recorded": False}
+        return {"recorded": True, "outcome": rec,
+                "comparison": _predicted_vs_realized(rec.get("provenance", {}),
+                                                     rec.get("metrics", {}))}
 
     @app.post("/api/opportunities/{opp_id}/kit")
     def make_kit(opp_id: str, force: bool = False, plan: str | None = None):
@@ -1085,8 +1186,11 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         return {"weights": st["weights"], "calibration": st["calibration"],
                 "source_reliability": st["source_reliability"],
                 "verifier_reliability": st["verifier_reliability"],
+                "category_affinity": st.get("category_affinity", {}),
                 "outcomes": st["outcomes"], "adjustments": st["adjustments"][-10:],
-                "recent_outcomes": store.recent_outcomes(10)}
+                "recent_outcomes": store.recent_outcomes(10),
+                "realized_outcomes": store.recent_realized_outcomes(10),
+                "weight_audit": store.weight_audit_trail(10)}
 
     @app.get("/api/stats")
     def stats():

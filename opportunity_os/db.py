@@ -24,6 +24,20 @@ CREATE TABLE IF NOT EXISTS opportunities (
 CREATE TABLE IF NOT EXISTS outcomes (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, opportunity_id TEXT, result TEXT,
     realized_profit_usd REAL, days_taken REAL, failure_reason TEXT, notes TEXT);
+-- Outcome learning (v1.14): the recorded real outcome, its computed realized
+-- metrics, and the frozen provenance of the original recommendation. Separate
+-- table (not ALTERed onto `outcomes`) so it materialises cleanly on existing DBs.
+CREATE TABLE IF NOT EXISTS realized_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, opportunity_id TEXT,
+    status TEXT, reason TEXT,
+    actual_spend_usd REAL, actual_revenue_usd REAL, actual_fees_usd REAL,
+    actual_hours REAL, days_taken REAL,
+    metrics TEXT, provenance TEXT, notes TEXT);
+-- Structured before→after audit of every learning-weight change, so recalibration
+-- is never a black box.
+CREATE TABLE IF NOT EXISTS weight_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, opportunity_id TEXT,
+    trigger TEXT, result TEXT, before TEXT, after TEXT, changes TEXT);
 CREATE TABLE IF NOT EXISTS learning (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS agent_runs (
     agent TEXT PRIMARY KEY, name TEXT, source TEXT, description TEXT,
@@ -107,6 +121,25 @@ CREATE TABLE IF NOT EXISTS niche_measure (
     niche_id TEXT PRIMARY KEY, selection_count INTEGER DEFAULT 0,
     last_selected_tick INTEGER, updated_ts REAL);
 """
+
+
+def _num(x):
+    """Coerce to float for storage, preserving None (a genuinely-unknown actual
+    must stay NULL, never silently become 0)."""
+
+    if x is None:
+        return None
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
+
+
+def _load_realized(row) -> dict:
+    d = dict(row)
+    for k in ("metrics", "provenance"):
+        d[k] = json.loads(d[k]) if d.get(k) else {}
+    return d
 
 
 class Store:
@@ -236,6 +269,65 @@ class Store:
         with self._lock:
             rows = self._conn.execute("SELECT * FROM outcomes ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
+
+    # ------------------------------------------------ realized outcomes (v1.14)
+
+    def add_realized_outcome(self, opportunity_id: str, status: str, reason: str | None,
+                             actual_spend_usd, actual_revenue_usd, actual_fees_usd,
+                             actual_hours, days_taken, metrics: dict, provenance: dict,
+                             notes: str | None) -> int:
+        """Persist a recorded real outcome with its computed realized metrics and
+        the frozen provenance of the original recommendation. Returns the row id."""
+
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "INSERT INTO realized_outcomes(ts,opportunity_id,status,reason,"
+                "actual_spend_usd,actual_revenue_usd,actual_fees_usd,actual_hours,days_taken,"
+                "metrics,provenance,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (time.time(), opportunity_id, status, reason,
+                 _num(actual_spend_usd), _num(actual_revenue_usd), _num(actual_fees_usd),
+                 _num(actual_hours), _num(days_taken),
+                 json.dumps(metrics, default=str), json.dumps(provenance, default=str), notes))
+            return int(cur.lastrowid)
+
+    def get_realized_outcome(self, opportunity_id: str) -> dict | None:
+        """The most recent recorded outcome for one opportunity."""
+
+        with self._lock:
+            r = self._conn.execute(
+                "SELECT * FROM realized_outcomes WHERE opportunity_id=? ORDER BY id DESC LIMIT 1",
+                (opportunity_id,)).fetchone()
+        return _load_realized(r) if r else None
+
+    def recent_realized_outcomes(self, limit: int = 50) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM realized_outcomes ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [_load_realized(r) for r in rows]
+
+    def add_weight_audit(self, opportunity_id: str | None, trigger: str, result: str,
+                         before: dict, after: dict, changes: dict) -> None:
+        """Preserve a structured before→after snapshot of a learning-weight change."""
+
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO weight_audit(ts,opportunity_id,trigger,result,before,after,changes) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (time.time(), opportunity_id, trigger, result,
+                 json.dumps(before, default=str), json.dumps(after, default=str),
+                 json.dumps(changes, default=str)))
+
+    def weight_audit_trail(self, limit: int = 50) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM weight_audit ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            for k in ("before", "after", "changes"):
+                d[k] = json.loads(d[k] or "{}")
+            out.append(d)
+        return out
 
     def learning_get(self):
         return self.meta_learning_get()

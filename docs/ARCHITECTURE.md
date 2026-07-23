@@ -987,3 +987,58 @@ playbook step 1 drove it live — stage `not_started → purchased` by reconcili
 Live-proving surfaced one correctness bug and fixed it (v1.13.1): `deal_started_ts`
 now counts only *done* check-offs, so unticking the last step un-starts the deal
 instead of leaving the schedule anchored at day 0 with a `not_started` stage.
+
+## 21. v1.14.0 — Outcome learning: closing the loop to realized truth
+
+Everything before this milestone is a *prediction*. Outcome learning records what
+actually happened, grades the prediction against it, and lets **only realized
+cash** teach the system. `outcomes.py` is the realized-truth engine; a foundation
+already existed (`LearningEngine`, the `outcomes` table, the `chat_ledger` with
+real money in/out) but it only knew success/failure and profit/days, with a
+text-only audit.
+
+* **The full outcome taxonomy** — `bought` (interim, capital out, reality not yet
+  in), `sold`, `delivered`, `abandoned`, `refunded`, `failed`. Abandoned / refunded
+  / failed require an explicit reason before the loop is `complete`; `bought` is
+  never complete on its own.
+* **Realized metrics from ACTUAL cash + time only** — realized profit
+  (`revenue − spend − fees`), ROI, profit-per-hour, capital turnover (raw and
+  annualised). A missing input yields `None`, never a fabricated 0.
+* **Prediction error = realized − predicted.** The prediction is the value being
+  *graded*; it is never mixed into the realized figure or fed into its own grade.
+  Projected ("model promise, unproven") and realized ("recorded cash") are kept in
+  two separate blocks and never merged into one "profit".
+* **Only a terminal, realized-cash outcome can teach.** `recalibration_signal`
+  returns `None` for an interim `bought` or any missing actuals, and every emitted
+  signal is stamped `basis: realized_cash`. `assert_realized_basis` refuses
+  anything else at the learning boundary — so **predictions can never train
+  predictions**.
+* **Frozen provenance.** At record time a snapshot of *which source, generator,
+  family, evidence, verifier, and the predicted numbers* produced the original call
+  is frozen with the outcome, so later mutation of the live opportunity can't
+  rewrite the attribution or the graded promise.
+* **Honest recalibration.** A win raises calibration + the contributing
+  sources/verifiers + category affinity; a loss lowers calibration + sources and
+  weights the failure reason's score factor; an **abandonment is a genuine
+  walk-away** — no cash test happened, so it moves neither calibration nor source
+  reliability, only the category track record. Every change is written to a
+  `weight_audit` table as a structured **before → after** diff.
+* Surfaced at `POST /api/opportunities/{id}/outcome/record` (enforces the reason,
+  computes metrics, freezes provenance, recalibrates, returns the
+  projected-vs-realized comparison + the scoring-change diff), `GET .../outcome`,
+  and an extended `/api/learning` (weight-audit trail + realized outcomes +
+  category affinity). Frontend: a record-outcome panel (status, actuals, required
+  reason) that renders projected-vs-realized and how the real result moved scoring.
+
+The legacy `POST /outcome` (success/failure) is left intact for back-compat; the
+new `/outcome/record` is the real-cash loop.
+
+**Capability status:** IMPLEMENTED AND TESTED (17 tests: realized-metrics math,
+missing-input→None, prediction-error grading, no-profit-on-loss, the taxonomy +
+completion rules, terminal-realized-cash-only signal, the predictions-can't-train
+guard, frozen provenance, success/abandoned/failure recalibration + before→after
+audit, the refuse-non-realized guard, API reason-enforcement, interim-teaches-
+nothing, terminal compute+compare+recalibrate, GET outcome + learning trail, and
+the db round-trip). **Live-proof gate:** on the droplet, one production opportunity
+moves from execution into a recorded real (or honestly abandoned) outcome, and the
+`/api/learning` calibration / category-affinity measurably shifts as a result.

@@ -392,6 +392,8 @@ function renderDetail(o) {
 
     <div class="d-section"><h3>Step-by-step instructions</h3>${executionGuide(o)}${missionBar(o)}${playbook(o)}</div>
 
+    <div class="d-section"><h3>Record the real outcome</h3>${outcomePanel(o)}</div>
+
     <div class="d-section"><h3>AI investigation timeline</h3>
       <div class="why-meta">Ran automatically on pass ${o.tick_updated}${o.updated_ts ?
         " · " + new Date(o.updated_ts * 1000).toLocaleString() : ""} — each step queried live data:</div>
@@ -768,6 +770,97 @@ function discoveryReport(o) {
     }).join("")}</div></div>`;
 }
 
+/* Outcome loop (Milestone: Outcome learning): record what ACTUALLY happened,
+   compare it to what was projected, and — for a terminal outcome grounded in real
+   cash — show how it recalibrates future scoring. Realized cash only; projections
+   never count as earnings, and only real outcomes update confidence/ranking. */
+const OC_STATUSES = ["bought", "sold", "delivered", "abandoned", "refunded", "failed"];
+const OC_NEEDS_REASON = new Set(["abandoned", "refunded", "failed"]);
+
+function outcomePanel(o) {
+  const rec = o.recorded_outcome && o.recorded_outcome.status ? o.recorded_outcome : null;
+  const priorReason = rec ? (rec.reason || "") : "";
+  const result = rec ? renderOutcomeResult({
+    status: rec.status, reason: rec.reason,
+    metrics: rec.metrics || {},
+    comparison: {
+      projected: { profit_usd: rec.provenance?.predicted?.total_net_usd,
+                   confidence: rec.provenance?.predicted?.confidence },
+      realized: { profit_usd: rec.metrics?.realized_profit_usd, roi: rec.metrics?.roi,
+                  profit_per_hour_usd: rec.metrics?.profit_per_hour_usd,
+                  capital_turnover: rec.metrics?.capital_turnover,
+                  days_taken: rec.metrics?.days_taken },
+      prediction_error: rec.metrics?.prediction_error,
+    },
+    scoring_change: null,
+  }) : "";
+  return `
+    <div class="oc-form" id="oc-form">
+      <div class="oc-grid">
+        <label>Outcome<select id="oc-status">${OC_STATUSES.map((s) =>
+          `<option value="${s}"${rec && rec.status === s ? " selected" : ""}>${s}</option>`).join("")}</select></label>
+        <label>Actual spend<input type="number" id="oc-spend" step="0.01" min="0" placeholder="$"></label>
+        <label>Actual revenue<input type="number" id="oc-revenue" step="0.01" min="0" placeholder="$"></label>
+        <label>Fees<input type="number" id="oc-fees" step="0.01" min="0" placeholder="$"></label>
+        <label>Hours<input type="number" id="oc-hours" step="0.5" min="0" placeholder="h"></label>
+        <label>Days to outcome<input type="number" id="oc-days" step="1" min="0" placeholder="d"></label>
+      </div>
+      <div class="oc-grid2">
+        <label class="oc-reason" id="oc-reason-wrap"${rec && OC_NEEDS_REASON.has(rec.status) ? "" : " hidden"}>
+          Reason <span class="oc-req">required</span>
+          <input type="text" id="oc-reason" value="${esc(priorReason)}" placeholder="why abandoned / refunded / failed"></label>
+        <label class="oc-notes-l">Notes<input type="text" id="oc-notes" placeholder="optional"></label>
+        <button class="btn btn-primary" id="oc-submit">Record outcome</button>
+      </div>
+      <div class="oc-hint">💵 Realized cash only — projections never count as earnings. Only recorded real
+        outcomes update confidence &amp; ranking; predictions never train predictions.</div>
+    </div>
+    <div id="oc-result">${result}</div>`;
+}
+
+function renderOutcomeResult(d) {
+  const cmp = d.comparison || {}, pj = cmp.projected || {}, rz = cmp.realized || {}, pe = cmp.prediction_error;
+  const money = (v) => (v === null || v === undefined) ? "—" : fmtUSD(v);
+  const proj = money(pj.profit_usd), real = money(rz.profit_usd);
+  const errLine = pe ? `<div class="oc-err ${pe.error_usd < 0 ? "neg" : "pos"}">
+    Prediction error: <b>${pe.error_usd < 0 ? "" : "+"}${fmtUSD(pe.error_usd)}</b>${pe.error_pct != null
+      ? ` (${pe.error_pct > 0 ? "+" : ""}${pe.error_pct}%)` : ""} — ${esc((pe.direction || "").replace(/_/g, " "))}</div>` : "";
+  const sc = d.scoring_change;
+  const scoring = sc && sc.changes && Object.keys(sc.changes).length ? `
+    <div class="oc-scoring">
+      <div class="oc-scoring-h">How this real outcome changed future scoring</div>
+      <div class="oc-note">${esc(sc.note || "")}</div>
+      ${changeRows(sc.changes)}
+    </div>` : (sc ? `<div class="oc-note">${esc(sc.note || "Recorded — no weight change.")}</div>` : "");
+  return `
+    <div class="oc-compare">
+      <div class="oc-col oc-proj"><div class="oc-col-k">PROJECTED · model promise</div>
+        <div class="oc-col-v">${proj}</div>
+        <div class="oc-col-s">${pj.confidence != null ? Math.round(pj.confidence * 100) + "% predicted confidence" : "unproven"}</div></div>
+      <div class="oc-vs">vs</div>
+      <div class="oc-col oc-real"><div class="oc-col-k">REALIZED · recorded cash</div>
+        <div class="oc-col-v ${(rz.profit_usd || 0) >= 0 ? "pos" : "neg"}">${real}</div>
+        <div class="oc-col-s">${rz.roi != null ? "ROI " + Math.round(rz.roi * 100) + "%" : ""}${rz.profit_per_hour_usd != null
+          ? " · " + fmtUSD(rz.profit_per_hour_usd) + "/hr" : ""}${rz.days_taken ? " · " + rz.days_taken + "d" : ""}</div></div>
+    </div>
+    <div class="oc-status-badge oc-${esc(d.status)}">${esc(d.status)}${d.reason ? " — " + esc(d.reason) : ""}</div>
+    ${errLine}
+    ${scoring}`;
+}
+
+function changeRows(changes) {
+  const rows = [];
+  const fmt = (v) => (typeof v === "number" ? (Number.isInteger(v) ? v : v.toFixed(3)) : v);
+  if (changes.calibration) rows.push(["calibration", changes.calibration[0], changes.calibration[1]]);
+  for (const grp of ["source_reliability", "verifier_reliability", "category_affinity", "weights"]) {
+    if (changes[grp]) for (const [k, pair] of Object.entries(changes[grp]))
+      rows.push([`${grp.replace(/_/g, " ")} · ${k}`, pair[0], pair[1]]);
+  }
+  return `<table class="oc-changes">${rows.map(([label, a, b]) =>
+    `<tr><td>${esc(String(label))}</td><td class="oc-old">${fmt(a)}</td><td class="oc-arrow">→</td>
+     <td class="oc-new">${fmt(b)}</td></tr>`).join("")}</table>`;
+}
+
 /* Execution guide: leads the step-by-step with the ONE next move, the Thailand
    gate, and where you are on the (projected) money/time clock. Consumes
    o.execution_guide (server-composed, reconciling step check-offs + lifecycle
@@ -930,6 +1023,43 @@ function wireDetail(el, o) {
       $("#wf-body", el).innerHTML = waterfall(o.economics[b.dataset.scn],
         o.economics.kind === "flip" ? "/unit" : "/mo");
     }));
+
+  wireOutcome(el, o);
+}
+
+function wireOutcome(el, o) {
+  const statusSel = $("#oc-status", el);
+  const reasonWrap = $("#oc-reason-wrap", el);
+  if (!statusSel) return;
+  const syncReason = () => { reasonWrap.hidden = !OC_NEEDS_REASON.has(statusSel.value); };
+  statusSel.addEventListener("change", syncReason);
+  syncReason();
+
+  const submit = $("#oc-submit", el);
+  submit && submit.addEventListener("click", async () => {
+    const status = statusSel.value;
+    const num = (id) => { const v = $(id, el).value; return v === "" ? null : parseFloat(v); };
+    const reason = ($("#oc-reason", el).value || "").trim();
+    if (OC_NEEDS_REASON.has(status) && !reason) {
+      toast("An explicit reason is required to record " + status + "."); return;
+    }
+    submit.disabled = true;
+    const old = submit.textContent; submit.textContent = "Recording…";
+    try {
+      const r = await api(`/api/opportunities/${o.id}/outcome/record`,
+        { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status, actual_spend_usd: num("#oc-spend"), actual_revenue_usd: num("#oc-revenue"),
+            actual_fees_usd: num("#oc-fees"), actual_hours: num("#oc-hours"),
+            days_taken: num("#oc-days"), reason: reason || null,
+            notes: ($("#oc-notes", el).value || "").trim() || null }) });
+      $("#oc-result", el).innerHTML = renderOutcomeResult(r);
+      toast(r.scoring_change ? "✅ Outcome recorded — future scoring recalibrated from real cash."
+                             : "✅ Milestone recorded (interim — no scoring change yet).");
+    } catch (err) {
+      toast("Could not record outcome: " + err.message);
+    } finally { submit.disabled = false; submit.textContent = old; }
+  });
 
   const resSel = $("#oc-result", el), reasonSel = $("#oc-reason", el);
   resSel.addEventListener("change", () => { reasonSel.hidden = resSel.value !== "failure"; });
