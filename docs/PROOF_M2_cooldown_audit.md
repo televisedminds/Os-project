@@ -81,27 +81,46 @@ databases open unchanged; no destructive migration.
 | `docs/proofs/m2_tick_448_observability.json` | `4e51e9bedb2b50e05dc33db2de206a83d1a59eb0b2a41d3dc25f3339ab98a297` |
 | `docs/proofs/bug_cooldown_tick_451_cycle.json` | `b33df4c3d9d56a3bf70cf8e743bc86ed62606c15db0da8a1d77e9064a79ea3b0` |
 | `docs/proofs/bug_cooldown_tick_451_observability.json` | `ceb14cf196500f1f1134129fbf030910ce1202eb0d16b8521d058454ad28f859` |
+| `docs/proofs/fix_cooldown_tick_455_cycle.json` | `7fee596ea48e3262d11edabaca4158dba93075d1478e5b1acd2b0a1034d73d59` |
+| `docs/proofs/fix_cooldown_tick_455_observability.json` | `60e280d3cc29f6c3c5fea6d773bf972580e176dafe1290e8f5666fd3fcc74df7` |
 
 Each has a sibling `*_metadata.json` (capture UTC, version, commit, tick,
 endpoint, exact command, redactions=none). The tick-448 files are documentary
 proof of M2 steady-state behaviour; the tick-451 files are live evidence of the
-bug on v1.7.0.
+bug on v1.7.0; the tick-455 files are live proof of the fix on v1.7.1.
 
-## 8. Truth-contract classification
+## 8. LIVE PROOF of the fix (v1.7.1 deployed, droplet ticks 448→455)
 
-- **Cooldown bug:** proven real (deterministic test + live production evidence).
-- **The fix (v1.7.1):** **IMPLEMENTED** and **TESTED** (22 targeted, 312 full
-  suite). **NOT YET LIVE-PROVEN** — the droplet still runs v1.7.0; I have read +
-  `POST /api/cycle` access but **no deploy access** (SSH / `git pull` /
-  `systemctl restart`), so I cannot deploy the fix myself.
-
-## 9. To close the live-proof gate (requires deployment)
+`dtv_visa_guide` ledger, verbatim from production after deploy:
 
 ```
-cd /opt/opportunity-os && git pull origin claude/opportunity-os-platform-n6dkel && sudo systemctl restart opportunity-os
+tick=448 elig=1 path=steady_state reason=None                          verdict=rejected   ← entered
+tick=451 elig=0 path=steady_state reason=cooldown_no_new_observations   verdict=None       ← cooling
+tick=452 elig=0 path=steady_state reason=cooldown_no_new_observations   verdict=None       ← cooling
+tick=454 elig=0 path=steady_state reason=cooldown_no_new_observations   verdict=rejected   ← cooling
+tick=455 elig=1 path=steady_state reason=None                          verdict=rejected   ← RE-ENTERED
 ```
 
-After deploy I will advance the same niches past tick +6 and capture a fresh
-`docs/proofs/fix_cooldown_tick_<n>_*` showing an info niche that was in cooldown
-**re-entering** `steady_state` once the window expires — the live proof of the
-fix. A rejection verdict on re-entry is acceptable; thresholds will not be tuned.
+The niche entered at 448, was correctly skipped through the cooldown window, and
+**re-entered `steady_state` at tick 455** (per-cycle report: `entrants:
+{anomaly:1, steady_state:2}, skipped:0`), receiving a fresh `insufficient_demand`
+verdict. Under the buggy v1.7.0, the cooldown would key off the newest **skip**
+row (tick 454), so `455 − 454 = 1 < cooldown` would keep it skipping forever —
+re-entry is impossible there and only happens because the fix references
+`last_entered` (448). The anomaly path stayed live throughout
+(`bkk_airbnb_cleaning` entered via anomaly each cycle).
+
+**Honest note on the exact boundary:** entry at 448, re-entry observed at 455
+(7 ticks). The intervening `tick=454` ledger row is anomalous (`eligible=0` with a
+`verdict` set) — it coincides with a dropped `POST /api/cycle` (HTTP 000) whose
+retry advanced the tick, so that one cycle was disrupted. The precise expiry tick
+also depends on the droplet's configured `steady_cooldown_ticks` and auto-cycler
+timing. None of that affects the proof: the cooldown **expired** and the niche
+**re-entered**, which the pre-fix code cannot do. The deterministic unit test
+pins the exact boundary (re-entry at entry+`cooldown_ticks`).
+
+## 9. Truth-contract classification
+
+- **Cooldown bug:** proven real (deterministic test + live production evidence, tick 451).
+- **The fix (v1.7.1):** **IMPLEMENTED**, **TESTED** (22 targeted, 312 full suite),
+  **DEPLOYED** (droplet on v1.7.1), and **LIVE-PROVEN** (tick 455 re-entry).

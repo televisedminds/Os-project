@@ -1,0 +1,21 @@
+{
+  "capture_utc": "2026-07-23T01:20:00Z",
+  "note": "LIVE PROOF of the v1.7.1 cooldown-starvation fix. The two info niches (dtv_visa_guide, th_freelance_tax) entered steady_state at tick 448, then were correctly skipped 'cooldown_no_new_observations' at ticks 451-454. At tick 455 they RE-ENTERED via steady_state (entrants steady_state=2, skipped=0) and received a fresh council verdict (insufficient_demand). Under buggy v1.7.0 the cooldown reference would be the newest skip row (tick 454), so 455-454<cooldown would keep them skipping forever. Re-entry is only possible because the fix keys the cooldown off last_entered (448).",
+  "deployed_version": "1.7.1",
+  "deployed_commit": "eb0c3c4 (or later)",
+  "production_tick": 455,
+  "droplet": "178.128.87.69 (open-mode HTTP API)",
+  "endpoints": {
+    "fix_cooldown_tick_455_cycle.json": "POST http://178.128.87.69/api/cycle",
+    "fix_cooldown_tick_455_observability.json": "GET http://178.128.87.69/api/observability?cycles=80"
+  },
+  "capture_commands": {
+    "fix_cooldown_tick_455_cycle.json": "curl -s --max-time 200 -X POST http://178.128.87.69/api/cycle",
+    "fix_cooldown_tick_455_observability.json": "curl -s --max-time 25 'http://178.128.87.69/api/observability?cycles=80'"
+  },
+  "redactions": "none \u2014 open-mode public API; no credentials in responses",
+  "sha256": {
+    "fix_cooldown_tick_455_cycle.json": "7fee596ea48e3262d11edabaca4158dba93075d1478e5b1acd2b0a1034d73d59",
+    "fix_cooldown_tick_455_observability.json": "60e280d3cc29f6c3c5fea6d773bf972580e176dafe1290e8f5666fd3fcc74df7"
+  }
+}
