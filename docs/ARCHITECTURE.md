@@ -896,8 +896,11 @@ Net effect: discovered ventures surface the signals the operator *can* trust
 number built on a search-result proxy. This **prevents wasting resources** on a
 fabricated volume, and it neither manufactures a pass nor weakens any threshold.
 
-**Capability status:** IMPLEMENTED AND TESTED (estimated-volume → validation_required
-at the council; user-supplied/measured volume keeps real economics; provenance
-labelled `estimated`; classifier routes the category). **Live-proof gate:** the
-same discovered info niche that died `margin_below_threshold` at tick 495 now
-reads `validation_required` on the droplet.
+**Capability status:** IMPLEMENTED, TESTED (full suite 330), DEPLOYED (v1.11.0),
+and **LIVE-PROVEN** (tick 503). The same auto-discovered info niche that died
+`margin_below_threshold` at tick 495 now carries provenance
+`observed.volume = "estimated"` and re-entered the council to receive the honest
+`validation_required` verdict — *"Demand volume is ESTIMATED from search-result
+signal, not a measured search volume … confirm real monthly demand before
+building."* No threshold weakened; no pass manufactured. See
+`docs/proofs/m5_tick_503_*`.

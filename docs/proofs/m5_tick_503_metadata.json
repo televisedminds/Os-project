@@ -1,0 +1,27 @@
+{
+  "capture_utc": "2026-07-23T12:35:00Z",
+  "note": "M5 LIVE PROOF (honest demand-volume). Same auto-discovered info niche disc_n_how_do_you_handle_the_actual_situation_with_so_m, before vs after: v1.10.0 tick 495 -> category margin_below_threshold ('Pessimistic net $-4/mo; payback 60 months') \u2014 a FALSE hard economic rejection computed from a fabricated volume (Google result-count x 30 labelled 'observed'). v1.11.0 tick 503 -> the niche's provenance now reads observed.volume='estimated', and the same niche re-entered via steady_state and received category validation_required: 'Demand volume is ESTIMATED from search-result signal, not a measured search volume \u2014 indicative pessimistic net $-4/mo. Validation required: confirm real monthly demand (keyword-volume tool or a small paid smoke test) before building.' No threshold weakened; no pass manufactured \u2014 an over-claimed estimate is now labelled honestly and the verdict prevents wasting resources on a search-result proxy.",
+  "deployed_version": "1.11.0",
+  "production_tick": 503,
+  "niche_id": "disc_n_how_do_you_handle_the_actual_situation_with_so_m",
+  "before": {
+    "version": "1.10.0",
+    "tick": 495,
+    "category": "margin_below_threshold"
+  },
+  "after": {
+    "version": "1.11.0",
+    "tick": 503,
+    "category": "validation_required"
+  },
+  "droplet": "178.128.87.69 (open-mode HTTP API)",
+  "endpoints": {
+    "m5_tick_503_cycle.json": "POST http://178.128.87.69/api/cycle (tick 503 report)",
+    "m5_tick_503_observability.json": "GET http://178.128.87.69/api/observability?cycles=20"
+  },
+  "redactions": "none \u2014 open-mode public API; no credentials in responses",
+  "sha256": {
+    "m5_tick_503_cycle.json": "92e1e159feefd39c48c41d98fb0e04ba0412336289ef9478bf10338fccb98fac",
+    "m5_tick_503_observability.json": "ab9080f8fcac685b3334a0ef2c058b090d2efb121a9582ad07d6ccb33e779d07"
+  }
+}
