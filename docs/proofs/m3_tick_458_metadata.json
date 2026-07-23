@@ -1,0 +1,25 @@
+{
+  "capture_utc": "2026-07-23T02:05:00Z",
+  "note": "LIVE PROOF of Milestone 3 (demand level+stability). Under v1.8.0 the local_service niche bkk_airbnb_cleaning (opp_91e0f4d8df) PASSED the council and published as a verified opportunity (net $572/mo, partially_verified). Its demand_corroboration check reads: 'Corroborated by 2 of 4 independent signals: trend \u2717 (0%/mo), social \u2717, demand:supply \u2713 (75:1), level+stability \u2713 (300/mo, durable).' The level+stability signal is what corroborates it \u2014 trend and social both fail (flat growth), so under the pre-M3 growth-only check it would have been rejected insufficient_demand. All other checks pass (competition_gap, unit_economics $178/mo pessimistic / 0.8mo payback, feasibility, durability). First verified VENTURE (non-flip) opportunity.",
+  "deployed_version": "1.8.0",
+  "deployed_commit": "(v1.8.0 head)",
+  "production_tick": 458,
+  "opportunity_id": "opp_91e0f4d8df",
+  "droplet": "178.128.87.69 (open-mode HTTP API)",
+  "endpoints": {
+    "m3_tick_458_cycle.json": "POST http://178.128.87.69/api/cycle",
+    "m3_tick_458_trace.json": "GET http://178.128.87.69/api/trace/opp_91e0f4d8df",
+    "m3_tick_458_observability.json": "GET http://178.128.87.69/api/observability?cycles=60"
+  },
+  "capture_commands": {
+    "m3_tick_458_cycle.json": "curl -s --max-time 200 -X POST http://178.128.87.69/api/cycle",
+    "m3_tick_458_trace.json": "curl -s --max-time 25 http://178.128.87.69/api/trace/opp_91e0f4d8df",
+    "m3_tick_458_observability.json": "curl -s --max-time 25 'http://178.128.87.69/api/observability?cycles=60'"
+  },
+  "redactions": "none \u2014 open-mode public API; no credentials in responses",
+  "sha256": {
+    "m3_tick_458_cycle.json": "93caf3e3d9b7b6379461068eca822d46b1e3ce1332686d24413612d4d68cb765",
+    "m3_tick_458_trace.json": "47bc2703499eb8f53f289accc9b6811599280739606237b14d5160196a595d52",
+    "m3_tick_458_observability.json": "db81f5c8dda19c9b4751d7b630c3f07fd8f723f73b8f61c15f71bb215653e5a1"
+  }
+}

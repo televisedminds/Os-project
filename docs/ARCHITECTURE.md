@@ -764,9 +764,13 @@ a high-volume niche with **no** gap (many providers) still fails (1 of 4), a
 **declining** series fails the durability test, and a **low-volume** niche fails
 the level floor. All thresholds are configurable.
 
-**Capability status:** IMPLEMENTED AND TESTED (3 new council-level tests: a large
-stable underserved niche corroborates; a declining or gapless one does not).
-Scope unchanged — the four core venture generators. **Live-proof gate:** the
-production funnel shows a stable venture niche corroborating on level+stability
-and receiving an honest downstream verdict (competition/economics), not a false
-`insufficient_demand`.
+**Capability status:** IMPLEMENTED, TESTED (3 new council-level tests: a large
+stable underserved niche corroborates; a declining or gapless one does not),
+DEPLOYED (v1.8.0), and **LIVE-PROVEN** (tick 458). Scope unchanged — the four core
+venture generators. The proof: `bkk_airbnb_cleaning` published as
+`opp_91e0f4d8df` (verified local_service, net $572/mo) with
+`demand_corroboration` reading *"Corroborated by 2 of 4 independent signals:
+trend ✗ (0%/mo), social ✗, demand:supply ✓ (75:1), level+stability ✓ (300/mo,
+durable)"* — corroborated by the new axis with growth flat, then clearing
+competition-gap and unit-economics. First verified non-flip venture. See
+`docs/PROOF_M3_level_stability.md` and `docs/proofs/m3_tick_458_*`.
