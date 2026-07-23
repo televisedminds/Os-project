@@ -296,6 +296,12 @@ def compute_flip(item: dict, buy_venue: str, sell_venue: str,
         "total_net_thb": usd_to_thb(econ.total_net_usd),
         "capital_thb": usd_to_thb(econ.capital_usd),
     }
+    # Flip inputs: prices come from real listings (observed, ASKING not sold-comp),
+    # fees/shipping are calculated, the projected net is a calculation on top.
+    econ.input_provenance = {
+        "buy_price": "observed", "sell_price": "observed",
+        "fees_shipping_tax": "calculated", "projected_net": "calculated",
+    }
     return econ
 
 
@@ -357,5 +363,17 @@ def compute_venture(niche: dict) -> Economics:
     econ.thb = {
         "net_per_month_thb": usd_to_thb(base.net_usd),
         "capital_thb": usd_to_thb(econ.capital_usd),
+    }
+    # Venture inputs: demand volume + price carry the niche's measured provenance
+    # (user_supplied / estimated / unknown); conversion rates are model estimates;
+    # cost lines and the projected net are calculations. Nothing here is a proven
+    # earning — the projected_net is only as strong as its weakest input.
+    prov = (niche.get("metrics") or {}).get("observed") or {}
+    econ.input_provenance = {
+        "demand_volume": prov.get("volume", "unknown"),
+        "price_point": prov.get("price", "estimated"),
+        "conversion_rate": "estimated",
+        "costs": "calculated",
+        "projected_net": "calculated",
     }
     return econ

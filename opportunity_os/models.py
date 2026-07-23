@@ -125,6 +125,10 @@ class Economics:
     fx: dict[str, float] = field(default_factory=dict)
     thb: dict[str, float] = field(default_factory=dict)
     route_note: str = ""
+    # Provenance of every economic INPUT, so a projected number is never mistaken
+    # for a proven one. Each value is exactly one of: observed / calculated /
+    # estimated / user_supplied / unknown.
+    input_provenance: dict = field(default_factory=dict)
 
 
 @dataclass

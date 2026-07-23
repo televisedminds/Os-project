@@ -334,6 +334,22 @@ function closeDetail() {
   document.querySelectorAll(".feed-row").forEach((tr) => tr.classList.remove("selected"));
 }
 
+// Honest labelling: a projected number must never read as proven earnings, and
+// any ESTIMATED input (e.g. a discovered niche's demand volume) must be flagged
+// as unproven so it can't be mistaken for observed/realised.
+function provenanceNote(e) {
+  const ip = e.input_provenance || {};
+  const est = Object.keys(ip).filter((k) => ip[k] === "estimated").map((k) => k.replace(/_/g, " "));
+  const parts = [];
+  if (e.kind === "venture")
+    parts.push("Projected monthly estimate — <b>not proven earnings</b>.");
+  if (est.length)
+    parts.push(`Estimated (unproven) input${est.length > 1 ? "s" : ""}: ${esc(est.join(", "))}.`);
+  if (!parts.length) return "";
+  return `<div class="locked-note prov-note" style="margin:10px 0;font-size:.82rem">
+      ${parts.join(" ")} Validate real demand and unit economics before committing capital.</div>`;
+}
+
 function renderDetail(o) {
   const e = o.economics;
   const isFlip = e.kind === "flip";
@@ -368,6 +384,7 @@ function renderDetail(o) {
       ${kpi("Capital needed", fmtUSD(e.capital_usd), `${esc(fmtTHB(e.thb.capital_thb))}${isFlip ? ` · ${e.qty} units` : " startup"}`)}
       ${kpi("Window", `${o.window_days.toFixed(0)} days`, `updated tick ${o.tick_updated}`)}
     </div>
+    ${provenanceNote(e)}
 
     ${actionCard(o)}
     ${sellingKit(o)}

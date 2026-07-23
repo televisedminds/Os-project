@@ -230,6 +230,54 @@ def test_estimated_volume_yields_validation_required_not_false_economics(tmp_pat
     assert classify_rejection(f"{ue.name} failed — {ue.evidence}") == VALIDATION_REQUIRED
 
 
+def _venture_cand(ds, opp_type, category):
+    niche = ds.niches()[0]
+    return {"kind": "venture", "opp_type": opp_type, "entity_id": niche["id"],
+            "economics": eco.compute_venture(niche),
+            "feasibility": th.feasibility(opp_type.value, category, None, None)}
+
+
+@pytest.mark.parametrize("kind,opp_type,category", [
+    ("local", OppType.LOCAL_SERVICE, "local_services"),
+    ("b2b", OppType.B2B_SERVICE, "b2b_services"),
+    ("digital", OppType.DIGITAL_PRODUCT, "digital_tools"),
+    ("info", OppType.INFO_PRODUCT, "info_products"),
+])
+def test_estimated_volume_never_verifies_across_all_venture_families(kind, opp_type, category):
+    """Check #2/#4: an ESTIMATED demand volume can never yield verified/execute —
+    it stays validation_required — for EVERY venture family, not just info. The
+    niche still reaches the council (explicit verdict), it just can't pass."""
+    from opportunity_os.agents.verifiers import VerificationCouncil
+    obs = {"demand": "observed", "supply": "observed", "demand_series": "serper",
+           "volume": "estimated"}
+    ds = _NicheDS(_niche(kind=kind, providers=2, growth=20, volume=3000, observed=obs),
+                  mentions=[10, 20, 30, 40, 50, 60])         # strong, growing, gapped demand
+    v = VerificationCouncil(Config()).verify_venture(ds, _venture_cand(ds, opp_type, category))
+    ue = next(c for c in v.checks if c.verifier == "unit_economics")
+    assert not ue.passed and "validation required" in ue.evidence.lower()
+    assert not v.passed                    # estimated volume can NEVER verify / execute_now
+    assert v.checks                        # but it DID reach the council with a verdict
+
+
+def test_economics_inputs_carry_provenance():
+    """Check #1: every economic input records its provenance (observed /
+    calculated / estimated / user_supplied), on flips and ventures alike."""
+    from opportunity_os.models import OppType as _OT
+    allowed = {"observed", "calculated", "estimated", "user_supplied", "unknown"}
+    # venture with an estimated demand volume
+    obs = {"demand": "observed", "supply": "observed", "volume": "estimated", "price": "observed"}
+    ve = eco.compute_venture(_niche(kind="info", volume=3000, observed=obs))
+    assert ve.input_provenance["demand_volume"] == "estimated"
+    assert ve.input_provenance["projected_net"] == "calculated"
+    assert set(ve.input_provenance.values()) <= allowed
+    # flip: prices observed, fees calculated
+    fe = eco.compute_flip({"name": "X", "category": "collectibles", "weight_kg": 0.5},
+                          "shopee_th", "ebay_us", 20.0, 60.0)
+    assert fe.input_provenance["buy_price"] == "observed"
+    assert fe.input_provenance["projected_net"] == "calculated"
+    assert set(fe.input_provenance.values()) <= allowed
+
+
 def test_measured_or_user_supplied_volume_keeps_real_economics_verdict():
     """M5 does not change verdicts for a user-supplied/measured volume — those
     keep the real pass/fail (no 'volume': 'estimated' provenance)."""
