@@ -103,7 +103,8 @@ def test_niche_metrics_provenance(tmp_path):
                      niche_kind="local", geo="TH").to_watch_niche()
     m = lm._niche_metrics(disc, None)
     assert m["observed"] == {"demand": "unknown", "supply": "unknown",
-                             "demand_series": "serper", "price": "estimated"}
+                             "demand_series": "serper", "price": "estimated",
+                             "volume": "unknown"}
     assert m["volume"] == 0.0 and m["solution_count"] == 0
 
     # A measured mention series + a stored supply scan flip provenance to observed.
@@ -117,6 +118,9 @@ def test_niche_metrics_provenance(tmp_path):
     assert m2["observed"]["demand"] == "observed" and m2["observed"]["supply"] == "observed"
     assert m2["demand_posts"] == 150.0            # 5/day × 30 — measured, not invented
     assert m2["solution_count"] == 2 and m2["supply_domains"] == ["a.co.th", "b.com"]
+    # M5: the demand VOLUME is only ESTIMATED (result-count scaled), never
+    # 'observed' — so downstream economics can't be over-claimed as measured.
+    assert m2["observed"]["volume"] == "estimated"
 
     # Hand-typed watchlist niches stay the operator's own numbers.
     user = wl.WatchNiche(id="n_user", name="U", kind="local", geo="TH",
@@ -125,6 +129,7 @@ def test_niche_metrics_provenance(tmp_path):
     mu = lm._niche_metrics(user, None)
     assert mu["observed"]["demand"] == "user_supplied"
     assert mu["observed"]["supply"] == "user_supplied"
+    assert mu["observed"]["volume"] == "user_supplied"    # operator's own number, real economics
     assert mu["providers"] == 4
 
 

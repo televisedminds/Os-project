@@ -139,6 +139,14 @@ def test_venture_verdicts_are_named_honestly_not_as_supply_defects():
     # But a genuinely exhausted inventory is still a hard supply verdict.
     assert EV.classify_rejection("source inventory exhausted") == EV.INSUFFICIENT_SUPPLY
 
+    # M5: economics resting on an ESTIMATED demand volume → validation_required,
+    # never a false margin rejection (checked before the margin branch).
+    est = ("Economics need demand-volume validation failed — Demand volume is ESTIMATED "
+           "from search-result signal, not a measured search volume — indicative "
+           "pessimistic net $-4/mo. Validation required: confirm real monthly demand.")
+    assert EV.classify_rejection(est) == EV.VALIDATION_REQUIRED
+    assert EV.classify_rejection(est) != EV.MARGIN_BELOW_THRESHOLD
+
 
 def test_rejection_funnel_aggregates_categories(built):
     _, store = built

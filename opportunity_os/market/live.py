@@ -449,11 +449,16 @@ class LiveMarket:
             posts = float(n.demand_posts) if user_supplied else 0.0
 
         if user_supplied:
-            volume, demand_src = round(n.base_volume * momentum, 1), "user_supplied"
+            volume, demand_src, volume_src = round(n.base_volume * momentum, 1), "user_supplied", "user_supplied"
         elif measured_today is not None:
-            volume, demand_src = round(posts, 1), "observed"
+            # The result-COUNT series is a real observation of unmet-need
+            # corroboration and trend — but result count is NOT a search-VOLUME
+            # measurement, so scaling it to a monthly volume is an ESTIMATE.
+            # Labelled 'estimated' so the economics can't be over-claimed as
+            # measured; the council turns that into a validation-required verdict.
+            volume, demand_src, volume_src = round(posts, 1), "observed", "estimated"
         else:
-            volume, demand_src = 0.0, "unknown"
+            volume, demand_src, volume_src = 0.0, "unknown", "unknown"
 
         sup_obs = self.db.latest_search_obs(n.id, "supply")
         observed_n = int(sup_obs["payload"].get("provider_count", 0)) if sup_obs else None
@@ -489,7 +494,8 @@ class LiveMarket:
             "demand_posts": round(posts, 1),
             "providers": supply_n if supply_src != "user_supplied" else n.providers,
             "observed": {"demand": demand_src, "supply": supply_src,
-                         "demand_series": demand_src_series, "price": price_src},
+                         "demand_series": demand_src_series, "price": price_src,
+                         "volume": volume_src},
             "supply_domains": supply_domains,
             "price_point_usd": round(price_usd, 2),
             "competitor_review": review,

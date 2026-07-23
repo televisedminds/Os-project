@@ -356,11 +356,25 @@ class VerificationCouncil:
         checks.append(Check("competition_gap", "Supply-side gap confirmed", gap_ok, gap_conf,
                             gap_ev, critical=True))
 
-        unit_ok = econ.pessimistic.net_usd > 0
-        checks.append(Check("unit_economics", "Positive at 45% of modelled demand", unit_ok, 0.85,
-                            f"Pessimistic net ${econ.pessimistic.net_usd:,.0f}/mo; "
-                            f"startup ${econ.capital_usd:,.0f} → payback "
-                            f"{econ.capital_usd / max(1.0, econ.base.net_usd):.1f} months at base.", critical=True))
+        # Honest economics: for a DISCOVERED niche the demand VOLUME is an
+        # estimate scaled from search-result counts, not a measured search
+        # volume — so the revenue/net/payback are indicative only. We must NOT
+        # conclude a hard pass/fail on an estimated volume; the honest verdict is
+        # "validation required" (confirm real demand before building). A
+        # user-supplied or genuinely measured volume keeps the real pass/fail.
+        if prov.get("volume") == "estimated":
+            checks.append(Check("unit_economics", "Economics need demand-volume validation", False, 0.6,
+                                f"Demand volume is ESTIMATED from search-result signal, not a measured "
+                                f"search volume — indicative pessimistic net ${econ.pessimistic.net_usd:,.0f}/mo "
+                                f"(startup ${econ.capital_usd:,.0f}). Validation required: confirm real monthly "
+                                f"demand (keyword-volume tool or a small paid smoke test) before building.",
+                                critical=True))
+        else:
+            unit_ok = econ.pessimistic.net_usd > 0
+            checks.append(Check("unit_economics", "Positive at 45% of modelled demand", unit_ok, 0.85,
+                                f"Pessimistic net ${econ.pessimistic.net_usd:,.0f}/mo; "
+                                f"startup ${econ.capital_usd:,.0f} → payback "
+                                f"{econ.capital_usd / max(1.0, econ.base.net_usd):.1f} months at base.", critical=True))
 
         checks.append(Check("feasibility_check", "Operable from Thailand", True, 0.9,
                             cand["feasibility"].buy_notes[0], critical=False))

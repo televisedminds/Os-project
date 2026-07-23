@@ -236,6 +236,7 @@ def compute_level(ledger: list[dict], verification, feasibility,
 
 # Fixed categories so the funnels can aggregate "why candidates die".
 RESEARCH_REQUIRED = "research_required"      # evidence gap named by the council, not a defect
+VALIDATION_REQUIRED = "validation_required"  # economics rest on an ESTIMATED demand volume — validate first
 INSUFFICIENT_DEMAND = "insufficient_demand"
 NO_SOLD_COMPS = "no_sold_comps"
 MARGIN_BELOW_THRESHOLD = "margin_below_threshold"
@@ -262,6 +263,12 @@ def classify_rejection(reason: str) -> str:
     # contains "demand:supply" — so these MUST resolve before the generic
     # 'supply' keyword branch, or a demand failure is mislabelled as a supply
     # defect (exactly the bug the live funnel exposed).
+    if "validation required" in r or "demand volume is estimated" in r:
+        # The economics rest on an ESTIMATED demand volume (search-result signal,
+        # not a measured search volume) — the operator must validate real demand
+        # before any pass/fail is meaningful. Checked before the margin branch so
+        # an indicative negative net isn't mislabelled a hard economic rejection.
+        return VALIDATION_REQUIRED
     if "research required" in r or "never observed" in r:
         # Still accumulating observations, or a supply side never scanned — an
         # evidence gap the council named, not a defect.

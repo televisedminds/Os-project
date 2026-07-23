@@ -861,3 +861,43 @@ returned an explicit honest verdict — rejected `margin_below_threshold`
 changed only measurement cadence). This closes the full Milestone 4 autonomous
 discovery→council claim. See `docs/PROOF_M4_1_autonomous_council.md` +
 `docs/proofs/m41_*`.
+
+## 18. v1.11.0 — honest demand-volume for discovered ventures (Milestone 5)
+
+The M4 live proof exposed a truth-contract violation. A discovered niche's demand
+`volume` was computed as **Google organic result-count (0–10) × 30** and labelled
+provenance **`observed`**. Result-count is *not* a search-volume measurement, so
+every discovered venture's revenue / net / payback rested on a **fabricated
+volume presented as measured** — which is exactly what produced the info niche's
+`margin_below_threshold` (60-month payback) verdict at tick 495. It also
+structurally capped discovered demand at ~300/mo, so no discovered venture could
+ever have realistic economics.
+
+**The fix — separate the honest signal from the estimate:**
+* the result-count **series** is a real observation of unmet-need corroboration
+  and **trend** (kept, provenance `observed`), but the absolute monthly
+  **volume** scaled from it is only an **estimate** — `_niche_metrics` now labels
+  it `observed.volume = "estimated"` for discovered niches (`user_supplied` for
+  hand-typed watchlist niches, `unknown` when nothing is measured);
+* `verify_venture` no longer concludes a hard economics pass/fail on an estimated
+  volume. When `observed.volume == "estimated"` the `unit_economics` check
+  returns **`validation_required`**: it names the indicative net but says *"Demand
+  volume is ESTIMATED from search-result signal, not a measured search volume —
+  confirm real monthly demand (keyword-volume tool or a small paid smoke test)
+  before building."* A user-supplied or genuinely measured volume keeps the real
+  pass/fail;
+* `classify_rejection` routes it to a new `VALIDATION_REQUIRED` category, checked
+  **before** the margin branch so an indicative negative net is never mislabelled
+  a hard economic rejection.
+
+Net effect: discovered ventures surface the signals the operator *can* trust
+(unmet-need corroboration, trend, demand:supply gap) and an honest
+"validate demand before building" verdict — instead of a confident economics
+number built on a search-result proxy. This **prevents wasting resources** on a
+fabricated volume, and it neither manufactures a pass nor weakens any threshold.
+
+**Capability status:** IMPLEMENTED AND TESTED (estimated-volume → validation_required
+at the council; user-supplied/measured volume keeps real economics; provenance
+labelled `estimated`; classifier routes the category). **Live-proof gate:** the
+same discovered info niche that died `margin_below_threshold` at tick 495 now
+reads `validation_required` on the droplet.

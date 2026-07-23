@@ -211,6 +211,38 @@ def test_verify_venture_high_volume_without_gap_still_fails():
     assert not dc.passed            # level+stability ✓ but gap ✗, trend ✗, social ✗ → 1 of 4
 
 
+def test_estimated_volume_yields_validation_required_not_false_economics(tmp_path):
+    """M5: a DISCOVERED niche's demand volume is an estimate scaled from search-
+    result counts, not a measured search volume. The economics must NOT conclude
+    a pass/fail on it — the honest verdict is validation_required."""
+    from opportunity_os.agents.verifiers import VerificationCouncil
+    from opportunity_os.evidence import classify_rejection, VALIDATION_REQUIRED
+    obs = {"demand": "observed", "supply": "observed", "demand_series": "serper",
+           "volume": "estimated"}                        # <-- volume is an ESTIMATE
+    ds = _NicheDS(_niche(kind="local", providers=2, growth=0, volume=3000, observed=obs),
+                  mentions=[40] * 12)                     # corroborated demand + real 37:1 gap
+    v = VerificationCouncil(Config()).verify_venture(ds, _local_venture_cand(ds))
+    dc = next(c for c in v.checks if c.verifier == "demand_corroboration")
+    gap = next(c for c in v.checks if c.verifier == "competition_gap")
+    ue = next(c for c in v.checks if c.verifier == "unit_economics")
+    assert dc.passed and gap.passed                       # earlier checks pass
+    assert not ue.passed and "validation required" in ue.evidence.lower()
+    assert classify_rejection(f"{ue.name} failed — {ue.evidence}") == VALIDATION_REQUIRED
+
+
+def test_measured_or_user_supplied_volume_keeps_real_economics_verdict():
+    """M5 does not change verdicts for a user-supplied/measured volume — those
+    keep the real pass/fail (no 'volume': 'estimated' provenance)."""
+    from opportunity_os.agents.verifiers import VerificationCouncil
+    obs = {"demand": "user_supplied", "supply": "observed", "demand_series": "serper",
+           "volume": "user_supplied"}
+    ds = _NicheDS(_niche(kind="local", providers=2, growth=0, volume=3000, observed=obs),
+                  mentions=[40] * 12)
+    ue = next(c for c in VerificationCouncil(Config()).verify_venture(ds, _local_venture_cand(ds)).checks
+              if c.verifier == "unit_economics")
+    assert "validation required" not in ue.evidence.lower()   # real economics, not deferred
+
+
 # ------------------------------------------------ seasonal generator
 
 class _SeasonalDS:
