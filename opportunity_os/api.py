@@ -526,8 +526,8 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         from . import selection as sel
         active = store.active_opportunities()
         ready = []
-        for o in sel.rank_execution_ready(active, limit=3):
-            s = sel.action_summary(o)
+        for o in sel.rank_execution_ready(active, limit=3, cfg=cfg):
+            s = sel.action_summary(o, cfg=cfg)
             s["next_step"] = _next_step(o)
             s["action"] = _action_card(o, orch.operator)
             ready.append(s)
@@ -539,8 +539,14 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
             "validation_required": vr,
             "counts": {"active": len(active), "shown": len(ready),
                        "validation_required": len(vr)},
-            "ranking": "conservative expected realized value = worst-case net × "
-                       "calibrated confidence × evidence quality; deduplicated by thesis.",
+            "ranking": "rank_score = conservative expected realized value (worst-case net × "
+                       "calibrated confidence × evidence quality) ADJUSTED for available "
+                       "capital, capital lock-up / time-to-cash, execution difficulty and "
+                       "downside; operator fit is provisional (no profile yet). Deduplicated "
+                       "by thesis.",
+            "available_capital_usd": float(getattr(cfg, "capital_cap_usd", 2000.0)),
+            "operator_profile": "provisional — defaults only (capital cap + Thailand base); "
+                                "not yet personalized",
         }
 
     @app.post("/api/opportunities/{opp_id}/outcome")

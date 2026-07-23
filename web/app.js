@@ -1181,8 +1181,50 @@ async function loadCategories() {
   sel.value = cur;
 }
 
+// Today's best moves — consumes /api/today and shows the same 1–3 execution-ready
+// actions and the validation-required bucket the API ranks, with the honest
+// resource/fit factors and provisional operator-profile note.
+async function loadToday() {
+  const el = $("#today");
+  let d;
+  try { d = await api("/api/today"); } catch { el.hidden = true; return; }
+  const ready = d.execution_ready || [], vr = d.validation_required || [];
+  if (!ready.length && !vr.length) { el.hidden = true; return; }
+  const card = (a, i) => {
+    const f = a.ranking_factors || {};
+    return `<article class="today-card" data-id="${esc(a.id)}">
+      <div class="today-rank">${i + 1}</div>
+      <div class="today-body">
+        <div class="today-title">${esc(a.title)} <span class="chip">${esc(TYPE_LABEL[a.type] || a.type)}</span></div>
+        <div class="today-kpis">
+          <span>Capital <b>${fmtUSD(a.capital_usd)}</b></span>
+          <span>Conservative <b class="pos">${fmtUSD(a.conservative_result_usd)}</b> <i>${esc(a.conservative_result_note || "")}</i></span>
+          <span>Rank value <b>${fmtUSD(a.rank_score)}</b></span>
+          <span>${esc(a.time)} · cash in ~${Math.round(f.time_to_first_cash_days || 0)}d</span>
+          <span>Evidence <b>${Math.round((a.evidence_quality || 0) * 100)}%</b></span>
+        </div>
+        <div class="today-next"><b>Do next:</b> ${esc(a.next_step || "")}</div>
+        <div class="today-risks">${(a.risks || []).map((r) => `<span class="risk">⚠ ${esc(r)}</span>`).join("")}</div>
+      </div></article>`;
+  };
+  el.innerHTML = `
+    <div class="today-head">
+      <h2>Today's best moves</h2>
+      <span class="today-sub">${ready.length} of ${d.counts?.active ?? "—"} verified · ranked by ${esc(d.ranking || "")}</span>
+    </div>
+    <div class="today-grid">${ready.map(card).join("") || '<div class="op-sub">No execution-ready action clears the bar today.</div>'}</div>
+    ${vr.length ? `<div class="today-validate">
+      <div class="today-validate-head">Validate first (${vr.length}) — promising, but demand is only estimated</div>
+      ${vr.map((v) => `<div class="today-validate-row"><b>${esc(v.family || "")}</b> · ${v.demand_points ?? "?"} demand pts · gap ${v.demand_supply_ratio ?? "?"}:1
+         <div class="op-sub">${esc(v.next_step || "")}</div></div>`).join("")}</div>` : ""}
+    <div class="today-foot op-sub">Operator profile: ${esc(d.operator_profile || "provisional")}. Projected/conservative figures — not proven earnings.</div>`;
+  el.hidden = false;
+  el.querySelectorAll(".today-card").forEach((c) =>
+    c.addEventListener("click", () => selectOpportunity(c.dataset.id)));
+}
+
 async function refreshAll() {
-  await Promise.all([loadBriefing(), loadFeed(), loadOps(), loadCategories()]);
+  await Promise.all([loadBriefing(), loadToday(), loadFeed(), loadOps(), loadCategories()]);
 }
 
 function init() {

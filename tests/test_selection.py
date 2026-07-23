@@ -56,6 +56,43 @@ def test_action_summary_carries_decision_fields():
     assert s["capital_usd"] == 120 and "window" in s["time"]
     assert s["conservative_result_usd"] == 160.0        # 80 × 2 units, worst case
     assert isinstance(s["risks"], list) and s["evidence_quality"] <= 1.0
+    # the resource/fit factors the ranking actually uses are exposed + auditable
+    assert set(s["ranking_factors"]) >= {"operator_fit", "capital_fit", "time_fit",
+                                         "execution_fit", "downside_fit",
+                                         "capital_lockup_days", "time_to_first_cash_days"}
+
+
+def test_ranking_actually_uses_capital_time_execution_downside():
+    """Gate #1: rank_score must MOVE with each resource factor, not just display it."""
+    cfg = Config(capital_cap_usd=2000)
+    base = _opp("base", pess_net=100, capital=100, otype="product_arbitrage")
+    over_capital = _opp("cap", pess_net=100, capital=8000)          # can't fully fund
+    assert sel.rank_score(over_capital, cfg) < sel.rank_score(base, cfg)
+    slow = _opp("slow", pess_net=100, capital=100); slow["window_days"] = 150   # slow to recover
+    assert sel.rank_score(slow, cfg) < sel.rank_score(base, cfg)
+    hard = _opp("hard", pess_net=100, capital=100, otype="b2b_service")          # harder to run
+    assert sel.rank_score(hard, cfg) < sel.rank_score(base, cfg)
+    loser = _opp("loss", pess_net=-1, base_net=50, capital=100)                  # worst-case loss
+    assert sel.rank_score(loser, cfg) == 0.0
+    # available-capital sensitivity: more capital lifts a big-ticket edge's rank
+    assert sel.rank_score(over_capital, Config(capital_cap_usd=20000)) > sel.rank_score(over_capital, cfg)
+
+
+def test_higher_theoretical_profit_can_rank_below_leaner_edge():
+    """Gate #5: a fatter worst-case profit ranks BELOW a leaner one when it needs
+    too much capital and rests on weaker evidence."""
+    cfg = Config(capital_cap_usd=2000)
+    fat = _opp("fat", pess_net=3000, capital=8000, single=True, level="partially_verified")
+    lean = _opp("lean", pess_net=400, capital=300, level="multi_source_verified")
+    assert sel.conservative_result_usd(fat) > sel.conservative_result_usd(lean)   # more raw profit
+    assert sel.rank_score(lean, cfg) > sel.rank_score(fat, cfg)                    # yet ranks higher
+    assert sel.rank_execution_ready([fat, lean], cfg=cfg)[0]["id"] == "lean"
+
+
+def test_operator_fit_is_provisional_without_a_profile():
+    """Gate #2: operator fit is honestly labelled provisional (defaults only)."""
+    f = sel.ranking_factors(_opp("x"), Config())
+    assert f["operator_fit"] == 1.0 and "provisional" in f["operator_fit_basis"].lower()
 
 
 def test_risks_flag_single_source_estimated_and_negative():
@@ -87,7 +124,9 @@ def test_today_endpoint_shape(tmp_path):
         d = c.get("/api/today").json()
         assert set(d) >= {"execution_ready", "validation_required", "counts", "as_of_tick"}
         assert len(d["execution_ready"]) <= 3
+        assert "operator_profile" in d and "provisional" in d["operator_profile"].lower()
         for a in d["execution_ready"]:
             assert set(a) >= {"capital_usd", "time", "conservative_result_usd",
-                              "expected_value_usd", "evidence_quality", "risks", "next_step"}
+                              "expected_value_usd", "rank_score", "ranking_factors",
+                              "evidence_quality", "risks", "next_step"}
             assert a["next_step"]
