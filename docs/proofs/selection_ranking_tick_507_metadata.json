@@ -1,0 +1,22 @@
+{
+  "capture_utc": "2026-07-23T14:05:00Z",
+  "note": "Selection final gates LIVE-PROVEN (v1.12.1, tick 507). Gate #1: rank_score uses ALL factors (each in ranking_factors). Gate #5 live before->after: at v1.12.0 the top action was 'buy the lot, sell singles' (conservative $2,902, capital $3,656). At v1.12.1 it ranks #2, BELOW 'underpriced listing' (conservative $1,426, capital $887) \u2014 because $3,656 > the $2,000 available capital gives it capital_fit=0.547, dropping rank_score to $392 vs the leaner edge's $397. Higher theoretical profit ranks lower due to capital. Gate #2: operator_profile='provisional \u2014 defaults only (capital cap + Thailand base); not yet personalized'. Gate #3: index.html #today section + app.js loadToday consume /api/today on the homepage.",
+  "deployed_version": "1.12.1",
+  "production_tick": 507,
+  "endpoint": "GET http://178.128.87.69/api/today",
+  "gate5_before": {
+    "version": "1.12.0",
+    "top_action": "buy the lot, sell singles",
+    "conservative_usd": 2902,
+    "capital_usd": 3656
+  },
+  "gate5_after": {
+    "version": "1.12.1",
+    "rank1": "underpriced listing (cons $1,426, cap $887)",
+    "rank2": "buy the lot (cons $2,902, cap $3,656, capital_fit 0.547)"
+  },
+  "redactions": "none",
+  "sha256": {
+    "selection_ranking_tick_507_today.json": "c7dbd57f9bb20e752913ada32a35e675274ed9705f696aec9b9a6901effcac1b"
+  }
+}
