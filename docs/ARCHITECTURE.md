@@ -850,11 +850,14 @@ demand-only / supply-only / both / eligible). Scheduler state
 (`selection_count`, `last_selected_tick`) lives in a new `niche_measure` table,
 created on open — no destructive migration. All thresholds are in `Config`.
 
-**Capability status:** IMPLEMENTED AND TESTED (13 scheduler tests: reserved auto
-capacity, aging beats a hot niche, cooldown/sufficiency skipped, demand/supply
-balance, explicit budget deferrals, stage progression, and an evidence-sufficient
-discovered niche reaching the council with a verdict; M2/M3/watchlist/physical
-regressions covered by the full suite). **Live-proof gate (the M4 completion
-gate):** a genuinely auto-discovered production niche progresses
-`no_observed_provenance → still_gathering → demand+supply measured → eligible →
-generator → council → explicit verdict`.
+**Capability status:** IMPLEMENTED, TESTED (13 scheduler tests + full suite 328),
+DEPLOYED (v1.10.0), and **LIVE-PROVEN** (tick 481 fair allocation; tick 495 the
+M4 completion gate). At tick 495 the HackerNews-discovered niche
+`disc_n_how_do_you_handle_the_actual_situation…` (info, never in the watchlist)
+accumulated 6 demand points + observed supply under the fair scheduler, entered
+via `steady_state` (no anomaly), routed to InfoProductGenerator, and the council
+returned an explicit honest verdict — rejected `margin_below_threshold`
+(pessimistic net -$4/mo). No evidence fabricated; the ≥6 threshold held (the burst
+changed only measurement cadence). This closes the full Milestone 4 autonomous
+discovery→council claim. See `docs/PROOF_M4_1_autonomous_council.md` +
+`docs/proofs/m41_*`.

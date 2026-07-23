@@ -1,0 +1,22 @@
+{
+  "capture_utc": "2026-07-23T11:55:00Z",
+  "note": "M4 COMPLETION PROOF: a genuinely auto-discovered production niche reached the existing council and received an honest verdict. Niche disc_n_how_do_you_handle_the_actual_situation_with_so_m was discovered from HACKERNEWS (not the hand-typed watchlist; source=hackernews, first seen 2026-07-18) as an unmet-need post. Under the fair scheduler (OOS_SERPER_EVERY=1 burst) it accumulated demand via Serper (query 'do handle actual situation so much', 10 results) to 6 demand points and an observed supply side (3 providers). At tick 495 it became steady-eligible (>=6 pts + observed supply), entered the pipeline via entry_path=steady_state (NO anomaly), routed to InfoProductGenerator, faced verify_venture, and received an explicit verdict: REJECTED / margin_below_threshold \u2014 'Positive at 45% of modelled demand failed \u2014 Pessimistic net $-4/mo; startup $60 -> payback 60 months.' Demand corroborated (6 pts, 100:1 gap) and competition passed; it died honestly on unit economics. venture_eval ledger: tick 495 eligible=1 verdict=rejected; tick 496 eligible=0 (post-eval cooldown). No evidence fabricated; no threshold weakened (steady_min_demand_points stayed 6). Thai discovered niches also reached the council via the anomaly path (research_required) in the same window.",
+  "deployed_version": "1.10.0",
+  "production_tick": 495,
+  "burst_config": "OOS_SERPER_EVERY=1 (temporary drop-in override to accelerate the proof; reverted to default 12 after). Not an evidence-threshold change.",
+  "niche_id": "disc_n_how_do_you_handle_the_actual_situation_with_so_m",
+  "discovery_source": "hackernews",
+  "in_manual_watchlist": false,
+  "droplet": "178.128.87.69 (open-mode HTTP API)",
+  "endpoints": {
+    "m41_council_tick_495_cycle.json": "POST http://178.128.87.69/api/cycle (tick 495 report)",
+    "m41_council_tick_495_observability.json": "GET http://178.128.87.69/api/observability?cycles=20",
+    "m41_council_tick_495_discovery.json": "GET http://178.128.87.69/api/discovery?kind=niche&limit=60"
+  },
+  "redactions": "none \u2014 open-mode public API; no credentials in responses",
+  "sha256": {
+    "m41_council_tick_495_cycle.json": "7a81129fcd2e8980f6d6ca60fda95440a6f7e982e8bf872b35b2a59fe74f7113",
+    "m41_council_tick_495_observability.json": "2ccf9fdb43d046a043e53ae03e6c362cc8f977ae00a54ef3dc37cdb5837ecbf9",
+    "m41_council_tick_495_discovery.json": "8be2aabbd4b06b69e11d59e6b22f62415a95a9cc7450a5340218ca63e2c5d208"
+  }
+}
