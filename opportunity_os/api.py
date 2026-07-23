@@ -506,6 +506,43 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
                          "pct": round(100 * len(done) / n_steps) if n_steps else 0}
         return o
 
+    def _next_step(o: dict) -> str:
+        """One-line exact next move for the 'today' view."""
+        card = _action_card(o, orch.operator)
+        if card and card.get("type") == "flip":
+            b, s = card["buy"], card["sell"]
+            return (f"Buy on {b['venue']} at ≤ ${b['max_price_usd']:.0f}, "
+                    f"resell on {s['venue']} at ~${s['price_usd']:.0f}.")
+        steps = (o.get("playbook") or {}).get("steps") or []
+        first = steps[0]["title"] if steps else "stand up the offer and run a small demand test"
+        return f"Start the {(o.get('category') or '').replace('_', ' ')}: {first}."
+
+    @app.get("/api/today")
+    def today():
+        """Today's best 1–3 moves: execution-ready opportunities ranked by
+        conservative expected realized value, plus promising niches that need
+        demand validation first. The honest 'what do I do right now' view."""
+
+        from . import selection as sel
+        active = store.active_opportunities()
+        ready = []
+        for o in sel.rank_execution_ready(active, limit=3):
+            s = sel.action_summary(o)
+            s["next_step"] = _next_step(o)
+            s["action"] = _action_card(o, orch.operator)
+            ready.append(s)
+        evals = store.recent_venture_evals(150) if hasattr(store, "recent_venture_evals") else []
+        vr = sel.validation_required(evals, limit=5)
+        return {
+            "as_of_tick": store.meta_get("tick", 0),
+            "execution_ready": ready,
+            "validation_required": vr,
+            "counts": {"active": len(active), "shown": len(ready),
+                       "validation_required": len(vr)},
+            "ranking": "conservative expected realized value = worst-case net × "
+                       "calibrated confidence × evidence quality; deduplicated by thesis.",
+        }
+
     @app.post("/api/opportunities/{opp_id}/outcome")
     def record_outcome(opp_id: str, body: OutcomeIn):
         o = store.get_opportunity(opp_id)

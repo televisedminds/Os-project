@@ -904,3 +904,32 @@ and **LIVE-PROVEN** (tick 503). The same auto-discovered info niche that died
 signal, not a measured search volume … confirm real monthly demand before
 building."* No threshold weakened; no pass manufactured. See
 `docs/proofs/m5_tick_503_*`.
+
+## 19. v1.12.0 — Selection: today's best 1–3 moves
+
+The pipeline publishes ~185 verified opportunities; a Thailand-based operator can
+act on a couple. `selection.py` + `GET /api/today` turn the wall into a decision.
+
+* **Expected realized value** (conservative): `worst-case net × calibrated
+  confidence × evidence quality`. The net is always the *pessimistic* case
+  (per-unit total for a flip, monthly for a venture), never the optimistic base;
+  a negative pessimistic case contributes 0, it doesn't subtract. **Evidence
+  quality** discounts by verification level, again for single-source evidence,
+  and again for any `estimated` economic input — so a flashy number built on weak
+  evidence ranks below a modest, well-corroborated one.
+* **Two buckets.** `execution_ready` — the best distinct actions (deduplicated by
+  thesis, so twenty listings of one edge collapse to one), each with capital, the
+  time (window or payback), the conservative result, its **risks**, its evidence
+  quality, and the **exact next step** (buy-here-at-≤$X, resell-there card).
+  `validation_required` — promising discovered niches that reached the council but
+  whose demand volume is only estimated: shown with what to validate (a
+  keyword-volume tool or a small paid smoke test) before any capital goes in.
+* Honest by construction: it never surfaces an estimated-demand venture as
+  execution-ready (those are validation_required), and every projected number
+  carries its evidence quality so it can't read as proven.
+
+**Capability status:** IMPLEMENTED AND TESTED (7 tests: conservative risk-adjusted
+ranking, estimated-input discount, thesis dedup + top-N, decision fields, risk
+flags, the validation-required bucket, and the `/api/today` shape). **Live-proof
+gate:** `/api/today` on the droplet returns the ranked best actions with their
+capital/time/conservative-result/risks/next-step, and a validation-required list.
