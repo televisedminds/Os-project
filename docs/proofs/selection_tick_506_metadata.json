@@ -1,0 +1,17 @@
+{
+  "capture_utc": "2026-07-23T13:35:00Z",
+  "note": "LIVE PROOF of Selection (GET /api/today) on v1.11.0... v1.12.0, tick 506. From 211 active opportunities it returns the best 3 execution-ready actions ranked by conservative expected realized value (worst-case net x calibrated confidence x evidence quality, deduped by thesis), each with capital, time, conservative result, expected value, evidence_quality, verification_level, honest risks (single-source / partially verified), and the exact next step + money timeline + decay forecast. A separate validation_required bucket (5) surfaces discovered niches (e.g. disc_n_13, local_service, 6 demand pts, 54:1 gap) with WHAT to validate before any capital goes in \u2014 because their demand volume is only estimated. Estimated-demand ventures never appear as execution-ready. evidence_quality 0.42 on the top actions honestly reflects single-source eBay asking-price flips.",
+  "deployed_version": "1.12.0",
+  "production_tick": 506,
+  "endpoint": "GET http://178.128.87.69/api/today",
+  "counts": {
+    "active": 211,
+    "execution_ready_shown": 3,
+    "validation_required": 5
+  },
+  "droplet": "178.128.87.69 (open-mode HTTP API)",
+  "redactions": "none \u2014 open-mode public API; no credentials in responses",
+  "sha256": {
+    "selection_tick_506_today.json": "fda20c70cb88bbb9f7a85c555e34e5147a452d719f9d4ae952e23e18967eb70e"
+  }
+}
