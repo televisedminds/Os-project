@@ -46,7 +46,7 @@ class LiveMarket:
         self.cfg = config
         self.db = store
         self.adapters = adapters if adapters is not None else build_adapters(config)
-        self.watch = wl.load(config.watchlist_path)
+        self.watch = wl.load_or_example(config.watchlist_path)
         self.tick_no = int(store.meta_get("live_tick", 0))
         self.errors: list[str] = []
         self.scanned_this_tick: set[str] = set()
@@ -136,7 +136,7 @@ class LiveMarket:
     def tick(self) -> None:
         """One observation pass: fetch, estimate, persist."""
 
-        self.watch = wl.load(self.cfg.watchlist_path)      # pick up edits live
+        self.watch = wl.load_or_example(self.cfg.watchlist_path)   # pick up edits live
         self.tick_no += 1
         t = self.tick_no
         self.errors = []

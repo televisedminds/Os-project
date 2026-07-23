@@ -132,6 +132,28 @@ def validate(w: Watchlist) -> list[str]:
     return problems
 
 
+# The bundled starter watchlist (real, observable products) that ships with the
+# repo — used as a safe fallback so live mode STARTS instead of crashing when the
+# operator hasn't created their own watchlist.json yet.
+EXAMPLE_PATH = Path(__file__).resolve().parent.parent.parent / "watchlist.example.json"
+
+
+def load_or_example(path: Path) -> Watchlist:
+    """Load the operator's watchlist, falling back to the bundled example if their
+    file doesn't exist yet. Live mode then boots on a real starter seed (eBay
+    queries → real dislocation opportunities) instead of dying on a missing file;
+    the operator customises watchlist.json when ready. The returned watchlist keeps
+    the operator's intended `path`, so edits there are picked up on the next tick."""
+
+    if path.exists():
+        return load(path)
+    if EXAMPLE_PATH.exists():
+        w = load(EXAMPLE_PATH)
+        w.path = path                 # the operator's file is where edits are expected
+        return w
+    return load(path)                 # neither exists: raise the original clear error
+
+
 def load(path: Path) -> Watchlist:
     if not path.exists():
         raise FileNotFoundError(

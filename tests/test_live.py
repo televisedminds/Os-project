@@ -245,6 +245,21 @@ def test_watchlist_validation(tmp_path):
     assert w.product("gba").venues() == ["ebay_us", "shopee_th"]
 
 
+def test_watchlist_falls_back_to_example_when_missing(tmp_path):
+    """Live mode must BOOT on the bundled starter seed instead of crashing when
+    the operator hasn't created watchlist.json yet — the #1 blocker to going live."""
+
+    missing = tmp_path / "nope_watchlist.json"
+    w = wl.load_or_example(missing)
+    assert w.products                                   # real starter products loaded
+    assert w.path == missing                            # edits still expected at the operator's file
+    # the bundled example is itself valid (fallback can't raise on a broken seed)
+    assert wl.load(wl.EXAMPLE_PATH).products
+    # a real file still wins over the fallback
+    real = write_watchlist(tmp_path, [PRODUCT], [NICHE])
+    assert wl.load_or_example(real).product("gba") is not None
+
+
 def test_manual_listing_requires_price(tmp_path):
     bad = write_watchlist(tmp_path, [{"id": "x", "name": "X", "category": "toys", "weight_kg": 1,
                                       "manual_listings": {"shopee_th": {"stock": 3}}}])

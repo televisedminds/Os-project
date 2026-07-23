@@ -1051,3 +1051,32 @@ captured as a structured before→after `weight_audit` row. The honest boundarie
 held live — calibration `1.0 → 1.0` and `ebay_us` reliability `0.8 → 0.8`
 unchanged (an abandonment is no cash test), and the signal was `basis:
 realized_cash`, never the prediction. See `docs/proofs/outcome_learning_*`.
+
+## 22. v1.14.1 — Live mode made bootable (the flip to real data)
+
+Live mode was already built and thoroughly tested — `tests/test_live.py` proves
+the full pipeline publishes verified flips, single-snapshot **dislocation** flips
+with the exact eBay buy URL, and demand-ramped niches, all from real adapters
+(`EbayAdapter`, `SerperAdapter`, `RedditAdapter`, `ScrapingDog`, `FxAdapter`). The
+`_guard_mode` check keeps a database to one mode (no sim/live mixing), and the
+dashboard already flips its badge/footer/tick to LIVE off `/api/health`. Two things
+kept it from being activated: it required a fresh DB (the guard) and it **crashed
+without a `watchlist.json`** (which is gitignored).
+
+`watchlist.load_or_example` fixes the crash: if the operator's watchlist file
+doesn't exist, live mode boots on the bundled `watchlist.example.json` (five real,
+eBay-observable products → real dislocation opportunities) while still expecting
+edits at the operator's path. Production connectors were verified live via
+`POST /api/settings/test`: **eBay Browse OAuth OK against api.ebay.com**, Serper OK,
+Claude OK, ScrapingDog key set.
+
+**Activation** (operator-run, reversible — demo and live keep separate DBs):
+`OOS_MODE=live` + a fresh `OOS_DB` (e.g. `data/live.db`), then restart. See
+`docs/LIVE.md`. Because eBay Browse is ~5,000 calls/day, a conservative auto-cycle
+(≈5 min) is recommended once the watchlist grows.
+
+**Capability status:** live pipeline IMPLEMENTED AND TESTED (the `test_live.py`
+suite); connectors LIVE-PROVEN to authenticate on production; the watchlist
+bootability fix TESTED. The full-feed flip itself is **operator-gated** (an env
+change on the droplet) and will be LIVE-PROVEN once real eBay data flows through a
+production cycle and a real observation/opportunity is captured.
