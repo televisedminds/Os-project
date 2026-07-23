@@ -306,6 +306,24 @@ class Store:
                 (opportunity_id,)).fetchall()
         return sorted(r["step_order"] for r in rows)
 
+    def deal_started_ts(self, opportunity_id: str) -> float | None:
+        """When the operator first started acting on this deal — the earliest of
+        any playbook-step check-off and the first lifecycle transition. Used to
+        anchor the projected money/time schedule to a real start day. None until
+        the deal is actually begun (no schema change: derived from existing ts)."""
+
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT MIN(ts) AS t FROM mission_progress WHERE opportunity_id=?",
+                (opportunity_id,)).fetchone()
+            cs = self._conn.execute(
+                "SELECT state, updated_ts FROM chat_state WHERE opportunity_id=?",
+                (opportunity_id,)).fetchone()
+        candidates = [row["t"]] if row and row["t"] is not None else []
+        if cs and cs["state"] not in (None, "not_started"):
+            candidates.append(cs["updated_ts"])
+        return min(candidates) if candidates else None
+
     # ---------------------------------------------------- live observations
 
     def add_live_snapshot(self, entity_id: str, venue: str, tick: int, snap: dict,

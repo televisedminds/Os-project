@@ -928,8 +928,54 @@ act on a couple. `selection.py` + `GET /api/today` turn the wall into a decision
   execution-ready (those are validation_required), and every projected number
   carries its evidence quality so it can't read as proven.
 
-**Capability status:** IMPLEMENTED AND TESTED (7 tests: conservative risk-adjusted
+**Capability status:** IMPLEMENTED AND TESTED (10 tests: conservative risk-adjusted
 ranking, estimated-input discount, thesis dedup + top-N, decision fields, risk
-flags, the validation-required bucket, and the `/api/today` shape). **Live-proof
-gate:** `/api/today` on the droplet returns the ranked best actions with their
-capital/time/conservative-result/risks/next-step, and a validation-required list.
+flags, the validation-required bucket, the `/api/today` shape, and — added at
+v1.12.1 — ranking that *moves* with every resource/fit factor, a leaner edge
+outranking a fatter one, and provisional operator-fit labelling). **Live-proven**
+at tick 507: see `docs/proofs/selection_ranking_tick_507_*`.
+
+## 20. v1.13.0 — Execution guidance: the selected action becomes a driven plan
+
+Selection hands you the best 1–3 moves. Everything needed to *run* one already
+existed — `build_playbook` (the steps), `executability.assess` (can Thailand do
+it, with honest UNKNOWNs), the lifecycle machine (`execution.next_action`), the
+priced money timeline. But it was scattered across two endpoints, and the two
+progress signals **disagreed**: ticking a playbook step (`mission_progress`) and
+the chat lifecycle state (`chat_state`) never talked to each other. `guide.py`
+turns that content into *"here's exactly what to do next, and where you are on the
+clock"* for the selected action.
+
+* **One effective stage.** `effective_stage` reconciles both signals — the
+  furthest-along of the chat lifecycle state and the stage implied by ticked
+  playbook steps (per-kind step→stage maps). Tick "list it" *or* record a
+  purchase in chat; the stage advances either way, and they can no longer
+  contradict each other.
+* **The single next step.** `next_step` takes the coarse lifecycle action for the
+  stage you're at and enriches it with the hard numbers from the priced card —
+  *buy ≤ $486/unit, capital ≈ $887*, or *list on eBay US at ~$2,451* — so it reads
+  as "do exactly this", not a category.
+* **A dated money/time clock.** `schedule` anchors the projected timeline to
+  `db.deal_started_ts` (the earliest of any step check-off / first lifecycle
+  transition — derived from existing timestamps, no schema change). Each milestone
+  is marked done / today / upcoming by elapsed days. **Everything here is PLAN
+  progress and PROJECTED money** — "done" means a milestone's projected day has
+  passed, never that cash arrived. Realised-cash tracking is the next milestone
+  (Outcome learning); this guide never claims money was made.
+* **The Thailand gate up front.** `readiness` surfaces the executability verdict
+  (runnable? which questions are UNKNOWN / hard blockers) before any capital moves.
+* Surfaced at `GET /api/opportunities/{id}/execution`, as `execution_guide` on the
+  detail response, and as a compact guide embedded in each `/api/today` action
+  (stage, the concrete next move, the TH-runnable flag, day-N). Frontend: an
+  execution-guide panel leads the detail's step-by-step, and a status row rides on
+  each today card.
+
+**Capability status:** IMPLEMENTED AND TESTED (16 tests: stage maps for flip +
+venture, effective-stage reconciliation of both signals, state-aware concrete next
+step, schedule anchoring with done/today/upcoming, PROJECTED-not-realised
+labelling, ETA fallback, the Thailand-readiness gate + live-assess fallback, guide
+composition + next-flag, the compact today embed, the `/execution` endpoint + 404,
+the detail attach, and `deal_started_ts`). **Live-proof gate:** on the droplet,
+`GET /api/opportunities/{id}/execution` returns a coherent guide for a real
+production opportunity — single next step with hard numbers, the TH gate, and the
+dated schedule — and `/api/today` embeds the compact guide per action.

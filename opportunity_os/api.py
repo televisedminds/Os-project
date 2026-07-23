@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from statistics import fmean
 
-from . import __version__, economics, links, thailand
+from . import __version__, economics, guide as guide_mod, links, thailand
 from .config import PLANS, WEB_DIR, Config
 from .db import Store
 from .models import OppStatus
@@ -504,6 +504,10 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         n_steps = len((o.get("playbook") or {}).get("steps", []) or [])
         o["progress"] = {"done_steps": done,
                          "pct": round(100 * len(done) / n_steps) if n_steps else 0}
+        # The driven execution guide (single next step + TH gate + dated schedule),
+        # gated with the rest of the Pro execution layer.
+        if (o.get("playbook") is not None) or p["playbooks"]:
+            o["execution_guide"] = _execution_guide(o, action_card=o["action"])
         return o
 
     def _next_step(o: dict) -> str:
@@ -517,6 +521,31 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         first = steps[0]["title"] if steps else "stand up the offer and run a small demand test"
         return f"Start the {(o.get('category') or '').replace('_', ' ')}: {first}."
 
+    def _execution_guide(o: dict, action_card: dict | None = None) -> dict:
+        """Compose the driven, dated execution guide for one opportunity: the
+        effective stage (reconciling playbook check-offs with the chat lifecycle
+        state), the single next step, the Thailand-readiness gate, and the
+        projected money/time schedule anchored to the day the deal started."""
+
+        opp_id = o.get("id")
+        done = store.get_progress(opp_id) if opp_id else []
+        cs = store.get_chat_state(opp_id).get("state") if opp_id else "not_started"
+        started = store.deal_started_ts(opp_id) if opp_id else None
+        card = action_card if action_card is not None else _action_card(o, orch.operator)
+        return guide_mod.build_guide(o, done_steps=done, chat_state=cs,
+                                     started_ts=started, action_card=card)
+
+    @app.get("/api/opportunities/{opp_id}/execution")
+    def get_execution(opp_id: str):
+        """The execution guide for one selected action: 'here's exactly what to
+        do next, whether Thailand can do it, and where you are on the clock.'
+        PLAN progress + PROJECTED money; realised cash is tracked separately."""
+
+        o = store.get_opportunity(opp_id)
+        if not o:
+            raise HTTPException(404, "unknown opportunity id")
+        return _execution_guide(o)
+
     @app.get("/api/today")
     def today():
         """Today's best 1–3 moves: execution-ready opportunities ranked by
@@ -529,7 +558,9 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         for o in sel.rank_execution_ready(active, limit=3, cfg=cfg):
             s = sel.action_summary(o, cfg=cfg)
             s["next_step"] = _next_step(o)
-            s["action"] = _action_card(o, orch.operator)
+            card = _action_card(o, orch.operator)
+            s["action"] = card
+            s["guide"] = guide_mod.compact(_execution_guide(o, action_card=card))
             ready.append(s)
         evals = store.recent_venture_evals(150) if hasattr(store, "recent_venture_evals") else []
         vr = sel.validation_required(evals, limit=5)

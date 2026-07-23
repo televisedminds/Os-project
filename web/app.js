@@ -390,7 +390,7 @@ function renderDetail(o) {
     ${sellingKit(o)}
     ${discoveryReport(o)}
 
-    <div class="d-section"><h3>Step-by-step instructions</h3>${missionBar(o)}${playbook(o)}</div>
+    <div class="d-section"><h3>Step-by-step instructions</h3>${executionGuide(o)}${missionBar(o)}${playbook(o)}</div>
 
     <div class="d-section"><h3>AI investigation timeline</h3>
       <div class="why-meta">Ran automatically on pass ${o.tick_updated}${o.updated_ts ?
@@ -766,6 +766,53 @@ function discoveryReport(o) {
         <span class="disc-v">${esc(r.value)}</span>
         <span class="disc-d ${cls}">${esc(r.delta || "")}</span></div>`;
     }).join("")}</div></div>`;
+}
+
+/* Execution guide: leads the step-by-step with the ONE next move, the Thailand
+   gate, and where you are on the (projected) money/time clock. Consumes
+   o.execution_guide (server-composed, reconciling step check-offs + lifecycle
+   state). PLAN progress + PROJECTED money — never realised cash. */
+function executionGuide(o) {
+  const g = o.execution_guide;
+  if (!g) return "";
+  const ns = g.next_step || {}, rd = g.readiness || {}, sc = g.schedule || {};
+  const open = (rd.unknowns || []).length + (rd.blockers || []).length;
+  const gate = rd.ready
+    ? `<span class="eg-gate ok">✓ Runnable from Thailand</span>`
+    : `<span class="eg-gate warn">⚠ ${open} open question${open === 1 ? "" : "s"} from Thailand</span>`;
+  const openList = (!rd.ready && open) ? `<ul class="eg-open">${
+    [...(rd.blockers || []).map((q) => ["⛔", "neg", q]),
+     ...(rd.unknowns || []).map((q) => ["❓", "", q])]
+      .map(([ic, cls, q]) => `<li class="${cls}">${ic} ${esc(q)}</li>`).join("")}</ul>` : "";
+  const sched = (sc.milestones && sc.milestones.length) ? `
+    <div class="eg-sched">
+      <div class="eg-sched-head">${sc.anchored
+        ? `Day <b>${sc.day}</b> of this deal`
+        : `Money/time plan <span class="eg-mut">— starts the day you begin</span>`}
+        <span class="eg-mut"> · projected, not realised cash</span></div>
+      <div class="eg-track">${sc.milestones.map((m) => {
+        const cls = m.status === "done" ? "done" : m.status === "today" ? "today" : "";
+        const amt = (m.amount_usd === null || m.amount_usd === undefined) ? ""
+          : `<span class="eg-amt ${m.amount_usd < 0 ? "neg" : m.amount_usd > 0 ? "pos" : ""}">${fmtUSD(m.amount_usd)}</span>`;
+        const day = (m.day === null || m.day === undefined) ? "—" : "d" + m.day;
+        return `<div class="eg-ms ${cls}"><span class="eg-dot"></span>
+          <span class="eg-day">${day}</span><span class="eg-lbl">${esc(m.label || "")}</span>${amt}</div>`;
+      }).join("")}</div>
+    </div>` : "";
+  return `<div class="exec-guide">
+    <div class="eg-top">
+      <span class="eg-stage">${esc((g.stage || "not_started").replace(/_/g, " "))}</span>${gate}
+      <span class="eg-prog">${g.progress.done}/${g.progress.total} steps</span>
+    </div>
+    <div class="eg-next">
+      <div class="eg-next-k">DO THIS NEXT</div>
+      <div class="eg-next-t">${esc(ns.title || "")}</div>
+      ${ns.concrete ? `<div class="eg-conc">${esc(ns.concrete)}</div>` : ""}
+      ${ns.why ? `<div class="eg-why">${esc(ns.why)}</div>` : ""}
+    </div>
+    ${openList}
+    ${sched}
+  </div>`;
 }
 
 /* Mission header: quest-style progress over the playbook. */
@@ -1191,7 +1238,14 @@ async function loadToday() {
   const ready = d.execution_ready || [], vr = d.validation_required || [];
   if (!ready.length && !vr.length) { el.hidden = true; return; }
   const card = (a, i) => {
-    const f = a.ranking_factors || {};
+    const f = a.ranking_factors || {}, gd = a.guide || {};
+    const started = gd.stage && gd.stage !== "not_started";
+    const guideRow = `<div class="today-guide">
+      <span class="eg-gate ${gd.ready_in_thailand ? "ok" : "warn"}">${gd.ready_in_thailand
+        ? "✓ TH-runnable" : "⚠ " + (gd.open_questions || 0) + " TH question" + ((gd.open_questions === 1) ? "" : "s")}</span>
+      ${started ? `<span class="chip">${esc(gd.stage.replace(/_/g, " "))}${gd.on_day != null ? " · day " + gd.on_day : ""}</span>` : ""}
+      ${gd.progress_pct ? `<span class="chip">${gd.progress_pct}% done</span>` : ""}
+    </div>`;
     return `<article class="today-card" data-id="${esc(a.id)}">
       <div class="today-rank">${i + 1}</div>
       <div class="today-body">
@@ -1203,7 +1257,8 @@ async function loadToday() {
           <span>${esc(a.time)} · cash in ~${Math.round(f.time_to_first_cash_days || 0)}d</span>
           <span>Evidence <b>${Math.round((a.evidence_quality || 0) * 100)}%</b></span>
         </div>
-        <div class="today-next"><b>Do next:</b> ${esc(a.next_step || "")}</div>
+        <div class="today-next"><b>Do next:</b> ${esc(gd.next_do || a.next_step || "")}</div>
+        ${guideRow}
         <div class="today-risks">${(a.risks || []).map((r) => `<span class="risk">⚠ ${esc(r)}</span>`).join("")}</div>
       </div></article>`;
   };
