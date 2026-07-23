@@ -809,3 +809,52 @@ enough real observations. `/api/discovery` uses the same parameter (the
 already at 2 demand points). No *discovered* niche has verified yet; that is gated
 on Serper measurement accumulating ≥6 points + observed supply (the next
 bottleneck). See `docs/PROOF_M4_discovered_niches.md` + `docs/proofs/m4_tick_468_*`.
+
+## 17. v1.10.0 — fair measurement scheduling (Milestone 4.1)
+
+M4 let discovered niches into the watched set, but a follow-up audit showed the
+measurement budget didn't reach them. **Measured pre-fix allocation** (production,
+tick 468): the 3 watchlist niches sat at 16 demand points each; of the 17
+discovered niches **11 had 0 demand observations** and **13 had no supply
+observation**. Root cause: `live.py` walked `_all_niches()` in **fixed order**
+(watchlist first, then discovered by score) draining a shared
+`serper_niche_budget`, each niche costing up to 2 slots — the budget was spent by
+the first ~6 niches **every pass**, so low-score discovered niches were
+deterministically starved (top-N truncation, not a cooldown bug).
+
+**The fix — `measurement.py`, a pure, deterministic scheduler.** Each pass:
+* every niche is scored for the ONE measurement that unlocks its next research
+  **stage** — first demand → more demand → supply → refresh (`stage_and_need`);
+* a configurable share of the budget is **reserved for auto-discovered niches**
+  (`measure_auto_reserve_frac`), so a hot watchlist niche can't take every slot;
+* an **aging** term (`measure_aging_coef` × ticks waited) lifts long-waiters, so
+  no eligible niche starves — every one has a bounded wait;
+* niches inside a measurement **cooldown**, or whose evidence is already
+  **sufficient**, are skipped with an explicit reason (a saturated watchlist
+  niche stops consuming budget, freeing it for discovered niches);
+* every niche ends a pass in exactly one state — `selected_for_demand_scan`,
+  `selected_for_supply_scan`, `waiting_for_cooldown`, `deferred_by_budget`
+  (with a queue position), or `evidence_sufficient` — **no silent starvation**.
+
+**Demand/supply balance:** once a niche has any demand, an unobserved supply side
+outranks more demand (a one-shot supply scan unlocks eligibility fastest), so
+niches don't accumulate demand forever without supply. **Cost control:** the
+scheduler spends a request only on a niche whose next-stage evidence is actually
+missing and out of cooldown; sufficient/fresh niches cost nothing.
+
+`live.py` now runs the free Reddit pass, asks the scheduler for the plan, executes
+only the selected Serper scans, and persists the allocation
+(`/api/observability → measurement`: budget, selected/deferred/cooldown counts,
+auto vs manual, per-niche waiting age, and auto-niche health — zero-measurement /
+demand-only / supply-only / both / eligible). Scheduler state
+(`selection_count`, `last_selected_tick`) lives in a new `niche_measure` table,
+created on open — no destructive migration. All thresholds are in `Config`.
+
+**Capability status:** IMPLEMENTED AND TESTED (13 scheduler tests: reserved auto
+capacity, aging beats a hot niche, cooldown/sufficiency skipped, demand/supply
+balance, explicit budget deferrals, stage progression, and an evidence-sufficient
+discovered niche reaching the council with a verdict; M2/M3/watchlist/physical
+regressions covered by the full suite). **Live-proof gate (the M4 completion
+gate):** a genuinely auto-discovered production niche progresses
+`no_observed_provenance → still_gathering → demand+supply measured → eligible →
+generator → council → explicit verdict`.

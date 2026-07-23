@@ -100,6 +100,12 @@ CREATE TABLE IF NOT EXISTS venture_eval (
     verdict TEXT, category TEXT, reason TEXT,
     PRIMARY KEY (entity_id, tick));
 CREATE INDEX IF NOT EXISTS idx_venture_eval_tick ON venture_eval(tick);
+-- Milestone 4.1: per-niche measurement-scheduler state (fair allocation of the
+-- scarce Serper demand/supply budget). selection_count + last-selected drive the
+-- aging/fairness tiebreaks and make starvation visible.
+CREATE TABLE IF NOT EXISTS niche_measure (
+    niche_id TEXT PRIMARY KEY, selection_count INTEGER DEFAULT 0,
+    last_selected_tick INTEGER, updated_ts REAL);
 """
 
 
@@ -456,6 +462,34 @@ class Store:
                 "SELECT * FROM venture_eval WHERE entity_id=? AND eligible=1 "
                 "ORDER BY tick DESC LIMIT 1", (entity_id,)).fetchone()
         return dict(row) if row else None
+
+    # ---- Milestone 4.1: measurement-scheduler state ------------------------
+
+    def niche_measure_state(self) -> dict[str, dict]:
+        """selection_count + last_selected_tick per niche (scheduler input)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT niche_id, selection_count, last_selected_tick FROM niche_measure").fetchall()
+        return {r["niche_id"]: {"selection_count": r["selection_count"] or 0,
+                                "last_selected_tick": r["last_selected_tick"]} for r in rows}
+
+    def bump_niche_measure(self, niche_id: str, tick: int) -> None:
+        """Record that a niche was SELECTED for a scan this pass."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO niche_measure(niche_id,selection_count,last_selected_tick,updated_ts) "
+                "VALUES(?,1,?,?) ON CONFLICT(niche_id) DO UPDATE SET "
+                "selection_count=niche_measure.selection_count+1, "
+                "last_selected_tick=excluded.last_selected_tick, updated_ts=excluded.updated_ts",
+                (niche_id, tick, time.time()))
+
+    def save_measure_allocation(self, tick: int, report: dict, schedules: list[dict]) -> None:
+        """Persist the latest measurement-allocation pass for observability."""
+        self.meta_set("measure_allocation", {"tick": tick, "report": report,
+                                             "schedules": schedules, "ts": time.time()})
+
+    def latest_measure_allocation(self) -> dict:
+        return self.meta_get("measure_allocation", {}) or {}
 
     def recent_venture_evals(self, limit: int = 60) -> list[dict]:
         with self._lock:

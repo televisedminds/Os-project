@@ -176,6 +176,22 @@ class Config:
     venture_stability_retention: float = field(
         default_factory=lambda: float(os.environ.get("OOS_VENTURE_STABILITY_RETENTION", "0.8")))
 
+    # Fair measurement scheduling (Milestone 4.1): the Serper demand/supply
+    # budget is scarce, so it is allocated by research stage with a reserved
+    # share for auto-discovered niches and an aging term so nothing starves.
+    #   * auto_reserve_frac: min share of each pass reserved for discovered niches;
+    #   * aging_coef: priority gained per tick waited (prevents indefinite starvation);
+    #   * manual_bonus: baseline priority kept for hand-typed watchlist niches;
+    #   * cooldown_ticks: don't re-demand-scan a niche within this many ticks.
+    measure_auto_reserve_frac: float = field(
+        default_factory=lambda: float(os.environ.get("OOS_MEASURE_AUTO_RESERVE", "0.5")))
+    measure_aging_coef: float = field(
+        default_factory=lambda: float(os.environ.get("OOS_MEASURE_AGING", "1.0")))
+    measure_manual_bonus: float = field(
+        default_factory=lambda: float(os.environ.get("OOS_MEASURE_MANUAL_BONUS", "5.0")))
+    measure_cooldown_ticks: int = field(
+        default_factory=lambda: int(os.environ.get("OOS_MEASURE_COOLDOWN", "3")))
+
     # Home base: the operator is in Thailand. Every opportunity is assessed
     # for buy/sell feasibility from Thailand.
     home_country: str = "TH"

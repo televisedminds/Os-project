@@ -134,13 +134,16 @@ def test_serper_adapter_counts_and_degrades():
 
 
 def test_serper_feeds_niche_demand_when_reddit_dark(live_cfg):
-    """No Reddit key → the Serper series drives niche momentum instead."""
+    """No Reddit key → the Serper series drives niche momentum instead. The fair
+    scheduler (M4.1) alternates demand/supply and stops once evidence is
+    sufficient, so the series accrues toward the demand-point floor with real
+    momentum rather than one point per tick forever."""
 
     from opportunity_os.market.adapters import SerperAdapter
     store = Store(live_cfg.db_path)
     live_cfg.serper_api_key = "sk-serper"
-    # 10 mention measurements + 1 one-off supply scan on the first pass.
-    counts = iter([2, 2, 2, 3, 6, 9, 10, 10, 10, 10, 10])
+    live_cfg.measure_cooldown_ticks = 0                      # no throttle in this every-tick test
+    counts = iter([2, 2, 2, 3, 6, 9, 10, 10, 10, 10, 10, 10, 10])
 
     def handler(req):
         return httpx.Response(200, json={"organic": [{}] * next(counts)})
@@ -148,17 +151,18 @@ def test_serper_feeds_niche_demand_when_reddit_dark(live_cfg):
     adapters = stub_adapters()
     del adapters["reddit"]                                   # reddit fully dark
     serper = SerperAdapter(live_cfg, _client(handler))
-    serper.every_n_ticks = 1                                 # no throttle in test
+    serper.every_n_ticks = 1                                 # measure every pass
     adapters["serper"] = serper
     lm = LiveMarket(live_cfg, store, adapters=adapters)
-    for _ in range(10):
+    for _ in range(12):
         lm.tick()
-    assert len(store.live_mention_series("th_tax", "serper", 30)) == 10
+    series = store.live_mention_series("th_tax", "serper", 30)
+    assert len(series) >= 4 and series == sorted(series)     # real, non-decreasing demand series
+    assert series[-1] >= 6
     metrics = lm.niches()[0]["metrics"]
     assert metrics["growth_pct"] > 0                         # momentum from the serper series
     assert "serper" in lm.social_sources()                   # council sees it as corroboration
-    assert lm.mentions("th_tax", "serper")[-1] == 10
-    # The first pass also ran a one-off supply scan and stored the observation;
+    # The scheduler also ran a one-off supply scan and stored the observation;
     # its 0-provider result must NOT override the operator's typed estimate.
     assert store.latest_search_obs("th_tax", "supply") is not None
     assert metrics["observed"]["supply"] == "user_supplied"

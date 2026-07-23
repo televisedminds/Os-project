@@ -226,58 +226,38 @@ class LiveMarket:
         serper_pass = (serper is not None and getattr(serper, "configured", lambda: False)()
                        and (serper_every == 1 or t % serper_every == 1))
         serper_budget = int(getattr(self.cfg, "serper_niche_budget", 12))
-        for n in self._all_niches():
-            count = None
+        all_niches = self._all_niches()
+
+        # Free demand pass (Reddit, unbudgeted): whatever Reddit returns is kept.
+        reddit_count: dict[str, int] = {}
+        for n in all_niches:
             if reddit and n.reddit_query:
-                count = reddit.mentions_24h(n.reddit_query)
-                if count is not None:
-                    self.db.add_live_mention(n.id, "reddit", t, count)
+                c = reddit.mentions_24h(n.reddit_query)
+                if c is not None:
+                    self.db.add_live_mention(n.id, "reddit", t, c)
+                    reddit_count[n.id] = c
                 else:
                     self._err(f"{n.id}/reddit: {reddit.last_error}")
-            # Reddit down or key pending? Serper measures the same demand via
-            # Google — Thai niches are measured with their Thai query against
-            # google.co.th, so a Bangkok service gap gets a REAL demand series.
-            if count is None and serper_pass and serper_budget > 0:
-                if n.serper_query_th:
-                    obs = serper.demand_observation(n.serper_query_th, gl="th", hl="th")
-                    serper_budget -= 1
-                    if obs is not None:
-                        self.db.add_live_mention(n.id, "serper", t, obs["results"])
-                        self.db.add_search_obs(n.id, "serper", "demand", t,
-                                               n.serper_query_th, obs, geo="th", lang="th")
-                    else:
-                        self._err(f"{n.id}/serper: {serper.last_error}")
-                elif n.reddit_query:
-                    wk = serper.reddit_posts_7d(n.reddit_query)
-                    serper_budget -= 1
-                    if wk is not None:
-                        self.db.add_live_mention(n.id, "serper", t, wk)
-                    else:
-                        self._err(f"{n.id}/serper: {serper.last_error}")
-            # Supply side: OBSERVE who already serves this niche instead of
-            # trusting a constant. Slow rotation — one lookup per niche until
-            # covered, refreshed only when stale (>3 days) — so it costs a few
-            # credits, not a flood.
-            if serper_pass and serper_budget > 0:
-                sq = n.serper_query_th or n.reddit_query
-                if sq:
-                    prev = self.db.latest_search_obs(n.id, "supply")
-                    stale = prev is None or (time.time() - prev["ts"]) > 3 * 86400
-                    if stale:
-                        gl, hl = ("th", "th") if n.serper_query_th else ("us", "en")
-                        sup = serper.supply_observation(sq, gl=gl, hl=hl)
-                        serper_budget -= 1
-                        if sup is not None:
-                            self.db.add_search_obs(n.id, "serper", "supply", t,
-                                                   sq, sup, geo=gl, lang=hl)
-                        else:
-                            self._err(f"{n.id}/serper-supply: {serper.last_error}")
-            # Phase 7: with a ScrapingDog key, read the TOP provider page Serper
-            # found and extract competitor pricing + a review signal — grounding
-            # this niche's price point in what real providers charge. Budgeted
-            # and stale-gated so a trial key lasts.
+
+        # Fair scheduling of the scarce Serper demand/supply budget (M4.1): a
+        # reserved share for auto-discovered niches + an aging term so no niche
+        # starves. The scheduler picks the single measurement that unlocks each
+        # niche's next research stage; the rest carry an explicit deferral reason.
+        plan = (self._plan_serper_measurements(all_niches, reddit_count, serper_budget, t)
+                if serper_pass and serper_budget > 0 else {})
+
+        for n in all_niches:
+            need = plan.get(n.id)
+            # Reddit down or key pending? Serper measures demand via Google —
+            # Thai niches with their Thai query against google.co.th.
+            if need == "demand" and serper is not None:
+                self._serper_demand(serper, n, t)
+            elif need == "supply" and serper is not None:
+                self._serper_supply(serper, n, t)
+            # Phase 7: with a ScrapingDog key, read the top provider page Serper
+            # found and extract competitor pricing + a review signal.
             self._scrape_competitor(n, t)
-            self.db.add_live_niche(n.id, t, self._niche_metrics(n, count))
+            self.db.add_live_niche(n.id, t, self._niche_metrics(n, reddit_count.get(n.id)))
             if news and n.news_query:
                 headlines += self._fresh_headlines(news, n.id, n.news_query)
 
@@ -287,6 +267,74 @@ class LiveMarket:
 
     def _err(self, msg: str) -> None:
         self.errors.append(msg)
+
+    # ---- Milestone 4.1: fair Serper measurement scheduling ------------------
+
+    def _plan_serper_measurements(self, niches, reddit_count: dict, budget: int, t: int) -> dict:
+        """Decide which niches get a demand/supply scan this pass, fairly. Records
+        the allocation for observability and returns {niche_id: 'demand'|'supply'}
+        for the selected niches."""
+
+        from .. import measurement as ms
+        prior = self.db.niche_measure_state()
+        states = []
+        for n in niches:
+            # The free Reddit pass already appended this tick's obs, so the series
+            # lengths are current. demand_points = the longest single series.
+            dpts = max(len(self.db.live_mention_series(n.id, "serper", HISTORY)),
+                       len(self.db.live_mention_series(n.id, "reddit", HISTORY)))
+            sup = self.db.latest_search_obs(n.id, "supply")
+            dobs = self.db.latest_search_obs(n.id, "demand")
+            st = prior.get(n.id, {})
+            states.append({
+                "id": n.id,
+                "origin": "auto" if n.id.startswith("disc_") else "manual",
+                "demand_points": dpts,
+                "has_supply": sup is not None,
+                "supply_stale": sup is None or (time.time() - sup["ts"]) > 3 * 86400,
+                "last_demand_tick": dobs["tick"] if dobs else None,
+                "last_supply_tick": sup["tick"] if sup else None,
+                "selection_count": st.get("selection_count", 0),
+            })
+        schedules = ms.schedule(states, budget, self.cfg, t)
+        plan: dict[str, str] = {}
+        for s in schedules:
+            if s.outcome == ms.SEL_DEMAND:
+                plan[s.niche_id] = "demand"; self.db.bump_niche_measure(s.niche_id, t)
+            elif s.outcome == ms.SEL_SUPPLY:
+                plan[s.niche_id] = "supply"; self.db.bump_niche_measure(s.niche_id, t)
+        self.db.save_measure_allocation(t, ms.allocation_report(schedules, budget),
+                                        [s.to_dict() for s in schedules])
+        return plan
+
+    def _serper_demand(self, serper, n, t: int) -> None:
+        if n.serper_query_th:
+            obs = serper.demand_observation(n.serper_query_th, gl="th", hl="th")
+            if obs is not None:
+                self.db.add_live_mention(n.id, "serper", t, obs["results"])
+                self.db.add_search_obs(n.id, "serper", "demand", t,
+                                       n.serper_query_th, obs, geo="th", lang="th")
+            else:
+                self._err(f"{n.id}/serper: {serper.last_error}")
+        elif n.reddit_query:
+            wk = serper.reddit_posts_7d(n.reddit_query)
+            if wk is not None:
+                self.db.add_live_mention(n.id, "serper", t, wk)
+                self.db.add_search_obs(n.id, "serper", "demand", t, n.reddit_query,
+                                       {"results": wk}, geo="us", lang="en")
+            else:
+                self._err(f"{n.id}/serper: {serper.last_error}")
+
+    def _serper_supply(self, serper, n, t: int) -> None:
+        sq = n.serper_query_th or n.reddit_query
+        if not sq:
+            return
+        gl, hl = ("th", "th") if n.serper_query_th else ("us", "en")
+        sup = serper.supply_observation(sq, gl=gl, hl=hl)
+        if sup is not None:
+            self.db.add_search_obs(n.id, "serper", "supply", t, sq, sup, geo=gl, lang=hl)
+        else:
+            self._err(f"{n.id}/serper-supply: {serper.last_error}")
 
     def _fanout(self, p: wl.WatchProduct, query: str, sample: list[dict], t: int) -> None:
         """Graph fan-out: mine related-product phrases from the page's titles

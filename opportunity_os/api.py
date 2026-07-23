@@ -945,6 +945,10 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
                               if hasattr(store, "venture_eval_summary") else {}),
             "venture_eval_log": (store.recent_venture_evals(30)
                                  if hasattr(store, "recent_venture_evals") else []),
+            # Milestone 4.1: fair measurement-allocation of the Serper budget —
+            # who was scanned, who was deferred (and why), per-niche waiting age.
+            "measurement": (store.latest_measure_allocation()
+                            if hasattr(store, "latest_measure_allocation") else {}),
             "note": "candidates counts populate on cycles run after v1.5.1; "
                     "research_required = the council named a missing observation, "
                     "not a defect. Ventures corroborate at ≥6 demand series points.",
