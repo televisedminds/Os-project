@@ -1,0 +1,13 @@
+{
+  "capture_utc": "2026-07-23T08:05:00Z",
+  "note": "LIVE PROOF of the M4.1 fair measurement scheduler on v1.10.0 (tick 481). Pre-fix, watchlist niches drained the budget every pass; now the 3 saturated watchlist niches are 'evidence_sufficient' (0 budget) and ALL 12 budget slots go to auto-discovered niches (auto_selected=12, manual_selected=0). Demand/supply balanced (2 demand-ready niches picked for supply at the top priority 582; 10 never-scanned niches bootstrapped for demand at 562 via aging). 6 niches deferred_by_budget with explicit queue positions 1-6. No starvation: deferred niches rise via aging next pass. This proves the scheduler allocates fairly; a discovered niche reaching the COUNCIL still requires ~6 serper passes of accumulation (the scheduler now guarantees that measurement instead of starving it).",
+  "deployed_version": "1.10.0",
+  "production_tick": 481,
+  "droplet": "178.128.87.69 (open-mode HTTP API)",
+  "endpoint": "GET http://178.128.87.69/api/observability?cycles=40 (field: measurement)",
+  "capture_command": "curl -s 'http://178.128.87.69/api/observability?cycles=40'",
+  "redactions": "none \u2014 open-mode public API; no credentials in responses",
+  "sha256": {
+    "m41_tick_481_observability.json": "d4486928be560e655f0bb3d269e5007b7c458045adbe27437127c6e15c090394"
+  }
+}
