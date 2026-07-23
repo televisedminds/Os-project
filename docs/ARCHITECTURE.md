@@ -732,3 +732,41 @@ The ledger already distinguishes the four states the audit asked for: *assessed*
 *skipped* (`eligible=0` + reason). No column dropped, no telemetry hidden, no
 destructive migration. New observations still lift the cooldown immediately
 (the `pts <= last.demand_points` guard). 5 new tests (22 total in the file).
+LIVE-PROVEN at tick 455 (info niche re-entered `steady_state` after cooldown
+expired — see `docs/PROOF_M2_cooldown_audit.md`).
+
+## 15. v1.8.0 — demand level + stability signal (Milestone 3)
+
+The M2/1.7.1 live funnel exposed the next bottleneck: **every** observed venture
+niche was rejected on `demand_corroboration` because that check is
+**growth-only** — it counts `trend_up` (growth), `social_up` (mention spike) and
+`posts_up` (supply gap). A large, *stable*, underserved niche
+(`dtv_visa_guide`: ~12k searches/mo, 50:1 gap, flat) could never corroborate,
+even though its demand is real and durable.
+
+**The fix — a 4th independent signal, `level+stability`** (`verify_venture`):
+a niche corroborates on this axis when its absolute monthly demand clears a floor
+(`venture_min_monthly_demand`, default 250 ≈ 8/day — a defensible micro-business
+minimum) **and** its OBSERVED mention series is durable (≥
+`venture_stability_min_points` points and the recent window ≥
+`venture_stability_retention`× the earlier window — i.e. not collapsing). This is
+a distinct axis from the gap (supply-relative) and the trend (growth-relative):
+"is there enough real, lasting demand", not "is it growing".
+
+**It does not lower the bar or manufacture passes.** The rule is still ≥2 of 4
+independent signals, and *every* other critical check still gates: a corroborated
+niche must still clear `competition_gap` (a real supply gap) and `unit_economics`
+(pessimistic profit > 0). Concretely: `dtv_visa_guide` flips from a misleading
+`insufficient_demand` to the honest `high_competition` (its demand is fine — but
+6 credible solutions already exist); a large stable niche with a *genuine* gap
+now reaches the economics gate instead of dying on demand; and the guards hold —
+a high-volume niche with **no** gap (many providers) still fails (1 of 4), a
+**declining** series fails the durability test, and a **low-volume** niche fails
+the level floor. All thresholds are configurable.
+
+**Capability status:** IMPLEMENTED AND TESTED (3 new council-level tests: a large
+stable underserved niche corroborates; a declining or gapless one does not).
+Scope unchanged — the four core venture generators. **Live-proof gate:** the
+production funnel shows a stable venture niche corroborating on level+stability
+and receiving an honest downstream verdict (competition/economics), not a false
+`insufficient_demand`.

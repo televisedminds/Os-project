@@ -148,8 +148,9 @@ def _local_venture_cand(ds):
 def test_verify_venture_names_demand_verdict_research_vs_weak():
     """v1.6.1: an uncorroborated venture must be named honestly — a research gap
     while the demand series is still short (<6 points), soft demand once enough
-    data has accumulated — never mislabelled as a supply defect. This is the
-    exact production case: a real 75:1 supply gap, flat trend, no social spike."""
+    data has accumulated — never mislabelled as a supply defect. (M3: the weak
+    case now uses a LOW-volume niche so the level+stability signal can't rescue
+    it — genuinely thin demand, not a large stable one.)"""
 
     from opportunity_os.agents.verifiers import VerificationCouncil
     from opportunity_os.evidence import (classify_rejection, RESEARCH_REQUIRED,
@@ -160,20 +161,54 @@ def test_verify_venture_names_demand_verdict_research_vs_weak():
         cand = _local_venture_cand(ds)
         v = council.verify_venture(ds, cand)
         dc = next(c for c in v.checks if c.verifier == "demand_corroboration")
-        assert not dc.passed            # flat trend + no social spike → uncorroborated
+        assert not dc.passed            # thin demand, no growth → uncorroborated
         return f"{dc.name} failed — {dc.evidence}"
 
     # providers=2 → demand:supply 75/2 ≈ 37:1 (✓, a real gap); growth 0 + flat
-    # mentions → the OTHER two signals fail, so corroboration < 2.
-    young = _NicheDS(_niche(kind="local", providers=2, growth=0), mentions=[9, 10, 11])
-    mature = _NicheDS(_niche(kind="local", providers=2, growth=0), mentions=[10] * 12)
+    # mentions → trend/social fail; volume=100 is below the level floor so
+    # level+stability also fails → only 1 of 4 signals.
+    young = _NicheDS(_niche(kind="local", providers=2, growth=0, volume=100), mentions=[9, 10, 11])
+    mature = _NicheDS(_niche(kind="local", providers=2, growth=0, volume=100), mentions=[10] * 12)
 
     r_young, r_mature = demand_reason(young), demand_reason(mature)
     # Short series → research gap; long series → soft demand. Neither is a supply defect.
     assert classify_rejection(r_young) == RESEARCH_REQUIRED
     assert classify_rejection(r_mature) == INSUFFICIENT_DEMAND
     assert classify_rejection(r_mature) != INSUFFICIENT_SUPPLY
-    assert "6 demand observations" in r_young and "of 3 independent signals" in r_mature
+    assert "6 demand observations" in r_young and "of 4 independent signals" in r_mature
+
+
+def test_verify_venture_level_stability_corroborates_a_large_stable_niche():
+    """M3: a large, STABLE, underserved niche must be recognisable even with flat
+    growth — the level+stability signal + the supply gap = 2 independent signals,
+    so demand_corroboration passes. This does NOT lower the bar: it still must
+    clear the competition-gap and unit-economics checks that follow."""
+
+    from opportunity_os.agents.verifiers import VerificationCouncil
+    council = VerificationCouncil(Config())
+    # volume 3000/mo (well above the 250 floor), 2 providers → 37:1 gap, flat
+    # growth, durable mention series. Two independent signals: gap + level/stability.
+    ds = _NicheDS(_niche(kind="local", providers=2, growth=0, volume=3000), mentions=[40] * 12)
+    dc = next(c for c in council.verify_venture(ds, _local_venture_cand(ds)).checks
+              if c.verifier == "demand_corroboration")
+    assert dc.passed and "level+stability ✓" in dc.evidence
+
+    # A DECLINING series of the same size is not durable → level+stability ✗ → fails.
+    declining = _NicheDS(_niche(kind="local", providers=2, growth=0, volume=3000),
+                         mentions=[80, 70, 60, 40, 25, 15, 10, 8])
+    dc2 = next(c for c in council.verify_venture(declining, _local_venture_cand(declining)).checks
+               if c.verifier == "demand_corroboration")
+    assert not dc2.passed and "level+stability ✗" in dc2.evidence
+
+
+def test_verify_venture_high_volume_without_gap_still_fails():
+    """M3 does not manufacture passes: a large, stable niche with NO supply gap
+    (many providers) has only 1 signal (level+stability) → still fails."""
+    from opportunity_os.agents.verifiers import VerificationCouncil
+    ds = _NicheDS(_niche(kind="local", providers=200, growth=0, volume=3000), mentions=[40] * 12)
+    dc = next(c for c in VerificationCouncil(Config()).verify_venture(ds, _local_venture_cand(ds)).checks
+              if c.verifier == "demand_corroboration")
+    assert not dc.passed            # level+stability ✓ but gap ✗, trend ✗, social ✗ → 1 of 4
 
 
 # ------------------------------------------------ seasonal generator

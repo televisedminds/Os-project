@@ -158,6 +158,24 @@ class Config:
     steady_cooldown_ticks: int = field(default_factory=lambda: int(os.environ.get("OOS_STEADY_COOLDOWN", "6")))
     steady_max_per_cycle: int = field(default_factory=lambda: int(os.environ.get("OOS_STEADY_MAX_PER_CYCLE", "12")))
 
+    # Demand level + stability (Milestone 3): the venture demand-corroboration
+    # check was growth-only (trend/social spike), so a large, STABLE, underserved
+    # niche could never corroborate even with real demand and a real gap. A
+    # durable, high-level demand series is a legitimate, independent signal of
+    # real demand — a distinct axis from "is it growing". It NEVER lowers the
+    # bar: a niche still needs ≥2 independent signals and must still clear the
+    # competition-gap and unit-economics checks. All thresholds configurable.
+    #   * level: a niche needs a meaningful recurring demand level to be worth
+    #     building for — ~8/day (250/mo) is a defensible micro-business floor;
+    #   * stability: measured from the OBSERVED mention series — enough points and
+    #     recent demand not collapsing below `retention`× the earlier window.
+    venture_min_monthly_demand: int = field(
+        default_factory=lambda: int(os.environ.get("OOS_VENTURE_MIN_DEMAND", "250")))
+    venture_stability_min_points: int = field(
+        default_factory=lambda: int(os.environ.get("OOS_VENTURE_STABILITY_POINTS", "6")))
+    venture_stability_retention: float = field(
+        default_factory=lambda: float(os.environ.get("OOS_VENTURE_STABILITY_RETENTION", "0.8")))
+
     # Home base: the operator is in Thailand. Every opportunity is assessed
     # for buy/sell feasibility from Thailand.
     home_country: str = "TH"

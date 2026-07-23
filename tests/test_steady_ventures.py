@@ -198,10 +198,11 @@ def _entries_ctx(ds, store, cfg, tick, by_entity=None):
 
 def test_case6_steady_flat_demand_reaches_council_and_is_rejected(tmp_path):
     """The point of M2: a flat steady niche is EVALUATED (not silently skipped)
-    and honestly rejected as insufficient_demand — a real verdict, not silence."""
+    and honestly rejected as insufficient_demand — a real verdict, not silence.
+    (M3: low volume keeps it genuinely thin, so level+stability can't rescue it.)"""
     from opportunity_os.agents.verifiers import VerificationCouncil
     from opportunity_os.evidence import classify_rejection, INSUFFICIENT_DEMAND
-    ds = _NicheDS(_niche(growth=0.0), mentions=[10] * 13)   # flat, plentiful gap
+    ds = _NicheDS(_niche(growth=0.0, volume=100.0), mentions=[10] * 13)   # thin, flat
     ctx = _entries_ctx(ds, _store(tmp_path, "bkk_clean"), _cfg(), 20)
     cands = LocalServiceGenerator().generate(ctx)
     assert len(cands) == 1 and cands[0]["entry_path"] == "steady_state"

@@ -280,23 +280,42 @@ class VerificationCouncil:
         # of searchers is enough to resell as leads, so its demand bar is the
         # volume floor, not the ratio.
         posts_up = ratio >= 25 or (opp_val == "lead_generation" and m.get("volume", 0) >= 150)
-        corroborations = sum([social_up, trend_up, posts_up])
+        # Level + stability (Milestone 3): a high, DURABLE demand level is a
+        # legitimate signal in its own right — a stable underserved niche does not
+        # need to be *growing* to be real. Measured only from observed data: an
+        # absolute monthly-demand floor AND a mention series that isn't collapsing
+        # (recent window ≥ retention× the earlier window). This is an independent
+        # axis from the gap (supply-relative) and the trend (growth-relative); it
+        # adds a way to corroborate, it does not lower the ≥2 bar or bypass the
+        # competition-gap / unit-economics checks that still follow.
+        volume = float(m.get("volume", 0) or 0)
+        level_ok = volume >= self.cfg.venture_min_monthly_demand
+        stable_ok = False
+        if demand_points >= self.cfg.venture_stability_min_points and len(mentions) >= 3:
+            k = max(1, len(mentions) // 3)
+            recent = fmean(mentions[-k:])
+            earlier = fmean(mentions[:-k]) if len(mentions) > k else recent
+            stable_ok = recent >= earlier * self.cfg.venture_stability_retention
+        stable_demand = level_ok and stable_ok
+        corroborations = sum([social_up, trend_up, posts_up, stable_demand])
         signals = (f"trend {'✓' if trend_up else '✗'} ({m['growth_pct']:.0f}%/mo), "
                    f"social {'✓' if social_up else '✗'} "
                    f"({mentions[-1] if mentions else 0}/day mentions), "
-                   f"demand:supply {'✓' if posts_up else '✗'} ({ratio:.0f}:1)")
+                   f"demand:supply {'✓' if posts_up else '✗'} ({ratio:.0f}:1), "
+                   f"level+stability {'✓' if stable_demand else '✗'} "
+                   f"({volume:,.0f}/mo, {'durable' if stable_ok else 'not durable'})")
         # Honest verdict split: too little data yet = a research gap (keep
         # watching); enough data + weak signal = genuinely soft demand. The
         # rejection classifier keys off "research required" vs "independent
         # signals" to file these correctly instead of as a supply defect.
         if corroborations >= 2:
-            dc_ev = f"Corroborated by {corroborations} of 3 independent signals: {signals}."
+            dc_ev = f"Corroborated by {corroborations} of 4 independent signals: {signals}."
         elif demand_points < 6:
             dc_ev = (f"Research required — only {demand_points}/6 demand observations so far; "
                      f"{signals}. Keep watching before this can verify.")
         else:
-            dc_ev = (f"{demand_points} observations but only {corroborations} of 3 independent "
-                     f"signals (need ≥2): {signals}. Demand is real but not corroborated as growing.")
+            dc_ev = (f"{demand_points} observations but only {corroborations} of 4 independent "
+                     f"signals (need ≥2): {signals}. Demand is real but not corroborated.")
         checks.append(Check("demand_corroboration", "Demand seen by ≥2 independent sources",
                             corroborations >= 2, min(0.95, 0.55 + 0.15 * corroborations),
                             dc_ev, critical=True))
