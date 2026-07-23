@@ -216,3 +216,19 @@ def test_deal_started_ts_reflects_first_action(tmp_path):
     # a later lifecycle change does not move the START earlier
     st.set_chat_state("opp_z", execution.PURCHASED, None)
     assert st.deal_started_ts("opp_z") == pytest.approx(t1, abs=2.0)
+
+
+def test_deal_started_ts_unticking_last_step_unstarts(tmp_path):
+    """Found while live-proving: unticking the last done step must un-start the
+    deal (only done=1 check-offs count), so the schedule can't stay anchored with
+    zero steps done and a not_started stage."""
+
+    from opportunity_os.db import Store
+    st = Store(tmp_path / "d2.db")
+    st.set_progress("opp_u", 1, True)
+    assert st.deal_started_ts("opp_u") is not None
+    st.set_progress("opp_u", 1, False)                   # untick — nothing else touched
+    assert st.deal_started_ts("opp_u") is None
+    # but a real lifecycle transition still keeps it started
+    st.set_chat_state("opp_u", execution.RESEARCHING, None)
+    assert st.deal_started_ts("opp_u") is not None

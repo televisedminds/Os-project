@@ -1,0 +1,26 @@
+{
+  "capture_utc": "2026-07-23T17:23:00Z",
+  "milestone": "E1 — Execution guidance: the selected action becomes a driven, dated, single-next-step plan",
+  "deployed_version": "1.13.0",
+  "production_tick": 512,
+  "endpoint": "GET http://178.128.87.69/api/opportunities/{id}/execution",
+  "opportunity_id": "opp_0210ef1adc",
+  "opportunity_title": "35Mm Zf Lens — underpriced listing (flip)",
+  "what_is_proven": {
+    "read_composition_before": "Untouched deal composes a coherent guide from REAL production data: single next step with hard numbers (buy on eBay US at ≤ $487/unit, capital ≈ $887), Thailand-readiness gate (ready=true, 0 unknowns, 0 blockers), the real 7-step playbook, and a PROJECTED money/time schedule (d0 -$887 → d20 +$1,640 → d21 reinvestable $2,527). stage=not_started, schedule.anchored=false — the honest current state.",
+    "driven_after": "Ticking playbook step 1 on production (POST /progress step=1 done=true) drove the guide live: stage advanced not_started -> PURCHASED via reconciliation (the step->stage map, WITHOUT touching the chat lifecycle state), the schedule ANCHORED (started=true, day=0, milestones flipped planned -> today/upcoming), the single next step advanced to 'Route the goods and mark in-transit', is_next moved to step 2, progress 1/7 (14%).",
+    "honesty_boundary": "schedule.basis='projected'; the note states 'done' means a milestone's projected day has passed, not that cash was received. PLAN progress + PROJECTED money only; realised cash is the next milestone (Outcome learning)."
+  },
+  "correctness_fix_found_while_live_proving": {
+    "symptom": "After unticking the only done step, the deal still read started=true / schedule.anchored=true (day 0) while stage=not_started and 0 steps done — an inconsistent state.",
+    "cause": "deal_started_ts derived from MIN(ts) over mission_progress WITHOUT a done=1 filter, so a touched-then-unticked step still anchored the schedule.",
+    "fix": "deal_started_ts now counts only done=1 check-offs (plus real lifecycle transitions). Unticking the last done step un-starts the deal. Shipped in v1.13.1 with a regression test (test_deal_started_ts_unticking_last_step_unstarts).",
+    "note": "The v1.13.0 production capture 'execution_guide_tick512_opp_0210ef1adc.json' (before) and 'execution_guide_tick512_driven_after.json' (after tick) are both valid; the fix affects only the untick-restore edge and lands in v1.13.1."
+  },
+  "restoration": "Step 1 was unticked after the capture (POST /progress step=1 done=false) — done_steps returned to []. On v1.13.1 redeploy the deal reads fully not-started again.",
+  "redactions": "none",
+  "sha256": {
+    "execution_guide_tick512_opp_0210ef1adc.json": "c8a3a28df7d6adb17821b162ace3bcccbfa0fa27e57257547959e29c524cacf2",
+    "execution_guide_tick512_driven_after.json": "e8ccbb052dd6efdad7e2fc7d55edb33d86c5cd4f65da0ad7af00cb542472fd82"
+  }
+}

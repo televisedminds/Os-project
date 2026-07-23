@@ -970,12 +970,20 @@ clock"* for the selected action.
   execution-guide panel leads the detail's step-by-step, and a status row rides on
   each today card.
 
-**Capability status:** IMPLEMENTED AND TESTED (16 tests: stage maps for flip +
+**Capability status:** IMPLEMENTED, TESTED (17 tests: stage maps for flip +
 venture, effective-stage reconciliation of both signals, state-aware concrete next
 step, schedule anchoring with done/today/upcoming, PROJECTED-not-realised
 labelling, ETA fallback, the Thailand-readiness gate + live-assess fallback, guide
 composition + next-flag, the compact today embed, the `/execution` endpoint + 404,
-the detail attach, and `deal_started_ts`). **Live-proof gate:** on the droplet,
-`GET /api/opportunities/{id}/execution` returns a coherent guide for a real
-production opportunity — single next step with hard numbers, the TH gate, and the
-dated schedule — and `/api/today` embeds the compact guide per action.
+the detail attach, `deal_started_ts`, and the untick→unstart regression), and
+**LIVE-PROVEN** at tick 512. On production, the untouched deal
+`opp_0210ef1adc` composed a coherent guide from real data (buy ≤ $487, capital
+≈ $887, TH-ready with 0 unknowns, projected d0 −$887 → d20 +$1,640); then ticking
+playbook step 1 drove it live — stage `not_started → purchased` by reconciliation
+(chat state untouched), the schedule anchored to day 0 with milestones flipping
+`planned → today/upcoming`, and the next step advancing to "route the goods". See
+`docs/proofs/execution_guide_tick512_*`.
+
+Live-proving surfaced one correctness bug and fixed it (v1.13.1): `deal_started_ts`
+now counts only *done* check-offs, so unticking the last step un-starts the deal
+instead of leaving the schedule anchored at day 0 with a `not_started` stage.

@@ -308,13 +308,15 @@ class Store:
 
     def deal_started_ts(self, opportunity_id: str) -> float | None:
         """When the operator first started acting on this deal — the earliest of
-        any playbook-step check-off and the first lifecycle transition. Used to
-        anchor the projected money/time schedule to a real start day. None until
-        the deal is actually begun (no schema change: derived from existing ts)."""
+        any *done* playbook-step check-off and the first lifecycle transition.
+        Used to anchor the projected money/time schedule to a real start day.
+        None until the deal is actually begun; unticking the last done step
+        un-starts it (the ``done=1`` filter), so the schedule can't stay anchored
+        with zero steps done. No schema change — derived from existing ts."""
 
         with self._lock:
             row = self._conn.execute(
-                "SELECT MIN(ts) AS t FROM mission_progress WHERE opportunity_id=?",
+                "SELECT MIN(ts) AS t FROM mission_progress WHERE opportunity_id=? AND done=1",
                 (opportunity_id,)).fetchone()
             cs = self._conn.execute(
                 "SELECT state, updated_ts FROM chat_state WHERE opportunity_id=?",
