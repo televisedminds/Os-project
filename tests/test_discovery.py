@@ -217,6 +217,32 @@ def test_engine_promotes_dedupes_and_caps(tmp_path):
     assert len(active) == 2 and active[0]["score"] >= active[1]["score"]
 
 
+def test_extra_niches_are_not_crowded_out_by_high_score_products(tmp_path):
+    """Regression (M4): the watched-set read path must give niches their OWN
+    budget. A flood of high-scoring physical products used to fill the
+    score-ordered top-N of list_discovered, so discovered venture niches never
+    reached _all_niches — no scans, no demand series, never evaluated."""
+
+    from dataclasses import asdict
+    store = Store(tmp_path / "crowd.db")
+    cfg = Config(mode="live", discovery_max_active=5)          # small shared budget
+    # 20 high-score active products + 3 low-score active niches
+    for i in range(20):
+        store.upsert_discovered(asdict(Candidate(kind="product", id=f"disc_p_{i}",
+                                                 name=f"Gadget {i}", source="s", score=2.0)))
+    for i in range(3):
+        store.upsert_discovered(asdict(Candidate(kind="niche", id=f"disc_n_{i}", name=f"TH gap {i}",
+                                                 source="serper_gaps", score=0.7,
+                                                 niche_kind="local", geo="TH")))
+    eng = DiscoveryEngine(cfg, store, sources=[], classify_hook=lambda c: c)
+    niches = eng.extra_niches(set())
+    assert {n.id for n in niches} == {"disc_n_0", "disc_n_1", "disc_n_2"}   # all reach the watched set
+    assert all(n.kind == "local" for n in niches)
+    # products still come through their own budget (capped, score-ordered)
+    prods = eng.extra_products(set())
+    assert len(prods) == 5 and all(p.id.startswith("disc_p_") for p in prods)
+
+
 def test_engine_expiry_respects_max_active(tmp_path):
     store = Store(tmp_path / "d.db")
     cfg = Config(mode="live", discovery_scan_cap=10, discovery_max_active=1)

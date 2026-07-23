@@ -558,13 +558,23 @@ class Store:
                  "active", now, now, json.dumps(cand, default=str)))
         return existing is None
 
-    def list_discovered(self, active_only: bool = False, limit: int = 100) -> list[dict]:
+    def list_discovered(self, active_only: bool = False, limit: int = 100,
+                        kind: str | None = None) -> list[dict]:
+        # `kind` filters in SQL BEFORE the limit — critical, because a flood of
+        # high-scoring physical products would otherwise fill the top-N and push
+        # the (lower-scored) venture niches out entirely, so they never reach the
+        # watched set. Each kind gets its own budget.
         sql = "SELECT payload, status, first_ts, last_ts, score FROM discovered"
+        conds, args = [], []
         if active_only:
-            sql += " WHERE status='active'"
-        sql += " ORDER BY score DESC, last_ts DESC LIMIT ?"
+            conds.append("status='active'")
+        if kind:
+            conds.append("kind=?"); args.append(kind)
+        if conds:
+            sql += " WHERE " + " AND ".join(conds)
+        sql += " ORDER BY score DESC, last_ts DESC LIMIT ?"; args.append(limit)
         with self._lock:
-            rows = self._conn.execute(sql, (limit,)).fetchall()
+            rows = self._conn.execute(sql, args).fetchall()
         out = []
         for r in rows:
             p = json.loads(r["payload"])

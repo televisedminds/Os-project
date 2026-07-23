@@ -774,3 +774,38 @@ trend ✗ (0%/mo), social ✗, demand:supply ✓ (75:1), level+stability ✓ (30
 durable)"* — corroborated by the new axis with growth flat, then clearing
 competition-gap and unit-economics. First verified non-flip venture. See
 `docs/PROOF_M3_level_stability.md` and `docs/proofs/m3_tick_458_*`.
+
+## 16. v1.9.0 — discovered venture niches reach the watched set (Milestone 4)
+
+M3 verified its first venture — but that niche (`bkk_airbnb_cleaning`) was a
+hand-typed watchlist niche. An audit of the *discovered* niches found the engine
+was mining them (17 live: 12 from Serper gap-mining, across local/b2b/digital/
+info) yet **none reached the watched set**: `niche_state` held only the 3
+watchlist niches, and the `venture_eval` ledger had **zero** discovered niches —
+they were never scanned, never measured, never assessed.
+
+**Root cause:** the promotion read path. `extra_niches` iterated
+`list_discovered(active_only=True, limit=discovery_max_active)`, which is ordered
+`score DESC` and then filtered to `kind=="niche"` in Python. With ~459 active
+physical products (score ≈ 1.5) far outscoring venture niches (≈ 0.6–1.0), the
+top-`N` was **entirely products**, so the Python filter yielded **0 niches**. The
+diversity budget reserves niches at *promotion* time, but this *read* path
+re-introduced the physical bias — the `/api/discovery` endpoint had already
+worked around it locally (`limit=10000` then filter), but the actual watched-set
+path had not.
+
+**Fix:** `list_discovered` gains a `kind` parameter that filters in SQL **before**
+the limit, so each kind gets its own budget. `extra_niches` now queries
+`kind="niche"` (and `extra_products` `kind="product"`), so discovered venture
+niches always reach `_all_niches` — where the normal loop scans them, measures
+demand/supply via Serper, and the steady-state path evaluates them once they have
+enough real observations. `/api/discovery` uses the same parameter (the
+`limit=10000` hack removed). No schema change.
+
+**Capability status:** IMPLEMENTED AND TESTED (regression: 20 high-score products
++ 3 low-score niches → `extra_niches` returns all 3, `extra_products` its own
+capped set). **Live-proof gate:** after deploy, the discovered venture niches
+appear in `niche_state` and the `venture_eval` ledger (assessed, with honest
+"still_gathering_evidence" reasons initially) instead of being absent — i.e. they
+have entered the pipeline. Full verification of a *discovered* niche then depends
+on demand-series accumulation time; that is measurable progress, not silence.

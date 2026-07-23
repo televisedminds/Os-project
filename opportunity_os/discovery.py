@@ -775,16 +775,21 @@ class DiscoveryEngine:
 
     def extra_products(self, existing_ids: set[str]) -> list[wl.WatchProduct]:
         out = []
-        for row in self._active():
-            if row["kind"] != "product" or row["id"] in existing_ids:
+        for row in self.store.list_discovered(active_only=True,
+                                              limit=self.cfg.discovery_max_active, kind="product"):
+            if row["id"] in existing_ids:
                 continue
             out.append(Candidate(**_candidate_fields(row)).to_watch_product())
         return out
 
     def extra_niches(self, existing_ids: set[str]) -> list[wl.WatchNiche]:
+        # Query niches directly (own budget) — never a shared score-ordered top-N
+        # that physical products dominate, or discovered venture niches would
+        # never reach the watched set to be scanned, measured and evaluated.
         out = []
-        for row in self._active():
-            if row["kind"] != "niche" or row["id"] in existing_ids:
+        for row in self.store.list_discovered(active_only=True,
+                                              limit=self.cfg.discovery_max_active, kind="niche"):
+            if row["id"] in existing_ids:
                 continue
             out.append(Candidate(**_candidate_fields(row)).to_watch_niche())
         return out

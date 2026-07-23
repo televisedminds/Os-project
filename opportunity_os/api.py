@@ -786,10 +786,9 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         invisible exactly when you want to inspect them."""
 
         disc = getattr(orch.world, "discovery", None)
-        found = store.list_discovered(active_only=active_only,
-                                      limit=10000 if kind else limit)
-        if kind:
-            found = [r for r in found if r.get("kind") == kind][:limit]
+        # kind filters in SQL (own budget) so high-scoring products can't push
+        # the diversity-reserved niches below the limit and hide them.
+        found = store.list_discovered(active_only=active_only, limit=limit, kind=kind)
         return {
             "enabled": disc is not None,
             "counts": store.discovered_counts(),
