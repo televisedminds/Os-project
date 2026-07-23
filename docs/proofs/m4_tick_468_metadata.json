@@ -1,0 +1,13 @@
+{
+  "capture_utc": "2026-07-23T02:35:00Z",
+  "note": "LIVE PROOF of Milestone 4 (discovered venture niches reach the watched set). Under v1.9.0 niche_state grew from 3 (watchlist-only) to 20 \u2014 all 17 discovered venture niches now appear. The venture_eval ledger assesses 26 discovered niches (was 0): honest reasons no_observed_provenance (no demand observation measured yet) and still_gathering_evidence (one discovered niche, disc_n_how_do_you_handle_the_actual, already at 2 demand points \u2014 measurable accumulation). Before v1.9.0 these were absent entirely (silent). The funnel also shows verified:11 venture entries over the 80-cycle window (watchlist local_service re-verifying, info via steady_state). Full verification of a DISCOVERED niche still needs the Serper demand/supply measurement to accumulate >=6 points + observed supply \u2014 the next bottleneck (measurement-budget rotation).",
+  "deployed_version": "1.9.0",
+  "production_tick": 468,
+  "droplet": "178.128.87.69 (open-mode HTTP API)",
+  "endpoint": "GET http://178.128.87.69/api/observability?cycles=80",
+  "capture_command": "curl -s --max-time 25 'http://178.128.87.69/api/observability?cycles=80'",
+  "redactions": "none \u2014 open-mode public API; no credentials in responses",
+  "sha256": {
+    "m4_tick_468_observability.json": "7c4cc90669fd6491626a51654803b2dfd028f42e2530bf2054cc9523ed426a7d"
+  }
+}

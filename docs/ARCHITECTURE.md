@@ -802,10 +802,10 @@ demand/supply via Serper, and the steady-state path evaluates them once they hav
 enough real observations. `/api/discovery` uses the same parameter (the
 `limit=10000` hack removed). No schema change.
 
-**Capability status:** IMPLEMENTED AND TESTED (regression: 20 high-score products
-+ 3 low-score niches → `extra_niches` returns all 3, `extra_products` its own
-capped set). **Live-proof gate:** after deploy, the discovered venture niches
-appear in `niche_state` and the `venture_eval` ledger (assessed, with honest
-"still_gathering_evidence" reasons initially) instead of being absent — i.e. they
-have entered the pipeline. Full verification of a *discovered* niche then depends
-on demand-series accumulation time; that is measurable progress, not silence.
+**Capability status:** IMPLEMENTED, TESTED, DEPLOYED (v1.9.0), and **LIVE-PROVEN**
+(tick 468): `niche_state` grew 3→20 (all 17 discovered niches present) and the
+`venture_eval` ledger assesses 26 discovered niches (was 0) with honest reasons —
+`no_observed_provenance` and `still_gathering_evidence` (one discovered niche
+already at 2 demand points). No *discovered* niche has verified yet; that is gated
+on Serper measurement accumulating ≥6 points + observed supply (the next
+bottleneck). See `docs/PROOF_M4_discovered_niches.md` + `docs/proofs/m4_tick_468_*`.
