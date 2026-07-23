@@ -1,0 +1,47 @@
+{
+  "capture_utc": "2026-07-23T18:40:00Z",
+  "milestone": "Outcome learning — closing the loop from predicted opportunity to realized truth",
+  "deployed_version": "1.14.0",
+  "production_tick": 513,
+  "opportunity_id": "opp_e9375fbe6d",
+  "opportunity": "product_arbitrage, category 'collectibles', source 'ebay_us', predicted confidence 0.883, projected profit $117.57",
+  "outcome_recorded": {
+    "endpoint": "POST http://178.128.87.69/api/opportunities/opp_e9375fbe6d/outcome/record",
+    "status": "abandoned",
+    "reason": "demand",
+    "why_abandonment": "An honest walk-away on the simulated production feed — no real capital was deployed. Recording a genuine abandonment (explicitly permitted by the mandate) rather than fabricating a sale, so NO profit is claimed.",
+    "realized_profit_usd": 0.0,
+    "complete": true,
+    "opp_status_after": "executed (moved out of execution into a recorded outcome)"
+  },
+  "projected_vs_realized": {
+    "projected_profit_usd": 117.57,
+    "realized_profit_usd": 0.0,
+    "prediction_error": {"error_usd": -117.57, "error_pct": -100.0, "direction": "over_predicted"},
+    "kept_separate": true
+  },
+  "measurable_effect_on_future_scoring": {
+    "category_affinity_collectibles": [0, -1],
+    "effect": "surfaces as a per-opportunity 'Downranked — past losses in collectibles' signal in /api/opportunities (_row.personal), changing how future collectibles opportunities are selected",
+    "scoring_weight_demand_trend": [0.14, 0.1468],
+    "weight_effect": "the walk-away reason's score factor now weighs more in ALL future opportunity scoring (weights renormalised to sum 1.0)",
+    "weight_audit_rows": [0, 1],
+    "audit_trigger": "realized_outcome",
+    "audit_is_structured_before_after": true
+  },
+  "honesty_boundaries_held_live": {
+    "no_profit_claimed": "realized_profit_usd = 0.0",
+    "calibration_unchanged": [1.0, 1.0],
+    "calibration_rationale": "an honest walk-away is not a cash test of the prediction, so it moves neither calibration nor source reliability",
+    "source_reliability_ebay_us_unchanged": [0.8, 0.8],
+    "predictions_did_not_train_predictions": "the learning signal carried basis=realized_cash with realized=0 and was driven by the recorded abandonment + reason, never by the $117.57 prediction",
+    "projected_and_realized_separate": true
+  },
+  "note": "The success/failure calibration paths (realized cash -> calibration + source/verifier boosts) are covered by the 17 deterministic tests in tests/test_outcomes.py; the honest LIVE outcome here is an abandonment. Full suite: 379 passed, 1 skipped.",
+  "redactions": "none",
+  "sha256": {
+    "outcome_learning_before.json": "01112caa21e2741353045a5fe3a955e6fb74b974e807957b8b8d6b078c7e2be0",
+    "outcome_learning_record_response.json": "474c05298a7a6c5d89c8f73cd72878591f03cd5ba490c04bf451f62182f89dc9",
+    "outcome_learning_after.json": "2abc41f07010f2fdc6678ec57ca87abeae090f3f3b8e7ca08352d977aa30a63c"
+  }
+}

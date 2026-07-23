@@ -1039,6 +1039,15 @@ completion rules, terminal-realized-cash-only signal, the predictions-can't-trai
 guard, frozen provenance, success/abandoned/failure recalibration + before→after
 audit, the refuse-non-realized guard, API reason-enforcement, interim-teaches-
 nothing, terminal compute+compare+recalibrate, GET outcome + learning trail, and
-the db round-trip). **Live-proof gate:** on the droplet, one production opportunity
-moves from execution into a recorded real (or honestly abandoned) outcome, and the
-`/api/learning` calibration / category-affinity measurably shifts as a result.
+the db round-trip), and **LIVE-PROVEN** at tick 513. On production, the real
+opportunity `opp_e9375fbe6d` (product_arbitrage / collectibles, projected $117.57)
+was recorded as an **honest abandonment** (reason `demand`) — moving it out of
+execution (`status: executed`) with realized profit **$0.00, no profit claimed**.
+Projected $117.57 vs realized $0.00 stayed separate (prediction error −100 %,
+over-predicted). Future scoring measurably shifted: category affinity
+`collectibles 0 → −1` (downranks future collectibles) and the reason's score
+weight `demand_trend 0.14 → 0.1468` (weighs more in all future scoring), both
+captured as a structured before→after `weight_audit` row. The honest boundaries
+held live — calibration `1.0 → 1.0` and `ebay_us` reliability `0.8 → 0.8`
+unchanged (an abandonment is no cash test), and the signal was `basis:
+realized_cash`, never the prediction. See `docs/proofs/outcome_learning_*`.
