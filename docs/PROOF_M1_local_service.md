@@ -1,10 +1,15 @@
 # Milestone 1 — live source-to-verdict proof (local-service)
 
-Read-only capture from the production droplet (`178.128.87.69`), **v1.6.0, live
-mode, tick 443**, 2026-07-22. Every number below was pulled from the running API
-(`/api/observability`, `/api/diagnostics/funnel`), not from a fixture. Where the
-droplet has not yet been upgraded to v1.6.1, that is stated explicitly rather
-than glossed.
+> **STATUS: CLOSED — fully complete, tested, deployed, and live-proven.**
+> v1.6.0 funnel/classification fixes + v1.6.1 honest verdict split. Live-proven
+> on the production droplet at **tick 446** (fresh cycle under v1.6.1), reference
+> commit **`fe1ccaa`**. Full suite: `290 passed, 1 skipped`.
+
+Read-only capture from the production droplet (`178.128.87.69`), **v1.6.0/1.6.1,
+live mode, ticks 443→446**, 2026-07-22. Every number below was pulled from the
+running API (`/api/observability`, `/api/diagnostics/funnel`, `/api/cycle`), not
+from a fixture. The v1.6.0 baseline and the v1.6.1 live confirmation are both
+recorded so the before/after is auditable.
 
 ## The niche
 
