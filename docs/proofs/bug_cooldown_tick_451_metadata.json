@@ -1,0 +1,21 @@
+{
+  "capture_utc": "2026-07-23T00:55:00Z",
+  "note": "LIVE production evidence that the cooldown-starvation bug is REAL on v1.7.0 (pre-fix). At tick 451 the two info niches (entered at tick 448) are skipped 'cooldown_no_new_observations'; their newest ledger row is a skip at tick 451 while their last ENTERED row is tick 448 \u2014 so the buggy cooldown reference (newest row) is 451, not 448, and 451-451<6 keeps them skipping every cycle (starvation). The local niche re-entered via the anomaly path at 451, confirming that path is unaffected.",
+  "deployed_version": "1.7.0",
+  "deployed_commit": "6fdf597",
+  "production_tick": 451,
+  "droplet": "178.128.87.69 (open-mode HTTP API)",
+  "endpoints": {
+    "bug_cooldown_tick_451_cycle.json": "POST http://178.128.87.69/api/cycle",
+    "bug_cooldown_tick_451_observability.json": "GET http://178.128.87.69/api/observability?cycles=60"
+  },
+  "capture_commands": {
+    "bug_cooldown_tick_451_cycle.json": "curl -s --max-time 200 -X POST http://178.128.87.69/api/cycle",
+    "bug_cooldown_tick_451_observability.json": "curl -s --max-time 25 'http://178.128.87.69/api/observability?cycles=60'"
+  },
+  "redactions": "none \u2014 open-mode public API; no credentials in responses",
+  "sha256": {
+    "bug_cooldown_tick_451_cycle.json": "b33df4c3d9d56a3bf70cf8e743bc86ed62606c15db0da8a1d77e9064a79ea3b0",
+    "bug_cooldown_tick_451_observability.json": "ceb14cf196500f1f1134129fbf030910ce1202eb0d16b8521d058454ad28f859"
+  }
+}
