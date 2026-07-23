@@ -89,6 +89,17 @@ CREATE TABLE IF NOT EXISTS chat_links (
 CREATE TABLE IF NOT EXISTS chat_checklist (
     opportunity_id TEXT, step TEXT, done INTEGER, ts REAL,
     PRIMARY KEY (opportunity_id, step));
+-- Milestone 2: every venture-niche evaluation, tagged by how it entered
+-- (anomaly / steady_state / both), the evidence that made it eligible, and the
+-- council's verdict. This is what makes "silent zeros" impossible — a niche
+-- either produced a candidate, or has a row here saying why not.
+CREATE TABLE IF NOT EXISTS venture_eval (
+    entity_id TEXT, tick INTEGER, ts REAL, entry_path TEXT, family TEXT,
+    eligible INTEGER, demand_points INTEGER, supply_count INTEGER,
+    source_count INTEGER, freshness_days REAL, demand_supply_ratio REAL,
+    verdict TEXT, category TEXT, reason TEXT,
+    PRIMARY KEY (entity_id, tick));
+CREATE INDEX IF NOT EXISTS idx_venture_eval_tick ON venture_eval(tick);
 """
 
 
@@ -389,6 +400,96 @@ class Store:
             rows = self._conn.execute(
                 "SELECT source, COUNT(*) AS n FROM live_search_obs GROUP BY source").fetchall()
         return {r["source"]: r["n"] for r in rows}
+
+    # ---- Milestone 2: venture-evaluation ledger (entry path + verdict) -------
+
+    def record_venture_eval(self, entity_id: str, tick: int, entry_path: str,
+                            family: str, eligible: bool, evidence: dict,
+                            verdict: str | None = None, category: str | None = None,
+                            reason: str | None = None) -> None:
+        """Upsert one venture-niche evaluation for this tick. Called twice: once
+        at entry (verdict None), once after the council rules (verdict set)."""
+
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO venture_eval(entity_id,tick,ts,entry_path,family,eligible,"
+                "demand_points,supply_count,source_count,freshness_days,"
+                "demand_supply_ratio,verdict,category,reason) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(entity_id,tick) DO UPDATE SET "
+                "entry_path=excluded.entry_path, eligible=excluded.eligible, "
+                "verdict=COALESCE(excluded.verdict, venture_eval.verdict), "
+                "category=COALESCE(excluded.category, venture_eval.category), "
+                "reason=COALESCE(excluded.reason, venture_eval.reason)",
+                (entity_id, tick, time.time(), entry_path, family, 1 if eligible else 0,
+                 evidence.get("demand_points"), evidence.get("supply_count"),
+                 evidence.get("source_count"), evidence.get("freshness_days"),
+                 evidence.get("demand_supply_ratio"), verdict, category, reason))
+
+    def set_venture_verdict(self, entity_id: str, tick: int,
+                            verdict: str, category: str | None) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE venture_eval SET verdict=?, category=? WHERE entity_id=? AND tick=?",
+                (verdict, category, entity_id, tick))
+
+    def last_venture_eval(self, entity_id: str) -> dict | None:
+        """Most recent evaluation of this niche (for the steady-state cooldown)."""
+
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM venture_eval WHERE entity_id=? ORDER BY tick DESC LIMIT 1",
+                (entity_id,)).fetchone()
+        return dict(row) if row else None
+
+    def recent_venture_evals(self, limit: int = 60) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM venture_eval ORDER BY tick DESC, entity_id LIMIT ?",
+                (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def venture_eval_summary(self, ticks: int = 60) -> dict:
+        """Entry-path entrant counts, dedup total, and verdict distribution over
+        the most recent `ticks` distinct ticks — the Milestone 2 funnel."""
+
+        with self._lock:
+            tk = self._conn.execute(
+                "SELECT DISTINCT tick FROM venture_eval ORDER BY tick DESC LIMIT ?",
+                (ticks,)).fetchall()
+            if not tk:
+                return {"entrants": {}, "deduped_total": 0, "eligible": 0,
+                        "skipped": 0, "verdicts": {}, "by_family_entry": {}}
+            lo = min(r["tick"] for r in tk)
+            rows = self._conn.execute(
+                "SELECT * FROM venture_eval WHERE tick >= ?", (lo,)).fetchall()
+        entrants = {"anomaly": 0, "steady_state": 0, "both": 0}
+        verdicts: dict[str, int] = {}
+        by_family_entry: dict[str, dict] = {}
+        eligible = skipped = deduped = 0
+        for r in rows:
+            ep = r["entry_path"]
+            # A niche "entered" evaluation if it came via an anomaly, or it was a
+            # steady/both entry that was eligible. Skipped rows are recorded so
+            # empty families have an explicit reason instead of a silent zero.
+            entered = ep == "anomaly" or bool(r["eligible"])
+            if r["eligible"]:
+                eligible += 1
+            else:
+                skipped += 1
+            if entered:
+                entrants[ep] = entrants.get(ep, 0) + 1
+                deduped += 1
+                fam = r["family"] or "?"
+                by_family_entry.setdefault(fam, {"anomaly": 0, "steady_state": 0, "both": 0})
+                by_family_entry[fam][ep] = by_family_entry[fam].get(ep, 0) + 1
+                v = r["verdict"] or "pending"
+            else:
+                v = r["reason"] or "skipped"
+            verdicts[v] = verdicts.get(v, 0) + 1
+        return {"entrants": entrants, "deduped_total": deduped, "eligible": eligible,
+                "skipped": skipped, "verdicts": verdicts,
+                "by_family_entry": by_family_entry}
 
     def add_live_niche(self, niche_id: str, tick: int, metrics: dict) -> None:
         with self._lock, self._conn:

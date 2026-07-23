@@ -940,6 +940,12 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
             } for r in store.recent_search_obs(source="scrapingdog", limit=20)],
             "niche_state": niche_state,
             "niche_state_error": niche_state_error,
+            # Milestone 2: entry-path funnel — anomaly vs steady-state entrants,
+            # dedup, verdict distribution, and the most recent per-niche rows.
+            "venture_entry": (store.venture_eval_summary(cycles)
+                              if hasattr(store, "venture_eval_summary") else {}),
+            "venture_eval_log": (store.recent_venture_evals(30)
+                                 if hasattr(store, "recent_venture_evals") else []),
             "note": "candidates counts populate on cycles run after v1.5.1; "
                     "research_required = the council named a missing observation, "
                     "not a defect. Ventures corroborate at ≥6 demand series points.",

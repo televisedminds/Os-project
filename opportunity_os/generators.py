@@ -53,6 +53,10 @@ class GenContext:
     cfg: object
     investigator: object                        # reuse existing candidate builders
     graph: object = None                        # KnowledgeGraph (optional)
+    # Milestone 2: venture niches to evaluate this cycle, deduped across the
+    # anomaly and steady-state entry paths. nid -> {anomalies, entry_path,
+    # steady_evidence}. None ⇒ fall back to the anomaly-only by_entity.
+    venture_entries: dict = None
 
 
 class OpportunityGenerator:
@@ -110,20 +114,40 @@ class DislocationGenerator(OpportunityGenerator):
 
 class _VentureGenerator(OpportunityGenerator):
     """Shared base for the build-it opportunity types. Each subclass claims one
-    niche kind so the type funnel shows real diversity instead of one bucket."""
+    niche kind so the type funnel shows real diversity instead of one bucket.
+
+    Milestone 2: evaluates the deduplicated venture-entry set (anomaly path ∪
+    steady-state path), not just the anomaly-driven `by_entity`, so a
+    well-observed steady niche is no longer silently skipped. The entry path is
+    stamped on each candidate for the funnel."""
 
     niche_kind: str = ""
     uses_marketplace = False
 
+    def _claims(self, ctx: GenContext, niche: dict) -> bool:
+        """Whether this generator owns the niche. Overridden by DigitalProduct to
+        hand micro-SaaS-grade niches to that generator instead."""
+        return True
+
+    def _entries(self, ctx: GenContext) -> dict:
+        entries = getattr(ctx, "venture_entries", None)
+        if entries is not None:
+            return entries
+        # Backward-compatible: anomaly-only when no steady set was threaded.
+        return {nid: {"anomalies": g, "entry_path": "anomaly", "steady_evidence": None}
+                for nid, g in ctx.by_entity.items()}
+
     def generate(self, ctx: GenContext) -> list[dict]:
         out = []
         niches = {n["id"]: n for n in ctx.ds.niches()}
-        for nid, group in ctx.by_entity.items():
+        for nid, entry in self._entries(ctx).items():
             niche = niches.get(nid)
-            if not niche or niche["kind"] != self.niche_kind:
+            if not niche or niche["kind"] != self.niche_kind or not self._claims(ctx, niche):
                 continue
-            cand = ctx.investigator._venture_candidate(ctx.ds, nid, group)
+            cand = ctx.investigator._venture_candidate(ctx.ds, nid, entry["anomalies"])
             if cand:
+                cand["entry_path"] = entry["entry_path"]
+                cand["steady_evidence"] = entry["steady_evidence"]
                 out.append(cand)
         return out
 
@@ -134,20 +158,11 @@ class DigitalProductGenerator(_VentureGenerator):
     types = ("digital_product",)
     niche_kind = "digital"
 
-    def generate(self, ctx: GenContext) -> list[dict]:
+    def _claims(self, ctx: GenContext, niche: dict) -> bool:
         # A digital niche strong enough to be a micro-SaaS is claimed by that
         # generator instead, so the same demand isn't published twice.
         from .generators_extra import qualifies_micro_saas
-        niches = {n["id"]: n for n in ctx.ds.niches()}
-        out = []
-        for nid, group in ctx.by_entity.items():
-            niche = niches.get(nid)
-            if not niche or niche["kind"] != self.niche_kind or qualifies_micro_saas(niche):
-                continue
-            cand = ctx.investigator._venture_candidate(ctx.ds, nid, group)
-            if cand:
-                out.append(cand)
-        return out
+        return not qualifies_micro_saas(niche)
 
 
 @generator

@@ -141,6 +141,23 @@ class Config:
     seasonal_horizon_days: int = field(default_factory=lambda: int(os.environ.get("OOS_SEASONAL_HORIZON", "90")))
     seasonal_today: str = _env("OOS_SEASONAL_TODAY", "")
 
+    # Steady-state venture entry (Milestone 2): a venture niche with steady,
+    # non-spiking demand never fires an anomaly, so it was never evaluated — a
+    # silent zero. A well-observed niche (enough real demand observations, an
+    # OBSERVED supply side, fresh evidence) is surfaced to the SAME council on a
+    # second entry path. Eligibility to be EVALUATED is never approval to
+    # publish: flat demand is still rejected honestly. All thresholds are
+    # configurable — no magic numbers scattered through the code.
+    steady_venture_enabled: bool = field(
+        default_factory=lambda: os.environ.get("OOS_STEADY_VENTURE", "1") not in ("0", "false", "no"))
+    steady_min_demand_points: int = field(default_factory=lambda: int(os.environ.get("OOS_STEADY_MIN_DEMAND", "6")))
+    steady_require_observed_supply: bool = field(
+        default_factory=lambda: os.environ.get("OOS_STEADY_REQUIRE_SUPPLY", "1") not in ("0", "false", "no"))
+    steady_freshness_days: float = field(
+        default_factory=lambda: float(os.environ.get("OOS_STEADY_FRESHNESS_DAYS", "14")))
+    steady_cooldown_ticks: int = field(default_factory=lambda: int(os.environ.get("OOS_STEADY_COOLDOWN", "6")))
+    steady_max_per_cycle: int = field(default_factory=lambda: int(os.environ.get("OOS_STEADY_MAX_PER_CYCLE", "12")))
+
     # Home base: the operator is in Thailand. Every opportunity is assessed
     # for buy/sell feasibility from Thailand.
     home_country: str = "TH"

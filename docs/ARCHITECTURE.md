@@ -666,3 +666,49 @@ on crafted young/mature niches). **Live-proof gate:** the droplet on v1.6.1 show
 `local_service` rejections as `research_required` / `insufficient_demand` /
 `high_competition` and `insufficient_supply` no longer appearing for a niche with
 an observed demand:supply gap.
+
+## 14. v1.7.0 — steady-state venture entry (Milestone 2)
+
+**Root cause (code-verified in production):** venture generators only evaluated
+entities in `by_entity`, and `by_entity` is built *only from anomalies*
+(`investigator.py`). So a venture niche with steady, non-spiking demand — the
+normal shape for local services, info products, B2B — never fired an anomaly,
+never entered `by_entity`, and was **never evaluated**: no candidate, no council
+verdict, a *silent zero*. Two info niches sat at 13/6 demand points with observed
+supply and still produced zero candidates for exactly this reason.
+
+**The fix — a second, honest entry path (`steady.py`):**
+- `assess_ventures` evaluates *every* venture niche for evaluation-readiness.
+  Eligibility (all thresholds in `Config`, no magic numbers): ≥
+  `steady_min_demand_points` real demand observations, an **observed** supply
+  side, fresh evidence (`steady_freshness_days`), real provenance (demo/simulated
+  niches are never eligible), and a cooldown so an unchanged niche isn't
+  re-evaluated every cycle (new observations lift it immediately).
+- `build_venture_entries` merges the anomaly path and the steady path into one
+  **deduplicated** set. An entity qualifying through both is evaluated **once**,
+  tagged `entry_path = both`; others are `anomaly` or `steady_state`.
+- Eligibility to be *evaluated* is never approval to *publish*. A steady niche
+  faces the **same** `VerificationCouncil`. Flat demand is still rejected
+  honestly as `insufficient_demand`; a served market as `high_competition`.
+
+**Eliminating silent zeros:** a new `venture_eval` table records one row per
+venture niche per cycle — entry path, the evidence that made it eligible (demand
+points, supply count, source count, freshness, demand:supply), and the council
+verdict. A niche that *didn't* enter carries an explicit reason
+(`still_gathering_evidence`, `supply_never_observed`, `observations_stale`,
+`cooldown_no_new_observations`, …) instead of vanishing. `/api/observability`
+exposes `venture_entry` (entrants by path, dedup total, verdict distribution) and
+`venture_eval_log` (recent per-niche rows). The `venture_eval` table is created
+on open — no destructive migration.
+
+**Diversity budget preserved:** `steady_max_per_cycle` bounds how many steady
+niches are evaluated per cycle (strongest-observed first); it never lowers the
+council bar or manufactures a pass.
+
+**Capability status:** IMPLEMENTED AND TESTED (17 deterministic cases in
+`test_steady_ventures.py`: eligibility gates, dedup, cooldown, council rejection
+of flat demand, Thai-local/info/B2B routing, metadata persistence). Scope is the
+four core venture generators (`local`, `b2b`, `digital`, `info`); micro-SaaS,
+lead-gen and seasonal keep the anomaly path for now. **Live-proof gate:** at
+least one real production niche enters via `steady_state` (no anomaly) and
+receives a traceable council verdict.

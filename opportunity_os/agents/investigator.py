@@ -46,10 +46,30 @@ class Investigator:
         by_entity = {k: by_entity[k] for k in sorted(by_entity)}
         niche_ids = {n["id"] for n in ds.niches()}
 
+        # Milestone 2: merge the anomaly path with the steady-state path into one
+        # deduplicated venture-entry set, and record an explicit entry (or an
+        # explicit skip reason) for every venture niche — so an empty family
+        # carries a reason instead of a silent zero.
+        from .. import steady as st
+        tick = getattr(ds, "tick_no", 0)
+        venture_entries, assessments = st.build_venture_entries(
+            ds, store, self.cfg, tick, by_entity)
+        if store is not None and hasattr(store, "record_venture_eval"):
+            for a in assessments:
+                entry = venture_entries.get(a.nid)
+                entered = entry is not None
+                path = entry["entry_path"] if entered else "steady_state"
+                try:
+                    store.record_venture_eval(
+                        a.nid, tick, path, a.family, eligible=entered,
+                        evidence=a.evidence, reason=(None if entered else a.reason))
+                except Exception:  # noqa: BLE001 - telemetry never blocks a cycle
+                    pass
+
         from ..generators import build_generators, GenContext
         ctx = GenContext(ds=ds, anomalies=anomalies, by_entity=by_entity,
                          niche_ids=niche_ids, store=store, cfg=self.cfg,
-                         investigator=self, graph=graph)
+                         investigator=self, graph=graph, venture_entries=venture_entries)
         candidates: list[dict] = []
         for gen in build_generators(self.cfg):
             try:
@@ -315,7 +335,10 @@ class Investigator:
 
         why = [
             InvestigationStep("What is the demand signal?",
-                              " · ".join(a.summary for a in anomalies[:2]),
+                              " · ".join(a.summary for a in anomalies[:2]) if anomalies
+                              else (f"Steady measured demand: {m['volume']:,.0f} events/mo "
+                                    f"with no discrete spike — surfaced by the steady-state "
+                                    f"entry path on accumulated observations."),
                               {"volume": m["volume"], "growth_pct": m["growth_pct"],
                                "volume_8_ticks_ago": vol_then}),
             InvestigationStep("Why now?",

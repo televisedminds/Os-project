@@ -110,6 +110,7 @@ class Orchestrator:
         published_new: list[dict] = []
         for cand in candidates:
             opp, reason = self._assess(cand, council, scorer, tick)
+            is_venture = cand.get("kind") == "venture"
             if opp:
                 self.db.upsert_opportunity(opp.to_dict())
                 updated_ids.add(opp.id)
@@ -125,12 +126,19 @@ class Orchestrator:
                     published_new.append({
                         "entity_id": opp.entity_id, "title": opp.title,
                         "is_product": opp.type in (OppType.PRODUCT_ARBITRAGE, OppType.REFURBISHMENT)})
+                if is_venture:
+                    self._record_venture_verdict(cand, tick, "verified", None)
             else:
                 route = cand.get("route", {}) or {}
+                category = evidence.classify_rejection(reason)
                 rejected.append({"title": cand["title"],
                                  "type": route.get("kind") or cand["opp_type"].value,
                                  "reason": reason,
-                                 "category": evidence.classify_rejection(reason)})
+                                 "category": category,
+                                 # Milestone 2: how this candidate entered evaluation
+                                 "entry_path": cand.get("entry_path")})
+                if is_venture:
+                    self._record_venture_verdict(cand, tick, "rejected", category)
 
         self._ai_risk_pass(published)
         self._record_yield(tick, anomalies, candidates, published_new)
@@ -168,10 +176,31 @@ class Orchestrator:
             "reverified": reverified,
             "invalidated": invalidated,
             "discovered": getattr(self.world, "discovery_report", {}) or {},
+            # Milestone 2: venture entry-path funnel for THIS cycle (anomaly vs
+            # steady-state entrants, dedup, verdicts) — read back from the ledger.
+            "venture_entry": self._venture_entry_summary(),
         }
         self.db.add_cycle(tick, round((time.time() - t0) * 1000, 1), report)
         self.db.meta_set("tick", tick)
         return report
+
+    def _record_venture_verdict(self, cand: dict, tick: int,
+                                verdict: str, category: str | None) -> None:
+        """Fill in the council verdict on this cycle's venture-eval ledger row."""
+        if not hasattr(self.db, "set_venture_verdict"):
+            return
+        try:
+            self.db.set_venture_verdict(cand.get("entity_id", ""), tick, verdict, category)
+        except Exception:  # noqa: BLE001 - telemetry never blocks a cycle
+            pass
+
+    def _venture_entry_summary(self) -> dict:
+        if not hasattr(self.db, "venture_eval_summary"):
+            return {}
+        try:
+            return self.db.venture_eval_summary(1)   # just this cycle's tick
+        except Exception:  # noqa: BLE001
+            return {}
 
     def _record_yield(self, tick: int, anomalies: list, candidates: list[dict],
                       published_new: list[dict]) -> None:
