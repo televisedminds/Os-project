@@ -87,6 +87,27 @@ class EbayAdapter(BaseAdapter):
         except Exception as e:  # noqa: BLE001
             return self._fail(f"eBay OAuth failed: {e}")
 
+    # Politeness throttle: eBay Browse bursts (watchlist + discovery in one cycle)
+    # trip a 429 rate limit. Keep a minimum gap between calls and back off + retry
+    # on 429 so a busy cycle degrades to "slower", not "dead".
+    _MIN_INTERVAL = 0.34                        # ~3 calls/sec ceiling
+    _last_call = 0.0
+
+    def _throttle(self) -> None:
+        gap = time.time() - EbayAdapter._last_call
+        if gap < self._MIN_INTERVAL:
+            time.sleep(self._MIN_INTERVAL - gap)
+        EbayAdapter._last_call = time.time()
+
+    def _browse(self, query: str, token: str):
+        return self.client.get(
+            f"{self.base}/buy/browse/v1/item_summary/search",
+            params={"q": query, "limit": "50",
+                    "filter": "buyingOptions:{FIXED_PRICE},itemLocationCountry:US",
+                    "sort": "price"},
+            headers={"Authorization": f"Bearer {token}",
+                     "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"})
+
     def product_snapshot(self, query: str) -> dict | None:
         """-> {price, stock, sellers, item_ids, min_price, sample} or None.
 
@@ -103,25 +124,26 @@ class EbayAdapter(BaseAdapter):
         if not token:
             return None
         try:
-            r = self.client.get(
-                f"{self.base}/buy/browse/v1/item_summary/search",
-                params={"q": query, "limit": "50",
-                        "filter": "buyingOptions:{FIXED_PRICE},itemLocationCountry:US",
-                        "sort": "price"},
-                headers={"Authorization": f"Bearer {token}",
-                         "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"})
-            if r.status_code == 401:            # token expired mid-flight: retry once
-                self._token = ""
-                token = self._get_token()
-                if not token:
-                    return None
-                r = self.client.get(
-                    f"{self.base}/buy/browse/v1/item_summary/search",
-                    params={"q": query, "limit": "50",
-                            "filter": "buyingOptions:{FIXED_PRICE},itemLocationCountry:US",
-                            "sort": "price"},
-                    headers={"Authorization": f"Bearer {token}",
-                             "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"})
+            r = None
+            for attempt in range(3):
+                self._throttle()
+                r = self._browse(query, token)
+                if r.status_code == 401:        # token expired mid-flight: refresh + retry
+                    self._token = ""
+                    token = self._get_token()
+                    if not token:
+                        return None
+                    continue
+                if r.status_code == 429:         # rate limited: honour Retry-After, back off
+                    if attempt < 2:
+                        ra = r.headers.get("Retry-After")
+                        wait = float(ra) if (ra and ra.isdigit()) else min(8.0, 1.5 * (2 ** attempt))
+                        time.sleep(wait)
+                        continue
+                    return self._fail(
+                        "eBay rate limited (429) after 3 tries — slow the cycle "
+                        "(raise OOS_AUTO_CYCLE_SECONDS) or trim the watchlist/discovery volume")
+                break
             r.raise_for_status()
             body = r.json()
             items = body.get("itemSummaries", []) or []

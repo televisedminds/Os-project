@@ -9,4 +9,4 @@ The platform never waits to be asked. It wakes up and says:
 "I found N opportunities worth your attention today."
 """
 
-__version__ = "1.14.1"
+__version__ = "1.14.2"

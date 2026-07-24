@@ -1080,3 +1080,17 @@ suite); connectors LIVE-PROVEN to authenticate on production; the watchlist
 bootability fix TESTED. The full-feed flip itself is **operator-gated** (an env
 change on the droplet) and will be LIVE-PROVEN once real eBay data flows through a
 production cycle and a real observation/opportunity is captured.
+
+**First-flip findings + hardening (v1.14.2).** The first production flip surfaced
+two real-world problems the tests couldn't: (1) it ran on the **pre-guard demo DB**
+— which had no mode stamp, so `_guard_mode` silently adopted it as live and 47
+*simulated* opportunities showed under a LIVE badge; (2) eBay returned **HTTP 429**
+on nearly every call because a fast auto-cycle plus discovery burst far past the
+free tier's rate limit, so no real prices flowed. Fixes: `_guard_mode` now
+**refuses to run an unstamped DB that already holds opportunities as live** (forces
+a fresh `OOS_DB`), and `EbayAdapter` gained a **call throttle + `Retry-After`-aware
+429 backoff/retry** so a busy cycle degrades to "slower", not "dead". A clean flip
+needs a fresh live DB, a calm cadence (`OOS_AUTO_CYCLE_SECONDS≈600–1800`), and
+discovery off for the first run so eBay load is just the watchlist. Tests:
+`test_ebay_adapter_retries_past_a_429`, `..._gives_up_gracefully_after_persistent_429`,
+`test_guard_refuses_unstamped_demo_db_as_live`.

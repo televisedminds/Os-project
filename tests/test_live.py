@@ -347,6 +347,61 @@ def test_ebay_adapter_oauth_search_and_token_cache():
     assert "EBAY_CLIENT_ID" in unconfigured.last_error
 
 
+def test_ebay_adapter_retries_past_a_429():
+    """A busy live cycle bursts eBay calls; a transient 429 must back off and
+    retry, not kill the observation."""
+
+    cfg = Config(mode="live", ebay_client_id="id", ebay_client_secret="sec")
+    state = {"search": 0}
+
+    def handler(req):
+        if "oauth2/token" in str(req.url):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 7200})
+        state["search"] += 1
+        if state["search"] == 1:
+            return httpx.Response(429, headers={"Retry-After": "0"})   # fast retry in tests
+        return httpx.Response(200, json={"total": 1, "itemSummaries": [
+            {"itemId": "a", "title": "x", "itemWebUrl": "http://x/a",
+             "price": {"value": "10.00", "currency": "USD"}, "seller": {"username": "s"}}]})
+
+    ad = EbayAdapter(cfg, _client(handler))
+    snap = ad.product_snapshot("q")
+    assert snap and snap["price"] == 10.0 and state["search"] == 2      # retried past the 429
+
+
+def test_ebay_adapter_gives_up_gracefully_after_persistent_429():
+    cfg = Config(mode="live", ebay_client_id="id", ebay_client_secret="sec")
+
+    def handler(req):
+        if "oauth2/token" in str(req.url):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 7200})
+        return httpx.Response(429, headers={"Retry-After": "0"})
+
+    ad = EbayAdapter(cfg, _client(handler))
+    assert ad.product_snapshot("q") is None                            # no crash
+    assert "rate limited" in ad.last_error.lower()                     # honest, actionable error
+
+
+def test_guard_refuses_unstamped_demo_db_as_live(tmp_path):
+    """A pre-guard demo DB (opportunities, no mode stamp) must NOT run as live —
+    simulated opportunities under a LIVE badge is the misleading state to block."""
+
+    db = tmp_path / "demo_then_live.db"
+    store = Store(db)
+    demo = Orchestrator(Config(db_path=db, mode="demo"), store)         # SimulatedWorld
+    for _ in range(2):
+        demo.run_cycle()
+    assert store.active_opportunities()                                # real demo opps exist
+    store._conn.execute("DELETE FROM meta WHERE key='mode'")           # simulate a pre-guard DB
+    store._conn.commit()
+
+    path = write_watchlist(tmp_path, [PRODUCT], [NICHE])
+    live_cfg = Config(db_path=db, mode="live", watchlist_path=path, discovery_enabled=False)
+    with pytest.raises(SystemExit, match="looks like a demo database"):
+        Orchestrator(live_cfg, store, world=object())
+    store.close()
+
+
 def test_reddit_adapter_oauth_flow():
     cfg = Config(mode="live", reddit_client_id="rid", reddit_client_secret="rsec")
 

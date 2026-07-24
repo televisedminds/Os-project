@@ -71,6 +71,20 @@ class Orchestrator:
             raise SystemExit(
                 f"This database ({self.cfg.db_path}) was created in '{stored}' mode but OOS_MODE is "
                 f"'{self.cfg.mode}'. Point OOS_DB at a different file (e.g. data/live.db) or delete it.")
+        # A DB with no mode stamp that already holds opportunities is almost
+        # certainly a pre-guard *demo* database. Refuse to run it as live —
+        # otherwise its simulated opportunities would show under a LIVE badge.
+        if not stored and self.cfg.mode == "live":
+            try:
+                n = len(self.db.active_opportunities())
+            except Exception:  # noqa: BLE001
+                n = 0
+            if n:
+                raise SystemExit(
+                    f"OOS_MODE=live but {self.cfg.db_path} already holds {n} opportunities and has no "
+                    f"mode stamp — it looks like a demo database. Simulated opportunities must not show "
+                    f"under a LIVE badge. Point OOS_DB at a fresh file (e.g. data/live.db) so live mode "
+                    f"starts clean.")
         self.db.meta_set("mode", self.cfg.mode)
 
     def _build_world(self):
