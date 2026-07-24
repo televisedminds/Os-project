@@ -67,14 +67,22 @@ def test_no_profit_claimed_when_revenue_below_outlay():
 # ------------------------------------------------------------------- taxonomy
 
 def test_status_taxonomy_and_completion_rules():
+    cash = oc.realized_metrics(actual_spend=100, actual_revenue=0)   # real recorded cash
+    blank = oc.realized_metrics()                                    # nothing typed
     assert set(oc.STATUSES) == {"bought", "sold", "delivered", "abandoned", "refunded", "failed"}
     assert not oc.is_terminal("bought") and oc.is_terminal("sold")
     for s in ("abandoned", "refunded", "failed"):
         assert oc.needs_reason(s)
-        assert not oc.is_complete(s, None)             # terminal but missing reason
-        assert oc.is_complete(s, "market moved")
-    assert oc.is_complete("sold", None)                # sale needs no walk-away reason
-    assert not oc.is_complete("bought", None)          # interim is never 'complete'
+        assert not oc.is_complete(s, None, cash)       # terminal but missing reason
+        assert oc.is_complete(s, "market moved", cash)
+    assert oc.is_complete("sold", None, cash)          # sale needs no walk-away reason
+    assert not oc.is_complete("bought", None, cash)    # interim is never 'complete'
+    # a cash-claiming status is NOT complete on an empty form; abandonment is
+    # (walking away deploys nothing, so no cash is the honest truth)
+    assert not oc.is_complete("sold", None, blank)
+    assert not oc.is_complete("failed", "competition", blank)
+    assert oc.is_complete("abandoned", "demand", blank)
+    assert oc.needs_actuals("sold") and not oc.needs_actuals("abandoned")
 
 
 # -------------------------------------------- the only signal allowed to teach
@@ -90,6 +98,27 @@ def test_recalibration_signal_only_from_terminal_realized_cash():
     assert oc.recalibration_signal("abandoned", m_win, reason="no demand")["result"] == "abandoned"
     # every emitted signal is grounded in realized cash
     assert oc.recalibration_signal("sold", m_win)["basis"] == "realized_cash"
+
+
+def test_blank_cash_form_never_teaches(regression=True):
+    """AUDIT REGRESSION: recording a terminal outcome with NO numbers typed used
+    to emit a 'failure' signal stamped basis=realized_cash — teaching the model
+    from fabricated zeros and punishing calibration for an empty form. An empty
+    form is not a real outcome."""
+
+    blank = oc.realized_metrics()
+    assert blank["has_actuals"] is False
+    assert blank["realized_profit_usd"] is None            # unknown, not a claimed 0
+    assert "prediction_error" not in blank                 # can't grade against nothing
+    for status in ("sold", "delivered", "refunded", "failed"):
+        assert oc.recalibration_signal(status, blank, reason="x") is None, status
+    # an explicit 0 IS evidence — "I sold it for nothing" is a real, gradeable fact
+    zero = oc.realized_metrics(actual_spend=0, actual_revenue=0)
+    assert zero["has_actuals"] and zero["realized_profit_usd"] == 0.0
+    assert oc.recalibration_signal("sold", zero)["result"] == "failure"
+    # abandonment is the one honest exception: walking away deploys nothing
+    ab = oc.recalibration_signal("abandoned", blank, reason="demand")
+    assert ab and ab["result"] == "abandoned" and ab["basis"] == "realized_cash"
 
 
 def test_predictions_cannot_train_predictions_guard():
@@ -194,6 +223,35 @@ def test_api_enforces_explicit_reason(tmp_path):
         r = c.post(f"/api/opportunities/{oid}/outcome/record",
                    json={"status": "abandoned", "reason": "demand faded"})
         assert r.status_code == 200 and r.json()["complete"]
+
+
+def test_api_rejects_negative_money(tmp_path):
+    """AUDIT REGRESSION: a negative spend used to be silently clamped to 0, so a
+    typo'd '-500' INVENTED $100 of profit. Money is never silently corrected."""
+
+    with _client(tmp_path, "neg.db") as c:
+        oid = c.get("/api/opportunities").json()["opportunities"][0]["id"]
+        r = c.post(f"/api/opportunities/{oid}/outcome/record",
+                   json={"status": "sold", "actual_spend_usd": -500, "actual_revenue_usd": 100})
+        assert r.status_code == 422 and "negative" in r.text.lower()
+        for field in ("actual_revenue_usd", "actual_fees_usd", "actual_hours", "days_taken"):
+            assert c.post(f"/api/opportunities/{oid}/outcome/record",
+                          json={"status": "sold", field: -1}).status_code == 422
+
+
+def test_api_blank_terminal_form_records_but_teaches_nothing(tmp_path):
+    """AUDIT REGRESSION, end to end: 'sold' with an empty cash form is stored as a
+    milestone but must not be complete and must not move scoring."""
+
+    with _client(tmp_path, "blank.db") as c:
+        oid = c.get("/api/opportunities").json()["opportunities"][0]["id"]
+        cal0 = c.get("/api/learning").json()["calibration"]
+        r = c.post(f"/api/opportunities/{oid}/outcome/record", json={"status": "sold"}).json()
+        assert r["recorded"] and not r["complete"]
+        assert r["scoring_change"] is None
+        assert r["metrics"]["realized_profit_usd"] is None      # no invented $0
+        assert c.get("/api/learning").json()["calibration"] == cal0
+        assert not c.get("/api/learning").json()["weight_audit"]
 
 
 def test_api_interim_bought_records_but_teaches_nothing(tmp_path):

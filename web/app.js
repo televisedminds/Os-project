@@ -832,7 +832,12 @@ function renderOutcomeResult(d) {
       <div class="oc-note">${esc(sc.note || "")}</div>
       ${changeRows(sc.changes)}
     </div>` : (sc ? `<div class="oc-note">${esc(sc.note || "Recorded — no weight change.")}</div>` : "");
+  const ungraded = (d.complete === false && d.status && d.status !== "bought")
+    ? `<div class="oc-ungraded">⚠ No cash recorded — this outcome is stored but
+       <b>not graded and not taught</b>. Enter the actual spend/revenue to close the loop.</div>`
+    : "";
   return `
+    ${ungraded}
     <div class="oc-compare">
       <div class="oc-col oc-proj"><div class="oc-col-k">PROJECTED · model promise</div>
         <div class="oc-col-v">${proj}</div>
@@ -1054,8 +1059,15 @@ function wireOutcome(el, o) {
             days_taken: num("#oc-days"), reason: reason || null,
             notes: ($("#oc-notes", el).value || "").trim() || null }) });
       $("#oc-result", el).innerHTML = renderOutcomeResult(r);
-      toast(r.scoring_change ? "✅ Outcome recorded — future scoring recalibrated from real cash."
-                             : "✅ Milestone recorded (interim — no scoring change yet).");
+      if (r.scoring_change) {
+        toast("✅ Outcome recorded — future scoring recalibrated from real cash.");
+      } else if (!r.complete) {
+        // terminal status, but no cash was entered: recorded, deliberately not taught
+        toast("✅ Recorded — but scoring did NOT change: enter the actual spend/revenue "
+              + "so the result can be graded. An empty form is not a real outcome.", 8000);
+      } else {
+        toast("✅ Milestone recorded (interim — no scoring change yet).");
+      }
     } catch (err) {
       toast("Could not record outcome: " + err.message);
     } finally { submit.disabled = false; submit.textContent = old; }

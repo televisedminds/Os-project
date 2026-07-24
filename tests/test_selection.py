@@ -95,6 +95,20 @@ def test_operator_fit_is_provisional_without_a_profile():
     assert f["operator_fit"] == 1.0 and "provisional" in f["operator_fit_basis"].lower()
 
 
+def test_malformed_opportunity_cannot_break_the_today_view():
+    """AUDIT REGRESSION: a record missing `economics` raised KeyError, which would
+    500 the whole homepage. It can't be ranked, so it scores 0 and drops out."""
+
+    bare = {"id": "bare", "title": "legacy record", "type": "flip"}
+    cfg = Config()
+    assert sel.rank_score(bare, cfg) == 0.0
+    assert sel.conservative_result_usd(bare) == 0.0
+    assert sel.risks(bare)                                   # still explains itself
+    assert sel.action_summary(bare, cfg=cfg)["capital_usd"] == 0.0
+    good = _opp("good", pess_net=100)
+    assert [p["id"] for p in sel.rank_execution_ready([bare, good], cfg=cfg)] == ["good"]
+
+
 def test_risks_flag_single_source_estimated_and_negative():
     o = _opp("r", pess_net=-5, single=True, level="partially_verified",
              ip={"demand_volume": "estimated"})

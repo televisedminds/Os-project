@@ -28,10 +28,15 @@ _VERIF_FACTOR = {
 def conservative_result_usd(o: dict) -> float:
     """The PESSIMISTIC net — a one-time total for a flip, a monthly figure for a
     venture. Never the optimistic base; today's decision uses the worst case."""
-    e = o["economics"]
-    if e["kind"] == "flip":
-        return round(e["pessimistic"]["net_usd"] * e.get("qty", 1), 2)
-    return round(e["pessimistic"]["net_usd"], 2)
+    # A malformed/legacy record must not 500 the whole "today" view — it simply
+    # can't be ranked, so it scores 0 and drops out of the shortlist.
+    e = o.get("economics") or {}
+    net = (e.get("pessimistic") or {}).get("net_usd")
+    if net is None:
+        return 0.0
+    if e.get("kind") == "flip":
+        return round(net * e.get("qty", 1), 2)
+    return round(net, 2)
 
 
 def evidence_quality(o: dict) -> float:
@@ -71,8 +76,8 @@ _EXEC_DIFFICULTY = {
 def _lockup_days(o: dict) -> float:
     """How long the operator's capital is tied up before it comes back — the flip
     window, or the venture's payback period."""
-    e = o["economics"]
-    if e["kind"] == "flip":
+    e = o.get("economics") or {}
+    if e.get("kind") == "flip":
         return float(o.get("window_days", 30) or 30)
     return round(_payback_months(e) * 30.0, 1)
 
@@ -80,7 +85,7 @@ def _lockup_days(o: dict) -> float:
 def ranking_factors(o: dict, cfg=None) -> dict:
     """Every resource/fit factor the RANKING uses — each 0..1, computed (not just
     displayed). Made explicit so a rank can be audited and tested."""
-    e = o["economics"]
+    e = o.get("economics") or {}
     cap = float(e.get("capital_usd", 0.0) or 0.0)
     avail = float(getattr(cfg, "capital_cap_usd", 2000.0)) if cfg is not None else 2000.0
     # Capital fit: the fraction of the position the operator can actually fund.
@@ -91,7 +96,7 @@ def ranking_factors(o: dict, cfg=None) -> dict:
     # Time fit: faster capital recovery ranks higher (value you can recycle).
     time_fit = round(1.0 / (1.0 + max(0.0, lock) / 30.0), 3)
     # Downside: a worst-case LOSS is disqualifying for "today's move".
-    downside_fit = 1.0 if e["pessimistic"]["net_usd"] > 0 else 0.0
+    downside_fit = 1.0 if float((e.get("pessimistic") or {}).get("net_usd") or 0) > 0 else 0.0
     exec_fit = _EXEC_DIFFICULTY.get(o.get("type"), 0.8)
     # Operator fit: PROVISIONAL — no operator profile exists yet, so only the
     # default capital cap (via capital_fit) and Thailand base (via exec_fit /
@@ -126,14 +131,14 @@ def rank_score(o: dict, cfg=None) -> float:
 def risks(o: dict) -> list[str]:
     """The honest caveats an operator must weigh before committing capital."""
     out: list[str] = []
-    e = o["economics"]
+    e = o.get("economics") or {}
     if o.get("single_source"):
         out.append("Single-source evidence — asking prices, not confirmed sold comps.")
     ip = (e.get("input_provenance") or {})
     est = [k.replace("_", " ") for k, v in ip.items() if v == "estimated"]
     if est:
         out.append("Estimated (unproven) input" + ("s" if len(est) > 1 else "") + ": " + ", ".join(est) + ".")
-    if e["pessimistic"]["net_usd"] <= 0:
+    if float((e.get("pessimistic") or {}).get("net_usd") or 0) <= 0:
         out.append("Loses money in the pessimistic case — thin margin of safety.")
     lvl = o.get("verification_level")
     if lvl not in ("execution_ready", "multi_source_verified"):
@@ -173,14 +178,14 @@ def action_summary(o: dict, cfg=None) -> dict:
     attaches the do-this-deal card + links on top of this). Carries both the
     conservative expected value AND the resource-adjusted rank_score, plus the
     factor breakdown so the order is auditable."""
-    e = o["economics"]
-    is_flip = e["kind"] == "flip"
+    e = o.get("economics") or {}
+    is_flip = e.get("kind") == "flip"
     f = ranking_factors(o, cfg)
     return {
-        "id": o["id"],
-        "title": o["title"],
+        "id": o.get("id"),
+        "title": o.get("title"),
         "type": o.get("type"),
-        "capital_usd": round(e.get("capital_usd", 0.0), 2),
+        "capital_usd": round(float(e.get("capital_usd", 0.0) or 0.0), 2),
         "time": (f"{o.get('window_days', 0):.0f}-day window" if is_flip
                  else f"~{_payback_months(e):.1f}-month payback"),
         "time_to_first_cash_days": f["time_to_first_cash_days"],

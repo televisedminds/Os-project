@@ -14,8 +14,11 @@ Hard honesty rules enforced here (truth contract):
 * ``prediction_error`` is realized MINUS predicted. The prediction is the thing
   being *graded*; it is never an input to its own grade.
 * ``recalibration_signal`` refuses to produce a learning signal from anything but
-  a terminal outcome carrying real cash. Interim states and bare predictions
-  return ``None`` — so predictions can never train predictions.
+  a terminal outcome carrying real cash. Interim states, bare predictions, and
+  **terminal statuses recorded with an empty cash form** all return ``None`` — so
+  neither a prediction nor a blank record can train the model. (The one exception
+  is ``abandoned``: walking away deploys nothing, so an empty form is the truth.)
+  Typing an explicit ``0`` counts as recorded cash; leaving a field blank does not.
 * Abandonment / refund / failure require an explicit reason before the outcome is
   complete.
 * Nothing here claims profit unless actual revenue exceeded actual outlay.
@@ -49,13 +52,28 @@ def needs_reason(status: str) -> bool:
     return status in _NEEDS_REASON
 
 
-def is_complete(status: str, reason: str | None) -> bool:
-    """A loop is closed only at a terminal status, and only with an explicit
-    reason when the status demands one (abandoned / refunded / failed)."""
+def needs_actuals(status: str) -> bool:
+    """True when the status asserts something about money that must be backed by
+    recorded cash. Walking away (`abandoned`) deploys nothing, so it needs no
+    cash facts — every other terminal status does."""
+
+    return status in _TERMINAL and status != ABANDONED
+
+
+def is_complete(status: str, reason: str | None, metrics: dict | None = None) -> bool:
+    """A loop is closed only at a terminal status, with an explicit reason when
+    the status demands one (abandoned / refunded / failed), AND with real cash
+    recorded when the status makes a claim about money.
+
+    'Sold' with an empty form is not a closed loop — it is an assertion with no
+    evidence. Note that typing an explicit 0 IS evidence; leaving the field blank
+    is not."""
 
     if status not in _TERMINAL:
         return False
     if status in _NEEDS_REASON and not (reason and reason.strip()):
+        return False
+    if needs_actuals(status) and not (metrics or {}).get("has_actuals"):
         return False
     return True
 
@@ -67,6 +85,12 @@ def realized_metrics(actual_spend=None, actual_revenue=None, actual_fees=None,
                      capital_usd=None) -> dict:
     """Honest realized economics from ACTUAL cash + time only. Missing inputs
     yield ``None`` for the metric they'd feed, never a guess."""
+
+    # Whether the operator actually RECORDED cash facts. Typing an explicit 0 is
+    # evidence ("I spent nothing"); leaving the field blank is not. Without this
+    # the engine cannot tell "sold for $0" from "sold, numbers not entered" — and
+    # would grade a prediction against fabricated zeros.
+    has_actuals = any(v is not None for v in (actual_spend, actual_revenue, actual_fees))
 
     spend = max(0.0, _f(actual_spend))
     revenue = max(0.0, _f(actual_revenue))
@@ -85,7 +109,8 @@ def realized_metrics(actual_spend=None, actual_revenue=None, actual_fees=None,
     turnover_yr = round((revenue / cap) * (365.0 / days), 2) if (cap > 0 and days > 0) else None
 
     out = {
-        "realized_profit_usd": realized_profit,
+        "has_actuals": has_actuals,
+        "realized_profit_usd": realized_profit if has_actuals else None,
         "actual_outlay_usd": outlay,
         "actual_revenue_usd": round(revenue, 2),
         "actual_fees_usd": round(fees, 2),
@@ -97,7 +122,10 @@ def realized_metrics(actual_spend=None, actual_revenue=None, actual_fees=None,
         "days_taken": days or None,
         "basis": "realized_actuals",
     }
-    if predicted_profit_usd is not None:
+    # A prediction can only be graded against RECORDED cash. With nothing
+    # recorded there is no error to report — reporting one would grade the model
+    # against fabricated zeros.
+    if predicted_profit_usd is not None and has_actuals:
         out["prediction_error"] = prediction_error(predicted_profit_usd, realized_profit)
     return out
 
@@ -194,14 +222,18 @@ def recalibration_signal(status: str, metrics: dict, reason: str | None = None) 
     if status not in _TERMINAL:
         return None
     realized = metrics.get("realized_profit_usd")
-    if realized is None:
+    if status == ABANDONED:
+        # Walking away deploys nothing, so an empty cash form IS the truth here.
+        # The signal never depends on an amount — only on the fact of the exit.
+        return {"result": "abandoned", "realized_profit_usd": realized,
+                "reason": reason, "basis": "realized_cash"}
+    # Every other terminal status asserts something about money. Without RECORDED
+    # cash there is nothing to learn from: an empty form is not a real outcome, and
+    # grading against fabricated zeros would let a blank record punish the model.
+    if not metrics.get("has_actuals") or realized is None:
         return None
-    if status in _REVENUE_EXPECTED:
-        result = "success" if realized > 0 else "failure"
-    elif status == ABANDONED:
-        result = "abandoned"
-    else:  # refunded / failed
-        result = "failure"
+    result = ("success" if realized > 0 else "failure") if status in _REVENUE_EXPECTED \
+        else "failure"                                    # refunded / failed
     return {
         "result": result,
         "realized_profit_usd": realized,   # REAL cash — the ground truth

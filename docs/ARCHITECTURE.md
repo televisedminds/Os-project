@@ -1052,6 +1052,50 @@ held live — calibration `1.0 → 1.0` and `ebay_us` reliability `0.8 → 0.8`
 unchanged (an abandonment is no cash test), and the signal was `basis:
 realized_cash`, never the prediction. See `docs/proofs/outcome_learning_*`.
 
+## 21b. v1.14.3 — Milestone audit: four defects found and fixed
+
+A deliberate re-audit of the shipped milestones (not a re-read of the claims, but
+running the code against its own promises) found four real defects. Three were
+honesty violations of the kind the truth contract exists to prevent.
+
+1. **A blank cash form used to teach the model.** Recording a terminal outcome
+   (`sold`/`delivered`/`refunded`/`failed`) with *no numbers typed* produced a
+   `failure` signal stamped `basis: realized_cash`, lowering calibration and
+   penalising the sources — graded against zeros that were never observed. The
+   docstring claimed it returned `None` for missing actuals; the code did not.
+   Now `realized_metrics` reports `has_actuals`, `realized_profit_usd` is `None`
+   (unknown) rather than a claimed `0.0`, no `prediction_error` is computed
+   without recorded cash, and `recalibration_signal` returns `None` for every
+   cash-claiming status recorded on an empty form. Typing an explicit `0` still
+   counts as evidence; a blank field does not. **`abandoned` is the one exception**
+   — walking away deploys nothing, so an empty form is the honest truth there
+   (this keeps the live-proven abandonment path intact).
+2. **Cancelled / invalidated deals gave dangerous advice.** Those states aren't on
+   the lifecycle ladder, so `effective_stage` collapsed them to `not_started` and
+   the guide told the operator to *buy an edge re-verification had already killed*.
+   Terminal off-ramps now win outright and surface "the edge is gone; do not buy".
+3. **Negative money was silently clamped.** A typo'd `-500` spend became `0`,
+   inventing $100 of profit from a data-entry slip. Negative actuals are now
+   rejected (422) instead of "corrected".
+4. **One malformed record could 500 the homepage.** `selection` indexed
+   `o["economics"]` directly; a legacy/partial record raised `KeyError` through
+   `/api/today`. Selection now degrades: such a record scores 0 and drops out.
+
+Also hardened: a future `started_ts` (host clock skew) no longer yields a negative
+day. Each defect has a named regression test (`test_blank_cash_form_never_teaches`,
+`test_terminal_offramps_are_never_reset_to_not_started`,
+`test_api_rejects_negative_money`,
+`test_malformed_opportunity_cannot_break_the_today_view`,
+`test_api_blank_terminal_form_records_but_teaches_nothing`,
+`test_schedule_clamps_a_future_start_ts`).
+
+Note on the earlier proof: `docs/proofs/outcome_learning_*` was captured under the
+pre-fix build, where the abandonment reported `realized_profit_usd: 0.0` and a
+−100 % prediction error. Under the fixed build that same input reports `null`
+(unknown) and no prediction error — *stricter*, not weaker. The learning effect it
+proved (affinity `0 → −1`, `demand_trend` weight up, calibration untouched) is
+unchanged.
+
 ## 22. v1.14.1 — Live mode made bootable (the flip to real data)
 
 Live mode was already built and thoroughly tested — `tests/test_live.py` proves

@@ -66,6 +66,31 @@ def test_stage_from_steps_maps_flip_and_venture():
     assert guide.stage_from_steps(_flip_opp(), []) == execution.NOT_STARTED
 
 
+def test_terminal_offramps_are_never_reset_to_not_started():
+    """AUDIT REGRESSION: a CANCELLED or INVALIDATED deal used to collapse to
+    'not_started', so the guide cheerfully told you to buy an edge that
+    re-verification had already killed. Terminal off-ramps must win outright."""
+
+    o = _flip_opp()
+    for state in (execution.CANCELLED, execution.INVALIDATED):
+        assert guide.effective_stage(o, [1, 4], state) == state      # steps don't override
+        g = guide.build_guide(o, done_steps=[1], chat_state=state, action_card=o["action"])
+        assert g["stage"] == state
+        assert g["next_step"]["is_terminal"]
+        assert not g["next_step"]["concrete"]                        # never quotes a buy price
+    dead = guide.build_guide(o, done_steps=[1], chat_state=execution.INVALIDATED,
+                             action_card=o["action"])
+    assert "do not buy" in dead["next_step"]["title"].lower()
+
+
+def test_schedule_clamps_a_future_start_ts():
+    """Clock skew between hosts must not produce a negative day."""
+    o = _flip_opp()
+    now = time.time()
+    sc = guide.schedule(o, o["action"], started_ts=now + 2 * 86400, now=now)
+    assert sc["day"] == 0
+
+
 def test_effective_stage_is_furthest_of_both_signals():
     o = _flip_opp()
     # steps say purchased, chat says not_started -> purchased

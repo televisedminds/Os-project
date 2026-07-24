@@ -84,8 +84,15 @@ def effective_stage(opp: dict, done_steps, chat_state: str) -> str:
 
     This is the fix for the two-source disconnect — ticking "list it" advances
     the stage even if the chat machine was never touched, and a purchase recorded
-    in chat advances it even if no box was ticked."""
+    in chat advances it even if no box was ticked.
 
+    Terminal off-ramps win outright: a CANCELLED or INVALIDATED deal must keep
+    saying so. Collapsing them onto the ladder would reset the guide to
+    "not started" and cheerfully tell you to buy an edge that re-verification has
+    already killed."""
+
+    if chat_state in (execution.CANCELLED, execution.INVALIDATED):
+        return chat_state
     a = chat_state if chat_state in _IDX else execution.NOT_STARTED
     b = stage_from_steps(opp, done_steps)
     return a if _IDX[a] >= _IDX[b] else b
@@ -179,7 +186,9 @@ def schedule(opp: dict, action_card: dict | None, started_ts: float | None,
     now = now if now is not None else time.time()
     ms = _milestones(opp, action_card)
     anchored = started_ts is not None
-    elapsed = (now - started_ts) / _DAY if anchored else None
+    # max(0, …): a future start_ts (clock skew between hosts) must not report a
+    # negative day or mark every milestone "upcoming" forever.
+    elapsed = max(0.0, (now - started_ts) / _DAY) if anchored else None
     out = []
     for m in ms:
         day = m.get("day")

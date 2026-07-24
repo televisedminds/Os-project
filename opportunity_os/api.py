@@ -653,6 +653,13 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
             raise HTTPException(422, f"status must be one of {oc.STATUSES}")
         if oc.needs_reason(body.status) and not (body.reason and body.reason.strip()):
             raise HTTPException(422, f"an explicit reason is required to record '{body.status}'")
+        # Money must never be silently "corrected". A negative spend/revenue/fee is
+        # a typo, and clamping it would invent profit out of a data-entry slip.
+        for field in ("actual_spend_usd", "actual_revenue_usd", "actual_fees_usd",
+                      "actual_hours", "days_taken"):
+            v = getattr(body, field)
+            if v is not None and v < 0:
+                raise HTTPException(422, f"{field} cannot be negative (got {v})")
 
         econ = o.get("economics") or {}
         metrics = oc.realized_metrics(
@@ -675,7 +682,7 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
         return {
             "recorded": True,
             "status": body.status,
-            "complete": oc.is_complete(body.status, body.reason),
+            "complete": oc.is_complete(body.status, body.reason, metrics),
             "metrics": metrics,
             "comparison": _predicted_vs_realized(prov, metrics),
             "scoring_change": scoring_change,        # None for interim 'bought'
