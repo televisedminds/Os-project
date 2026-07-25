@@ -1081,6 +1081,8 @@ All **19 mandated cases** are now covered (1–19), and every named property —
 reservation, cooldown, dedup, demand/supply balance, observability — is implemented
 and tested.
 
+Verified after all of the above landed: **full suite 412 passed, 1 skipped**.
+
 ## 21c. v1.15.0 — Observed-economics validation: the exit from validation_required
 
 The last unbuilt item from the post-M5 check list (tracked as Backlog #22).
