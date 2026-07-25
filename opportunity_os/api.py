@@ -637,6 +637,40 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
             "prediction_error": metrics.get("prediction_error"),
         }
 
+    def _revalidate_from_cash(opp_id: str) -> dict | None:
+        """Backlog #22: if this opportunity was priced on an ESTIMATED demand input
+        and real cash has now been recorded for it, re-price from that cash and
+        promote the provenance estimated → observed. Returns the audit, or None
+        when there is no evidence (in which case nothing is touched)."""
+
+        from . import validation as val
+        o = store.get_opportunity(opp_id)
+        if not o or not val.needs_revalidation(o):
+            return None
+        observed = val.observed_monthly_revenue(store, opp_id)
+        if not observed:
+            return None
+        result = val.revalidate(o, observed)
+        if not result:
+            return None
+        new_econ, audit = result
+        o["economics"] = new_econ
+        o["economics_revalidated"] = {"ts": time.time(), "trigger": audit["trigger"],
+                                      "promoted": audit["promoted_inputs"],
+                                      "evidence": audit["evidence"]}
+        store.upsert_opportunity(o)
+        store.add_economics_audit(audit)
+        return audit
+
+    @app.get("/api/opportunities/{opp_id}/economics-audit")
+    def economics_audit(opp_id: str):
+        """The estimated→observed promotions for one opportunity: what changed, and
+        the recorded cash that justified it."""
+
+        if not store.get_opportunity(opp_id):
+            raise HTTPException(404, "unknown opportunity id")
+        return {"opportunity_id": opp_id, "trail": store.economics_audit_trail(opp_id, 20)}
+
     @app.post("/api/opportunities/{opp_id}/outcome/record")
     def record_realized_outcome(opp_id: str, body: RealizedOutcomeIn):
         """Record a REAL outcome (actual cash + time) with the full taxonomy,
@@ -679,6 +713,11 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
             scoring_change = orch.learning.record_realized_outcome(prov, signal, opp_id=opp_id)
             o["status"] = OppStatus.EXECUTED.value
             store.upsert_opportunity(o)
+        # Backlog #22 — observed-economics validation: recorded cash can retire an
+        # ESTIMATED demand projection. Re-price from the real revenue and promote
+        # the provenance, so a validation_required opportunity finally gets judged
+        # on real numbers. No cash evidence -> nothing happens.
+        revalidation = _revalidate_from_cash(opp_id)
         return {
             "recorded": True,
             "status": body.status,
@@ -686,6 +725,7 @@ def create_app(config: Config | None = None, auto_cycle_seconds: int | None = No
             "metrics": metrics,
             "comparison": _predicted_vs_realized(prov, metrics),
             "scoring_change": scoring_change,        # None for interim 'bought'
+            "economics_revalidation": revalidation,  # None unless cash retired an estimate
             "provenance": prov,
         }
 

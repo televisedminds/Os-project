@@ -327,6 +327,63 @@ VENTURE_PARAMS = {
 }
 
 
+def recompute_venture_from_observed(kind: str, price_point_usd: float,
+                                    observed_monthly_revenue_usd: float) -> Economics:
+    """Re-price a venture from an OBSERVED monthly revenue instead of a modelled
+    demand estimate (Backlog #22 — observed-economics validation).
+
+    The cost model is unchanged — the same fee/running/acquisition structure is
+    applied — but revenue is now a recorded fact rather than
+    `volume × capture × conversion`. Two deliberate honesty choices:
+
+    * **base == pessimistic.** One observed month is a data point, not a
+      distribution. Substituting it into an optimistic multiplier would invent a
+      band around a fact, so the projection collapses onto the observation and
+      never extrapolates upward.
+    * costs remain ``calculated`` in the provenance; only revenue (and the demand
+      it implies) is promoted to ``observed``.
+    """
+
+    p = VENTURE_PARAMS[kind]
+    revenue = round(max(0.0, float(observed_monthly_revenue_usd)), 2)
+    price = max(0.01, float(price_point_usd or 0.01))
+    customers = revenue / price                       # implied by the observed cash
+
+    def scenario(name: str) -> Scenario:
+        lines = [
+            CostLine("Platform/payment fees",
+                     round(revenue * p["fee_pct"] + customers * p["fee_fixed"], 2)),
+            CostLine("Running costs / month", p["monthly_cost"], p["cost_note"]),
+            CostLine("Customer acquisition tests", round(revenue * 0.08, 2),
+                     "small paid tests + content"),
+        ]
+        return Scenario(name=name, revenue_usd=revenue, lines=lines).finalize()
+
+    base = scenario("base")
+    pess = scenario("pessimistic")                    # same: the observation IS the floor
+    econ = Economics(
+        kind="venture", base=base, pessimistic=pess, qty=1,
+        capital_usd=p["startup"], total_net_usd=base.net_usd,
+        breakeven_revenue_usd=round(p["monthly_cost"] / max(0.01, 1 - p["fee_pct"] - 0.08), 2),
+        fx={"USD_THB": USD_THB},
+        route_note=(f"Re-priced from OBSERVED revenue of ${revenue:,.2f}/month "
+                    f"(≈{customers:.1f} customers at ${price:,.2f}) — recorded cash, not a "
+                    f"demand estimate. No modelled upside band: the observed month is both "
+                    f"the base and the conservative case."),
+    )
+    econ.thb = {"net_per_month_thb": usd_to_thb(base.net_usd),
+                "capital_thb": usd_to_thb(econ.capital_usd)}
+    econ.input_provenance = {
+        "demand_volume": "observed",       # implied by real revenue, not a search count
+        "monthly_revenue": "observed",
+        "price_point": "observed",         # the price real customers actually paid
+        "conversion_rate": "observed",     # subsumed: revenue is measured directly
+        "costs": "calculated",
+        "projected_net": "calculated",
+    }
+    return econ
+
+
 def compute_venture(niche: dict) -> Economics:
     """Monthly unit economics for build-it opportunities (per month, USD)."""
 

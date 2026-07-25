@@ -362,12 +362,26 @@ class VerificationCouncil:
         # conclude a hard pass/fail on an estimated volume; the honest verdict is
         # "validation required" (confirm real demand before building). A
         # user-supplied or genuinely measured volume keeps the real pass/fail.
-        if prov.get("volume") == "estimated":
+        # Backlog #22: recorded CASH outranks an estimated search signal. Once the
+        # economics have been re-priced from real revenue, the demand is no longer
+        # a guess — so the validation_required gate lifts and this venture gets a
+        # genuine pass/fail on measured numbers (it may still fail; that is honest).
+        econ_prov = getattr(econ, "input_provenance", None) or {}
+        cash_observed = (econ_prov.get("monthly_revenue") == "observed"
+                         or econ_prov.get("demand_volume") == "observed")
+        if prov.get("volume") == "estimated" and not cash_observed:
             checks.append(Check("unit_economics", "Economics need demand-volume validation", False, 0.6,
                                 f"Demand volume is ESTIMATED from search-result signal, not a measured "
                                 f"search volume — indicative pessimistic net ${econ.pessimistic.net_usd:,.0f}/mo "
                                 f"(startup ${econ.capital_usd:,.0f}). Validation required: confirm real monthly "
                                 f"demand (keyword-volume tool or a small paid smoke test) before building.",
+                                critical=True))
+        elif cash_observed:
+            unit_ok = econ.pessimistic.net_usd > 0
+            checks.append(Check("unit_economics", "Positive on OBSERVED revenue", unit_ok, 0.9,
+                                f"Re-priced from recorded cash: ${econ.base.revenue_usd:,.0f}/mo observed "
+                                f"revenue → net ${econ.pessimistic.net_usd:,.0f}/mo (startup "
+                                f"${econ.capital_usd:,.0f}). Demand is measured, not estimated.",
                                 critical=True))
         else:
             unit_ok = econ.pessimistic.net_usd > 0

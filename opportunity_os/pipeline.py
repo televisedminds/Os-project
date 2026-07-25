@@ -421,6 +421,37 @@ class Orchestrator:
 
     # --------------------------------------------------------------- reverify
 
+    def _revalidate_economics(self, stored: dict, cand: dict) -> None:
+        """Swap a candidate's ESTIMATED venture economics for economics re-priced
+        from recorded cash, when such cash exists (Backlog #22). Mutates `cand` in
+        place so the council, gates and scorer all see the observed numbers. A
+        no-op without evidence — it never invents an observation."""
+
+        from . import validation as val
+        try:
+            if cand.get("kind") == "flip" or not val.needs_revalidation(stored):
+                return
+            observed = val.observed_monthly_revenue(self.db, stored["id"])
+            if not observed:
+                return
+            result = val.revalidate(stored, observed)
+            if not result:
+                return
+            new_econ, audit = result
+            from .models import Economics, Scenario, CostLine
+
+            def _scn(d: dict) -> Scenario:
+                s = Scenario(name=d["name"], revenue_usd=d["revenue_usd"],
+                             lines=[CostLine(**l) for l in d["lines"]])
+                return s.finalize()
+            econ = Economics(**{**new_econ,
+                                "base": _scn(new_econ["base"]),
+                                "pessimistic": _scn(new_econ["pessimistic"])})
+            cand["economics"] = econ
+            self.db.add_economics_audit(audit)
+        except Exception:  # noqa: BLE001 — never let revalidation break a cycle
+            return
+
     def _reverify(self, stored: dict, council: VerificationCouncil, scorer: ScoringEngine,
                   tick: int) -> tuple[bool, str, OppStatus | None]:
         """Returns (still_valid, reason, failure_status). A window that ran out
@@ -465,6 +496,13 @@ class Orchestrator:
             cand = self._fresh_venture(stored)
         if cand is None:
             return False, "source inventory exhausted or listing no longer observable", OppStatus.INVALIDATED
+
+        # Backlog #22 — observed-economics validation. A venture priced on an
+        # ESTIMATED demand input is re-priced from recorded cash the moment such
+        # cash exists, so the council judges real numbers instead of leaving it
+        # validation_required forever. Re-checked every cycle so it self-heals even
+        # if the outcome was recorded while this opportunity wasn't being re-verified.
+        self._revalidate_economics(stored, cand)
 
         verification = (council.verify_flip(self.world, cand) if cand["kind"] == "flip"
                         else council.verify_venture(self.world, cand))

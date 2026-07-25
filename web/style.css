@@ -736,3 +736,7 @@ ul { margin: 6px 0; padding-left: 18px; }
   border: 1px solid color-mix(in srgb, var(--warn, #b8860b) 40%, transparent);
   background: color-mix(in srgb, var(--warn, #b8860b) 10%, transparent); }
 .oc-ungraded b { color: var(--warn, #b8860b); }
+.prov-note.prov-observed { padding: 8px 10px; border-radius: 8px; line-height: 1.5;
+  color: var(--good); border: 1px solid color-mix(in srgb, var(--good) 40%, transparent);
+  background: color-mix(in srgb, var(--good) 10%, transparent); }
+.prov-note.prov-observed b { color: var(--good); }

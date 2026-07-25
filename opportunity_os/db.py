@@ -38,6 +38,11 @@ CREATE TABLE IF NOT EXISTS realized_outcomes (
 CREATE TABLE IF NOT EXISTS weight_audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, opportunity_id TEXT,
     trigger TEXT, result TEXT, before TEXT, after TEXT, changes TEXT);
+-- Backlog #22: every promotion of an ESTIMATED projection to OBSERVED economics,
+-- with the before/after numbers and the recorded cash that justified it.
+CREATE TABLE IF NOT EXISTS economics_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, opportunity_id TEXT,
+    trigger TEXT, promoted TEXT, evidence TEXT, before TEXT, after TEXT, note TEXT);
 CREATE TABLE IF NOT EXISTS learning (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS agent_runs (
     agent TEXT PRIMARY KEY, name TEXT, source TEXT, description TEXT,
@@ -304,6 +309,39 @@ class Store:
             rows = self._conn.execute(
                 "SELECT * FROM realized_outcomes ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [_load_realized(r) for r in rows]
+
+    def add_economics_audit(self, audit: dict) -> None:
+        """Record an estimated→observed economics promotion (Backlog #22)."""
+
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO economics_audit(ts,opportunity_id,trigger,promoted,evidence,"
+                "before,after,note) VALUES(?,?,?,?,?,?,?,?)",
+                (time.time(), audit.get("opportunity_id"), audit.get("trigger"),
+                 json.dumps(audit.get("promoted_inputs", []), default=str),
+                 json.dumps(audit.get("evidence", {}), default=str),
+                 json.dumps(audit.get("before", {}), default=str),
+                 json.dumps(audit.get("after", {}), default=str),
+                 audit.get("note", "")))
+
+    def economics_audit_trail(self, opportunity_id: str | None = None,
+                              limit: int = 50) -> list[dict]:
+        sql = "SELECT * FROM economics_audit"
+        args: list = []
+        if opportunity_id:
+            sql += " WHERE opportunity_id=?"
+            args.append(opportunity_id)
+        sql += " ORDER BY id DESC LIMIT ?"
+        args.append(limit)
+        with self._lock:
+            rows = self._conn.execute(sql, args).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            for k in ("promoted", "evidence", "before", "after"):
+                d[k] = json.loads(d[k]) if d.get(k) else ({} if k != "promoted" else [])
+            out.append(d)
+        return out
 
     def add_weight_audit(self, opportunity_id: str | None, trigger: str, result: str,
                          before: dict, after: dict, changes: dict) -> None:

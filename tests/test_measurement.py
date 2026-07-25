@@ -145,6 +145,70 @@ def test_case9_budget_exhaustion_produces_explicit_deferrals():
     assert sorted(s.queue_position for s in deferred) == [1, 2, 3, 4]
 
 
+def test_case16_duplicate_niche_ids_are_deduped_not_silently_starved():
+    """CASE 16 (dedup). The observed set is watchlist ∪ discovery, so the same
+    niche can arrive twice. Before the fix it was scored twice: it held two queue
+    entries, wasted a budget slot on itself, and — because only the last entry
+    survived the per-id report — was reported `evidence_sufficient` with ZERO
+    measurements. A silent starvation, which this scheduler forbids."""
+
+    cfg = _cfg()
+    plans = ms.schedule([_n("n_dup"), _n("n_dup"), _n("n_other")],
+                        budget=2, cfg=cfg, tick=5)
+    assert len(plans) == 2                                    # one row per unique niche
+    by = _by_id(plans)
+    # both distinct niches actually got their scan — neither lost a slot to a clone
+    assert by["n_dup"].outcome == ms.SEL_DEMAND
+    assert by["n_other"].outcome == ms.SEL_DEMAND
+    # and the duplicate is never reported as needing nothing
+    assert by["n_dup"].stage == ms.STAGE_NO_DEMAND
+    rep = ms.allocation_report(plans, 2)
+    assert rep["duplicates_collapsed"] == 1                   # visible, not silent
+    assert rep["evidence_sufficient"] == 0
+    assert rep["selected"] == 2
+
+
+def test_case17_demand_and_supply_both_progress_in_one_pass():
+    """CASE 17 (demand/supply balance). With both kinds of need present, a pass
+    must advance both — the budget cannot be consumed entirely by one kind while
+    the other waits indefinitely."""
+
+    cfg = _cfg()
+    states = [_n("needs_supply_a", dp=8, supply=False),        # demand-ready, no supply
+              _n("needs_supply_b", dp=7, supply=False),
+              _n("needs_demand_a", dp=0),                      # no demand yet
+              _n("needs_demand_b", dp=0)]
+    plans = ms.schedule(states, budget=2, cfg=cfg, tick=9)
+    rep = ms.allocation_report(plans, 2)
+    assert rep["selected"] == 2
+    assert rep["selected_supply"] >= 1 and rep["selected_demand"] >= 1
+    # the pass-level balance is reported so an imbalance is auditable
+    assert rep["needs_demand"] == 2 and rep["needs_supply"] == 2
+
+
+def test_case19_plan_is_deterministic_and_every_niche_has_exactly_one_reason():
+    """CASE 19 (determinism + no silent state). Identical input yields an
+    identical plan, and every niche ends the pass in exactly one known outcome
+    carrying a non-empty reason — nothing is ever dropped without explanation."""
+
+    cfg = _cfg()
+    states = [_n("a", dp=0), _n("b", dp=8, supply=False), _n("c", dp=9, supply=True, stale=False),
+              _n("d", dp=2, ld=8, origin="manual"), _n("e", dp=0, sc=4)]
+    first = ms.schedule([dict(s) for s in states], budget=2, cfg=cfg, tick=9)
+    second = ms.schedule([dict(s) for s in states], budget=2, cfg=cfg, tick=9)
+    assert [(s.niche_id, s.outcome, s.priority, s.queue_position) for s in first] == \
+           [(s.niche_id, s.outcome, s.priority, s.queue_position) for s in second]
+
+    known = {ms.SEL_DEMAND, ms.SEL_SUPPLY, ms.WAIT_COOLDOWN,
+             ms.DEFERRED_BUDGET, ms.EVIDENCE_SUFFICIENT}
+    assert len(first) == len(states)                           # every niche accounted for
+    for s in first:
+        assert s.outcome in known
+        assert s.priority_reason, f"{s.niche_id} has no reason"
+        # a deferred niche must know where it stands in the queue
+        assert (s.queue_position is not None) == (s.outcome == ms.DEFERRED_BUDGET)
+
+
 def test_allocation_report_metrics():
     cfg = _cfg()
     states = [_n("a", dp=0, supply=False), _n("b", dp=3, supply=False, ld=40),

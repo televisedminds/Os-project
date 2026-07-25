@@ -73,6 +73,7 @@ class NicheSchedule:
     outcome: str                # one of SEL_*/WAIT_COOLDOWN/DEFERRED_BUDGET/EVIDENCE_SUFFICIENT
     queue_position: int | None  # rank among deferred, 1 = next in line
     next_required_measurement: str
+    duplicates_collapsed: int = 0   # set on the first row only (pass-level metric)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -108,7 +109,22 @@ def schedule(niche_states: list[dict], budget: int, cfg, tick: int) -> list[Nich
 
     rows: dict[str, NicheSchedule] = {}
     candidates: list[NicheSchedule] = []          # scannable this pass
+    # DEDUP by niche id, first occurrence wins. The observed set is the union of a
+    # curated watchlist and live discovery, so the same niche can legitimately
+    # arrive twice. Scoring it twice would let one niche hold two queue entries,
+    # waste a budget slot on itself, and — because only the LAST entry survives the
+    # per-id report — leave the niche reported as `evidence_sufficient` with zero
+    # measurements. That is precisely the silent starvation this module forbids.
+    seen_ids: set[str] = set()
+    deduped: list[dict] = []
+    duplicates = 0
     for s in niche_states:
+        if s["id"] in seen_ids:
+            duplicates += 1
+            continue
+        seen_ids.add(s["id"])
+        deduped.append(s)
+    for s in deduped:
         stage, need = stage_and_need(s["demand_points"], s["has_supply"],
                                      s.get("supply_stale", False), cfg)
         last_scan = max([t for t in (s.get("last_demand_tick"), s.get("last_supply_tick"))
@@ -146,16 +162,44 @@ def schedule(niche_states: list[dict], budget: int, cfg, tick: int) -> list[Nich
     # niche cannot consume every slot; fill the remainder from all candidates.
     auto_reserved = min(int(round(budget * auto_frac)), budget)
     selected: list[NicheSchedule] = []
+    picked: set[str] = set()
+
+    def take(c: NicheSchedule) -> bool:
+        if c.niche_id in picked or len(selected) >= budget:
+            return False
+        selected.append(c)
+        picked.add(c.niche_id)
+        return True
+
     autos = [c for c in candidates if c.origin == "auto"]
     for c in autos[:auto_reserved]:
-        selected.append(c)
-    picked = {c.niche_id for c in selected}
+        take(c)
+
+    # DEMAND/SUPPLY BALANCE. Supply-for-a-demand-ready niche outranks bootstrapping
+    # first demand, so on a tight budget the top kind could take every slot and the
+    # other kind would only get in once aging closed a 20-point base gap. When both
+    # kinds are pending and the budget has at least two slots, guarantee one slot to
+    # each so neither research track is starved out of a pass by the other.
+    if budget >= 2:
+        for need in (NEED_SUPPLY, NEED_DEMAND):
+            if any(c.need == need for c in selected):
+                continue
+            nxt = next((c for c in candidates
+                        if c.need == need and c.niche_id not in picked), None)
+            if nxt is None:
+                continue                      # this kind isn't pending — nothing to balance
+            if not take(nxt):                 # budget full: yield the weakest slot of
+                others = [c for c in selected if c.need != need]   # the over-represented kind
+                if others:
+                    victim = min(others, key=lambda c: (c.priority, c.starvation_age))
+                    selected.remove(victim)
+                    picked.discard(victim.niche_id)
+                    take(nxt)
+
     for c in candidates:
         if len(selected) >= budget:
             break
-        if c.niche_id in picked:
-            continue
-        selected.append(c); picked.add(c.niche_id)
+        take(c)
 
     for c in selected:
         c.outcome = SEL_DEMAND if c.need == NEED_DEMAND else SEL_SUPPLY
@@ -166,7 +210,12 @@ def schedule(niche_states: list[dict], budget: int, cfg, tick: int) -> list[Nich
     for i, c in enumerate(deferred, start=1):
         c.outcome = DEFERRED_BUDGET
         c.queue_position = i
-    return list(rows.values())
+    out = list(rows.values())
+    # Surface the dedup count so a watchlist/discovery overlap is visible in the
+    # allocation report rather than silently shrinking the observed set.
+    if out:
+        out[0].duplicates_collapsed = duplicates
+    return out
 
 
 def allocation_report(schedules: list[NicheSchedule], budget: int) -> dict:
@@ -193,4 +242,10 @@ def allocation_report(schedules: list[NicheSchedule], budget: int) -> dict:
         "auto_demand_and_supply": sum(1 for s in autos if s.demand_points > 0 and s.has_supply),
         "auto_eligible": sum(1 for s in autos if s.stage == STAGE_SUFFICIENT),
         "max_starvation_age": max((s.starvation_age for s in schedules), default=0),
+        "duplicates_collapsed": max((getattr(s, "duplicates_collapsed", 0)
+                                     for s in schedules), default=0),
+        # Demand/supply balance: with both kinds needed, neither may be starved out
+        # of a pass by the other. Reported so an imbalance is visible.
+        "needs_demand": cnt(lambda s: s.next_required_measurement == NEED_DEMAND),
+        "needs_supply": cnt(lambda s: s.next_required_measurement == NEED_SUPPLY),
     }

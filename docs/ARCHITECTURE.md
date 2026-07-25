@@ -1052,6 +1052,79 @@ held live — calibration `1.0 → 1.0` and `ebay_us` reliability `0.8 → 0.8`
 unchanged (an abandonment is no cash test), and the signal was `basis:
 realized_cash`, never the prediction. See `docs/proofs/outcome_learning_*`.
 
+## 21d. v1.15.0 — M4.1 completed: dedup + demand/supply balance + cases 16–19
+
+Re-reading the original M4.1 mandate against the code found two of its named
+scheduler properties genuinely missing, and 3 of its 19 test cases unwritten.
+
+* **Dedup (case 16) — was a real silent starvation.** The observed set is
+  watchlist ∪ discovery, so a niche can arrive twice. It was then scored twice: it
+  held two queue entries, could waste a budget slot on itself, and because only the
+  *last* entry survived the per-id report, the niche was reported
+  `evidence_sufficient` **with zero measurements** — the exact failure mode the
+  mandate forbade ("no silent starvation; every niche ends a pass in exactly one
+  state with a reason"). `schedule()` now dedups by id (first occurrence wins) and
+  the collapse count is reported as `duplicates_collapsed`, so a watchlist/discovery
+  overlap is visible rather than quietly shrinking the observed set.
+* **Demand/supply balance (case 17) — was not implemented.** Supply-for-a-
+  demand-ready niche outranks bootstrapping first demand by 20 base points, so on a
+  tight budget the top kind took *every* slot and the other kind only got in once
+  aging closed that gap. Now, when both kinds are pending and the budget has ≥2
+  slots, one slot is guaranteed to each kind (yielding the weakest slot of the
+  over-represented kind if the budget is already full). `needs_demand` /
+  `needs_supply` are reported so an imbalance stays auditable.
+* **Case 19** pins determinism plus the invariant that every niche ends a pass in
+  exactly one known outcome with a non-empty reason, and that a queue position
+  exists precisely when a niche was deferred.
+
+All **19 mandated cases** are now covered (1–19), and every named property — aging,
+reservation, cooldown, dedup, demand/supply balance, observability — is implemented
+and tested.
+
+## 21c. v1.15.0 — Observed-economics validation: the exit from validation_required
+
+The last unbuilt item from the post-M5 check list (tracked as Backlog #22).
+
+M5 made the system honest about not knowing: a venture whose demand volume is only
+*estimated* gets priced, but a **critical** council check keeps it
+`validation_required` forever — it can never verify on a guess. Truthful, but a
+dead end: nothing could ever retire the estimate. This is the exit.
+
+* **Only recorded cash triggers it.** `validation.observed_monthly_revenue` reads
+  exclusively from a realized outcome (`sold`/`delivered`) that carries actual
+  revenue **and** a period to normalise over ($400 over 20 days → $600/month). An
+  empty form, a missing period, an abandonment, a refund and a failure are all
+  explicitly *not* revenue evidence. Search-result counts are never used —
+  inferring volume from them was the exact M5 fabrication.
+* **Re-priced with the real cost model.** `economics.recompute_venture_from_observed`
+  substitutes the observed revenue into the same fee/running/acquisition structure.
+  Two honesty choices: **base == pessimistic** (one observed month is a data point,
+  not a distribution — never extrapolate upward), and costs stay `calculated` while
+  only revenue and the demand it implies become `observed`.
+* **The gate actually lifts.** The council previously keyed the
+  validation-required check on the *niche's* provenance, so re-pricing alone would
+  have changed the numbers and changed nothing. Now **recorded cash outranks an
+  estimated search signal**: with observed economics the venture gets a genuine
+  pass/fail ("Positive on OBSERVED revenue") — which it may still fail, honestly.
+* **Never invents, never downgrades.** No evidence → no recompute and the
+  opportunity stays `validation_required`. An input already `observed` is never
+  rewritten back to `estimated`.
+* **Audited.** Every promotion writes an `economics_audit` row (before/after net,
+  revenue, provenance, and the cash that justified it), exposed at
+  `GET /api/opportunities/{id}/economics-audit` and surfaced in the UI as
+  "Re-priced from recorded cash" instead of the estimated-input warning.
+* Hooked in two places so it can't be missed: at outcome-record time (immediate)
+  and on every re-verification pass (self-healing).
+
+**Capability status:** IMPLEMENTED AND TESTED (20 tests: the recompute's maths and
+determinism, no-invented-upside, all six venture families mapping to a cost model,
+what does and does not count as evidence — blank form, missing period, abandoned /
+failed / refunded / bought —, monthly normalisation, provenance promotion + audit,
+no-downgrade, no-op when nothing is estimated, flips excluded, the council gate
+lifting, and the wired API loop end to end). **Live-proof gate:** on production, a
+venture priced from an estimate is recorded as a real sale and its projection
+visibly changes from estimated to observed with an audit row.
+
 ## 21b. v1.14.3 — Milestone audit: four defects found and fixed
 
 A deliberate re-audit of the shipped milestones (not a re-read of the claims, but
